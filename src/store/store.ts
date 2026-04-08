@@ -108,7 +108,7 @@ interface VeltraState {
     updateNodeResourceFromCanvas: (nodeId: string, resource: K8sResource) => void;
 }
 
-export const useVeltraStore = create<VeltraState>((set) => {
+export const useVeltraStore = create<VeltraState>((set, get) => {
     // Parse the default YAML to show initial nodes
     const initialResources = parseYaml(DEFAULT_YAML);
     const initialGraph = buildGraph(initialResources);
@@ -123,8 +123,11 @@ export const useVeltraStore = create<VeltraState>((set) => {
 
         setYaml: (value: string) => {
             const resources = parseYaml(value);
-            const { nodes, edges } = buildGraph(resources);
-            set({ yaml: value, nodes, edges, userEdges: [] });
+            const { nodes: parsedNodes, edges: inferredEdges } = buildGraph(resources);
+            const nodes = preserveNodePositions(parsedNodes, get().nodes);
+            const userEdges = get().userEdges;
+            const edges = mergeInferredAndUserEdges(inferredEdges, userEdges, nodes);
+            set({ yaml: value, nodes, edges });
         },
         setBidirectionalSync: (enabled: boolean) =>
             set((state) => ({
@@ -282,6 +285,23 @@ function mergeInferredAndUserEdges(inferredEdges: Edge[], userEdges: Edge[], nod
         (e) => nodeIds.has(e.source) && nodeIds.has(e.target)
     );
     return [...inferredEdges, ...validUserEdges];
+}
+
+function preserveNodePositions(
+    nextNodes: Node<K8sNodeData>[],
+    previousNodes: Node<K8sNodeData>[]
+): Node<K8sNodeData>[] {
+    const previousByKey = new Map(
+        previousNodes.map((node) => [resourceKey(node), node.position] as const)
+    );
+    return nextNodes.map((node) => {
+        const position = previousByKey.get(resourceKey(node));
+        return position ? { ...node, position } : node;
+    });
+}
+
+function resourceKey(node: Node<K8sNodeData>): string {
+    return `${node.data.kind}:${node.data.name}`;
 }
 
 function toResources(nodes: Node<K8sNodeData>[]): K8sResource[] {

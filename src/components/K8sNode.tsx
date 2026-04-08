@@ -4,15 +4,15 @@ import type { K8sNodeData } from '../utils/buildGraph';
 
 const KIND_CONFIG: Record<string, { color: string; code: string }> = {
     Deployment: {
-        color: '#5aa9ff',
+        color: '#62c378',
         code: 'DP',
     },
     Service: {
-        color: '#d48bff',
+        color: '#4b89ff',
         code: 'SV',
     },
     Ingress: {
-        color: '#53e0d9',
+        color: '#9f74ff',
         code: 'IG',
     },
     ReplicaSet: {
@@ -20,7 +20,7 @@ const KIND_CONFIG: Record<string, { color: string; code: string }> = {
         code: 'RS',
     },
     Pod: {
-        color: '#7ee787',
+        color: '#32c9bf',
         code: 'PD',
     },
 };
@@ -75,8 +75,6 @@ function buildResourceDetails(nodeData: K8sNodeData): string[] {
     const spec = (nodeData.resource?.spec ?? {}) as Record<string, any>;
     if (nodeData.kind === 'Deployment' || nodeData.kind === 'ReplicaSet') {
         if (typeof spec.replicas === 'number') details.push(`replicas:${spec.replicas}`);
-        const selector = spec.selector?.matchLabels as Record<string, string> | undefined;
-        if (selector && selector.app) details.push(`selector:${selector.app}`);
     }
     if (nodeData.kind === 'Pod') {
         const container = spec.containers?.[0];

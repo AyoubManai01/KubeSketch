@@ -10,8 +10,10 @@ import {
     type NodeTypes,
     type NodeChange,
     type Node,
+    Panel,
+    ViewportPortal,
 } from '@xyflow/react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import '@xyflow/react/dist/style.css';
 
 import { useVeltraStore } from '../store/store';
@@ -23,6 +25,7 @@ import type { K8sNodeData } from '../utils/buildGraph';
 const nodeTypes: NodeTypes = {
     k8sNode: K8sNode,
 };
+const ARCHITECTURE_ROWS = ['Ingress', 'Service', 'Deployment', 'ReplicaSet', 'Pod'];
 
 /**
  * React Flow canvas displaying K8s resource nodes.
@@ -41,11 +44,13 @@ export default function Canvas() {
     const applyCanvasEdgeChanges = useVeltraStore((s) => s.applyCanvasEdgeChanges);
     const updateNodeResourceFromCanvas = useVeltraStore((s) => s.updateNodeResourceFromCanvas);
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+    const dragStartPositions = useRef<Record<string, { x: number; y: number }>>({});
 
     const selectedNode = useMemo(
         () => nodes.find((n) => n.id === selectedNodeId) ?? null,
         [nodes, selectedNodeId]
     );
+    const workloadGroups = useMemo(() => buildWorkloadGroups(nodes), [nodes]);
 
     const onNodesChange = (changes: NodeChange[]) => {
         const nextNodes = applyNodeChanges(changes, nodes) as Node<K8sNodeData>[];
@@ -56,6 +61,22 @@ export default function Canvas() {
     };
     const onConnect = (connection: Connection) => {
         addCanvasEdge(connection);
+    };
+    const onNodeDragStart = (_: unknown, node: Node<K8sNodeData>) => {
+        dragStartPositions.current[node.id] = { ...node.position };
+    };
+    const onNodeDragStop = (_: unknown, node: Node<K8sNodeData>) => {
+        const ownLabel = getWorkloadLabel(node.data.resource);
+        const blocked = workloadGroups.some((group) => {
+            if (group.labelValue === ownLabel) return false;
+            return isInsideGroup(node.position, group);
+        });
+        if (!blocked) return;
+        const start = dragStartPositions.current[node.id];
+        if (!start) return;
+        setCanvasNodes(
+            nodes.map((n) => (n.id === node.id ? { ...n, position: start } : n))
+        );
     };
 
     return (
@@ -102,15 +123,43 @@ export default function Canvas() {
                             name: node.data.name as string,
                         });
                     }}
+                    onNodeDragStart={onNodeDragStart}
+                    onNodeDragStop={onNodeDragStop}
                     fitView
                     fitViewOptions={{ padding: 0.55, maxZoom: 0.9 }}
+                    nodesDraggable
+                    selectionOnDrag={false}
                     proOptions={{ hideAttribution: true }}
                 >
+                    <ViewportPortal>
+                        {workloadGroups.map((group) => (
+                            <div
+                                key={group.id}
+                                className="workload-group"
+                                style={{
+                                    width: group.width,
+                                    height: group.height,
+                                    transform: `translate(${group.x}px, ${group.y}px)`,
+                                }}
+                            >
+                                <div className="workload-group__title">{group.title}</div>
+                            </div>
+                        ))}
+                    </ViewportPortal>
+                    <Panel position="top-left">
+                        <div className="architecture-legend">
+                            {ARCHITECTURE_ROWS.map((row) => (
+                                <span key={row} className="architecture-legend__item">
+                                    {row}
+                                </span>
+                            ))}
+                        </div>
+                    </Panel>
                     <Background
                         variant={BackgroundVariant.Dots}
-                        gap={20}
+                        gap={24}
                         size={1}
-                        color="rgba(255, 255, 255, 0.05)"
+                        color="rgba(136, 166, 205, 0.18)"
                     />
                     <Controls
                         showInteractive={false}
@@ -485,6 +534,69 @@ export default function Canvas() {
                 </aside>
             </div>
         </div>
+    );
+}
+
+function buildWorkloadGroups(nodes: Node<K8sNodeData>[]) {
+    const grouped = new Map<string, Node<K8sNodeData>[]>();
+    nodes.forEach((node) => {
+        const label = getWorkloadLabel(node.data.resource);
+        if (!label) return;
+        const list = grouped.get(label) ?? [];
+        list.push(node);
+        grouped.set(label, list);
+    });
+
+    const groups: Array<{ id: string; labelValue: string; title: string; x: number; y: number; width: number; height: number }> = [];
+    grouped.forEach((family, labelValue) => {
+        if (family.length < 2) return;
+        const bounds = family.reduce(
+            (acc, node) => {
+                const x = node.position.x;
+                const y = node.position.y;
+                return {
+                    minX: Math.min(acc.minX, x),
+                    maxX: Math.max(acc.maxX, x + 220),
+                    minY: Math.min(acc.minY, y),
+                    maxY: Math.max(acc.maxY, y + 130),
+                };
+            },
+            { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity }
+        );
+
+        groups.push({
+            id: `group-${labelValue}`,
+            labelValue,
+            title: `Workload ${labelValue}`,
+            x: bounds.minX - 24,
+            y: bounds.minY - 24,
+            width: bounds.maxX - bounds.minX + 48,
+            height: bounds.maxY - bounds.minY + 48,
+        });
+    });
+
+    return groups;
+}
+
+function getWorkloadLabel(resource: K8sResource): string | null {
+    const labels = resource.metadata?.labels;
+    if (!labels) return null;
+    return labels.app ?? labels.workload ?? labels.component ?? null;
+}
+
+function isInsideGroup(
+    position: { x: number; y: number },
+    group: { x: number; y: number; width: number; height: number }
+): boolean {
+    const NODE_WIDTH = 220;
+    const NODE_HEIGHT = 130;
+    const centerX = position.x + NODE_WIDTH / 2;
+    const centerY = position.y + NODE_HEIGHT / 2;
+    return (
+        centerX >= group.x &&
+        centerX <= group.x + group.width &&
+        centerY >= group.y &&
+        centerY <= group.y + group.height
     );
 }
 

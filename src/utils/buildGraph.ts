@@ -12,15 +12,14 @@ export interface K8sNodeData {
 
 const LAYER_Y: Record<SupportedKind, number> = {
     Ingress: 80,
-    Service: 300,
-    Deployment: 520,
-    ReplicaSet: 740,
-    Pod: 960,
+    Service: 270,
+    Deployment: 460,
+    ReplicaSet: 650,
+    Pod: 840,
 };
 
-const LANE_ORDER: SupportedKind[] = ['Ingress', 'Service', 'Deployment', 'ReplicaSet', 'Pod'];
-const COLUMN_GAP = 360;
-const CANVAS_CENTER_X = 900;
+const COLUMN_GAP = 320;
+const CANVAS_CENTER_X = 860;
 
 /**
  * Convert an array of parsed K8s resources into React Flow nodes.
@@ -50,16 +49,20 @@ export function buildGraph(resources: K8sResource[]): {
         ReplicaSet: 0,
         Pod: 0,
     };
+    const resourceOccurrence = new Map<string, number>();
 
-    const nodes: Node<K8sNodeData>[] = resources.map((res, index) => {
+    const nodes: Node<K8sNodeData>[] = resources.map((res) => {
         const kind = res.kind as SupportedKind;
         const col = laneColumnCursor[kind];
         laneColumnCursor[kind] += 1;
         const laneCount = laneCounts[kind];
         const laneStartX = CANVAS_CENTER_X - ((laneCount - 1) * COLUMN_GAP) / 2;
+        const identity = `${res.kind}:${res.metadata.name}`;
+        const count = (resourceOccurrence.get(identity) ?? 0) + 1;
+        resourceOccurrence.set(identity, count);
 
         return {
-            id: `${res.kind}-${res.metadata.name}-${index}`,
+            id: `${res.kind}-${res.metadata.name}-${count}`,
             type: 'k8sNode', // custom node type registered in React Flow
             position: {
                 x: laneStartX + col * COLUMN_GAP,
@@ -91,7 +94,7 @@ export function buildGraph(resources: K8sResource[]): {
             source: source.id,
             target: target.id,
             label,
-            animated: label !== 'owns',
+            animated: false,
             style: { stroke: '#89a8d1', strokeWidth: 2.2 },
         });
     };
@@ -101,7 +104,7 @@ export function buildGraph(resources: K8sResource[]): {
         if (res.kind === 'Ingress') {
             const serviceNames = getIngressServiceNames(res);
             serviceNames.forEach((serviceName) =>
-                addEdge(node, byName.get(serviceName), 'routes')
+                addEdge(node, byName.get(serviceName), 'routes to')
             );
         }
 
@@ -123,7 +126,7 @@ export function buildGraph(resources: K8sResource[]): {
                     n.data.kind === 'ReplicaSet' &&
                     startsWithResourceName(n.data.name, res.metadata.name)
             );
-            addEdge(node, target, 'owns');
+            addEdge(node, target, 'manages');
         }
 
         if (res.kind === 'ReplicaSet') {
@@ -133,18 +136,8 @@ export function buildGraph(resources: K8sResource[]): {
                     startsWithResourceName(n.data.name, res.metadata.name)
             );
             if (pods.length) {
-                pods.forEach((pod) => addEdge(node, pod, 'manages'));
+                pods.forEach((pod) => addEdge(node, pod, 'creates'));
             }
-        }
-    });
-
-    // Add visual top-down chain hints when matching layers exist.
-    LANE_ORDER.forEach((kind, idx) => {
-        if (idx === LANE_ORDER.length - 1) return;
-        const src = nodes.find((n) => n.data.kind === kind);
-        const dst = nodes.find((n) => n.data.kind === LANE_ORDER[idx + 1]);
-        if (src && dst) {
-            addEdge(src, dst, 'flow');
         }
     });
 

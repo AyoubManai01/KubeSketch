@@ -138,12 +138,13 @@ body,
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: radial-gradient(circle at 10% 10%, #131a24 0%, var(--bg-primary) 45%);
+  background: linear-gradient(180deg, #0f1622 0%, #0d131d 100%);
 }
 
 .canvas-wrapper {
   flex: 1;
   position: relative;
+  padding: 8px;
 }
 
 .canvas-wrapper--split {
@@ -235,12 +236,12 @@ body,
 /* ---------- K8s Node ---------- */
 .k8s-node {
   --kind-color: #5aa9ff;
-  min-width: 220px;
-  background: linear-gradient(180deg, #192334 0%, #121a27 100%);
-  border: 1px solid #2c3d58;
+  min-width: 210px;
+  background: linear-gradient(180deg, #1a2434 0%, #121a26 100%);
+  border: 1px solid rgba(102, 135, 180, 0.45);
   border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
   transition: box-shadow var(--transition-fast),
               border-color var(--transition-fast),
               transform var(--transition-fast);
@@ -257,7 +258,7 @@ body,
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px 8px;
+  padding: 10px 12px;
   border-bottom: 1px solid rgba(128, 153, 189, 0.18);
   background: rgba(15, 22, 33, 0.65);
 }
@@ -278,18 +279,16 @@ body,
 }
 
 .k8s-node__kind {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.9px;
-  color: #cbd8e8;
+  color: #deebff;
 }
 
 .k8s-node__name {
-  padding: 10px 12px 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #f2f6ff;
+  padding: 10px 12px 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #b8cbe6;
   font-family: 'JetBrains Mono', monospace;
   border-left: 2px solid color-mix(in srgb, var(--kind-color) 80%, #1c2431);
 }
@@ -304,7 +303,7 @@ body,
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 0 12px 10px;
+  padding: 0 12px 12px;
 }
 
 .k8s-node__detail-chip {
@@ -318,8 +317,8 @@ body,
 
 /* ---------- React Flow Handles ---------- */
 .k8s-handle {
-  width: 10px !important;
-  height: 10px !important;
+  width: 9px !important;
+  height: 9px !important;
   background: var(--kind-color) !important;
   border: 2px solid #0f1724 !important;
   border-radius: 3px !important;
@@ -357,13 +356,13 @@ body,
 
 /* ---------- React Flow Background ---------- */
 .react-flow__background {
-  background: var(--bg-primary) !important;
+  background: linear-gradient(180deg, #0e1520, #0c121a) !important;
 }
 
 .react-flow__edge-path {
   stroke: #84a8d9 !important;
-  stroke-width: 2.4px !important;
-  filter: drop-shadow(0 0 4px rgba(132, 168, 217, 0.35));
+  stroke-width: 2.1px !important;
+  filter: drop-shadow(0 0 3px rgba(132, 168, 217, 0.25));
 }
 
 .react-flow__edge-textbg {
@@ -374,13 +373,58 @@ body,
 .react-flow__edge-text {
   fill: #bdd2ee !important;
   font-size: 10px !important;
+  font-weight: 600 !important;
   letter-spacing: 0.3px;
-  text-transform: uppercase;
+  text-transform: lowercase;
 }
 
 .react-flow__arrowhead path {
   fill: #84a8d9 !important;
   stroke: #84a8d9 !important;
+}
+
+.architecture-legend {
+  display: flex;
+  gap: 8px;
+  background: rgba(11, 18, 28, 0.72);
+  border: 1px solid rgba(85, 122, 174, 0.35);
+  border-radius: 8px;
+  padding: 6px 8px;
+  backdrop-filter: blur(6px);
+}
+
+.architecture-legend__item {
+  color: #9fb8da;
+  font-size: 11px;
+  border: 1px solid rgba(113, 145, 189, 0.32);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.workload-group {
+  position: absolute;
+  border: 1px dashed rgba(98, 195, 120, 0.65);
+  border-radius: 14px;
+  background: rgba(14, 24, 18, 0.12);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.workload-group__title {
+  position: absolute;
+  top: -11px;
+  left: 14px;
+  font-size: 10px;
+  color: #8ed7a0;
+  background: #0d1611;
+  border: 1px solid rgba(98, 195, 120, 0.45);
+  border-radius: 999px;
+  padding: 1px 8px;
+  letter-spacing: 0.4px;
+}
+
+.react-flow__node {
+  z-index: 2;
 }
 
 .node-inspector {

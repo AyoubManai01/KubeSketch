@@ -12,8 +12,9 @@ import {
     type Node,
     Panel,
     ViewportPortal,
+    type ReactFlowInstance,
 } from '@xyflow/react';
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useId, useMemo, useRef, useState } from 'react';
 import '@xyflow/react/dist/style.css';
 
 import { useVeltraStore } from '../store/store';
@@ -26,12 +27,20 @@ const nodeTypes: NodeTypes = {
     k8sNode: K8sNode,
 };
 const ARCHITECTURE_ROWS = ['Ingress', 'Service', 'Deployment', 'ReplicaSet', 'Pod'];
+const NODE_WIDTH = 220;
+const NODE_HEIGHT = 130;
+const DEFAULT_NAMESPACES = ['default', 'kube-system', 'kube-public'];
 
 /**
  * React Flow canvas displaying K8s resource nodes.
  * Reads nodes/edges from the Zustand store.
  */
 export default function Canvas() {
+    const uid = useId().replace(/:/g, '');
+    const namespaceListId = `veltra-ns-${uid}`;
+    const selectorListId = `veltra-sel-${uid}`;
+    const serviceListId = `veltra-svc-${uid}`;
+
     const nodes = useVeltraStore((s) => s.nodes);
     const edges = useVeltraStore((s) => s.edges);
     const addNodeFromCanvas = useVeltraStore((s) => s.addNodeFromCanvas);
@@ -50,7 +59,28 @@ export default function Canvas() {
         () => nodes.find((n) => n.id === selectedNodeId) ?? null,
         [nodes, selectedNodeId]
     );
-    const workloadGroups = useMemo(() => buildWorkloadGroups(nodes), [nodes]);
+    const teachingFrame = useMemo(() => buildTeachingFrame(nodes), [nodes]);
+    const namespaceOptions = useMemo(() => {
+        const discovered = new Set<string>(DEFAULT_NAMESPACES);
+        nodes.forEach((node) => discovered.add(node.data.namespace ?? 'default'));
+        return Array.from(discovered).sort((a, b) => a.localeCompare(b));
+    }, [nodes]);
+    const selectorOptions = useMemo(() => {
+        const options = new Set<string>();
+        nodes.forEach((node) => {
+            const appLabel = getAppSelectorValue(node.data.resource);
+            if (appLabel) options.add(appLabel);
+        });
+        return Array.from(options).sort((a, b) => a.localeCompare(b));
+    }, [nodes]);
+    const serviceOptions = useMemo(
+        () =>
+            nodes
+                .filter((node) => node.data.kind === 'Service')
+                .map((node) => node.data.name as string)
+                .sort((a, b) => a.localeCompare(b)),
+        [nodes]
+    );
 
     const onNodesChange = (changes: NodeChange[]) => {
         const nextNodes = applyNodeChanges(changes, nodes) as Node<K8sNodeData>[];
@@ -66,18 +96,12 @@ export default function Canvas() {
         dragStartPositions.current[node.id] = { ...node.position };
     };
     const onNodeDragStop = (_: unknown, node: Node<K8sNodeData>) => {
-        const ownLabel = getWorkloadLabel(node.data.resource);
-        const blocked = workloadGroups.some((group) => {
-            if (group.labelValue === ownLabel) return false;
-            return isInsideGroup(node.position, group);
-        });
-        if (!blocked) return;
-        const start = dragStartPositions.current[node.id];
-        if (!start) return;
-        setCanvasNodes(
-            nodes.map((n) => (n.id === node.id ? { ...n, position: start } : n))
-        );
+        dragStartPositions.current[node.id] = { ...node.position };
     };
+
+    const onFlowInit = useCallback((instance: ReactFlowInstance<Node<K8sNodeData>>) => {
+        void instance.fitView({ padding: 0.55, maxZoom: 0.9 });
+    }, []);
 
     return (
         <div className="canvas-panel">
@@ -104,69 +128,88 @@ export default function Canvas() {
                         : 'Canvas edits stay visual until bidirectional mode is enabled'}
                 </span>
             </div>
-            <div className="canvas-wrapper canvas-wrapper--split">
-                <ReactFlow
-                    nodes={nodes}
-                    edges={edges}
-                    nodeTypes={nodeTypes}
-                    defaultEdgeOptions={{
-                        type: 'bezier',
-                        markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
-                    }}
-                    onNodesChange={onNodesChange}
-                    onEdgesChange={onEdgesChange}
-                    onConnect={onConnect}
-                    onNodeClick={(_, node) => {
-                        setSelectedNodeId(node.id);
-                        setSelectedResource({
-                            kind: node.data.kind as SupportedKind,
-                            name: node.data.name as string,
-                        });
-                    }}
-                    onNodeDragStart={onNodeDragStart}
-                    onNodeDragStop={onNodeDragStop}
-                    fitView
-                    fitViewOptions={{ padding: 0.55, maxZoom: 0.9 }}
-                    nodesDraggable
-                    selectionOnDrag={false}
-                    proOptions={{ hideAttribution: true }}
-                >
-                    <ViewportPortal>
-                        {workloadGroups.map((group) => (
-                            <div
-                                key={group.id}
-                                className="workload-group"
-                                style={{
-                                    width: group.width,
-                                    height: group.height,
-                                    transform: `translate(${group.x}px, ${group.y}px)`,
-                                }}
-                            >
-                                <div className="workload-group__title">{group.title}</div>
-                            </div>
-                        ))}
-                    </ViewportPortal>
-                    <Panel position="top-left">
-                        <div className="architecture-legend">
-                            {ARCHITECTURE_ROWS.map((row) => (
-                                <span key={row} className="architecture-legend__item">
-                                    {row}
-                                </span>
-                            ))}
-                        </div>
-                    </Panel>
-                    <Background
-                        variant={BackgroundVariant.Dots}
-                        gap={24}
-                        size={1}
-                        color="rgba(136, 166, 205, 0.18)"
-                    />
-                    <Controls
-                        showInteractive={false}
-                        className="canvas-controls"
-                    />
-                </ReactFlow>
-                <aside className="node-inspector">
+            <div className="canvas-wrapper">
+                <div className="canvas-body">
+                    <div className="canvas-flow-host">
+                        <ReactFlow
+                            nodes={nodes}
+                            edges={edges}
+                            nodeTypes={nodeTypes}
+                            defaultEdgeOptions={{
+                                type: 'bezier',
+                                markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
+                            }}
+                            onNodesChange={onNodesChange}
+                            onEdgesChange={onEdgesChange}
+                            onConnect={onConnect}
+                            onNodeClick={(_, node) => {
+                                setSelectedNodeId(node.id);
+                                setSelectedResource({
+                                    kind: node.data.kind as SupportedKind,
+                                    name: node.data.name as string,
+                                });
+                            }}
+                            onNodeDragStart={onNodeDragStart}
+                            onNodeDragStop={onNodeDragStop}
+                            onInit={onFlowInit}
+                            nodesDraggable
+                            selectionOnDrag={false}
+                            proOptions={{ hideAttribution: true }}
+                        >
+                            <ViewportPortal>
+                                {teachingFrame && (
+                                    <div
+                                        className="teaching-frame teaching-frame--outer"
+                                        style={{
+                                            width: teachingFrame.width,
+                                            height: teachingFrame.height,
+                                            transform: `translate(${teachingFrame.x}px, ${teachingFrame.y}px)`,
+                                        }}
+                                    >
+                                        <div className="teaching-frame__title">Cluster</div>
+                                    </div>
+                                )}
+                                {teachingFrame?.namespaces.map((namespace) => (
+                                    <div
+                                        key={namespace.id}
+                                        className="teaching-frame teaching-frame--inner"
+                                        style={{
+                                            width: namespace.width,
+                                            height: namespace.height,
+                                            transform: `translate(${namespace.x}px, ${namespace.y}px)`,
+                                        }}
+                                    >
+                                        <div className="teaching-frame__title">Namespace: {namespace.title}</div>
+                                    </div>
+                                ))}
+                            </ViewportPortal>
+                            <Panel position="top-left">
+                                <div className="architecture-legend">
+                                    {ARCHITECTURE_ROWS.map((row) => (
+                                        <span key={row} className="architecture-legend__item">
+                                            {row}
+                                        </span>
+                                    ))}
+                                </div>
+                            </Panel>
+                            <Background
+                                variant={BackgroundVariant.Dots}
+                                gap={24}
+                                size={1}
+                                color="rgba(136, 166, 205, 0.18)"
+                            />
+                            <Controls
+                                showInteractive={false}
+                                className="canvas-controls"
+                            />
+                        </ReactFlow>
+                    </div>
+                    <aside
+                        className="node-inspector"
+                        onPointerDownCapture={(e) => e.stopPropagation()}
+                        onMouseDownCapture={(e) => e.stopPropagation()}
+                        onWheelCapture={(e) => e.stopPropagation()}
+                    >
                     <div className="node-inspector__title">Resource Inspector</div>
                     {!selectedNode && (
                         <div className="node-inspector__empty">
@@ -206,6 +249,7 @@ export default function Canvas() {
                             <input
                                 className="node-inspector__input"
                                 value={(selectedNode.data.namespace as string) ?? ''}
+                                list={namespaceListId}
                                 onChange={(e) =>
                                     updateNodeFromCanvas(selectedNode.id, {
                                         namespace: e.target.value,
@@ -275,7 +319,8 @@ export default function Canvas() {
                                     <label className="node-inspector__label">Selector Match Labels</label>
                                     <input
                                         className="node-inspector__input"
-                                        value={toKeyValueString((selectedNode.data.resource.spec as any)?.selector?.matchLabels)}
+                                        value={((selectedNode.data.resource.spec as any)?.selector?.matchLabels?.app as string | undefined) ?? ''}
+                                        list={selectorListId}
                                         onChange={(e) =>
                                             updateResourceField(
                                                 selectedNode.id,
@@ -286,13 +331,15 @@ export default function Canvas() {
                                                         ...(selectedNode.data.resource.spec as any),
                                                         selector: {
                                                             ...((selectedNode.data.resource.spec as any)?.selector ?? {}),
-                                                            matchLabels: parseKeyValueString(e.target.value),
+                                                            matchLabels: e.target.value
+                                                                ? { app: e.target.value }
+                                                                : undefined,
                                                         },
                                                     },
                                                 }
                                             )
                                         }
-                                        placeholder="app=my-app"
+                                        placeholder="my-app (clear to remove)"
                                     />
                                 </>
                             )}
@@ -320,7 +367,8 @@ export default function Canvas() {
                                     <label className="node-inspector__label">Selector Match Labels</label>
                                     <input
                                         className="node-inspector__input"
-                                        value={toKeyValueString((selectedNode.data.resource.spec as any)?.selector?.matchLabels)}
+                                        value={((selectedNode.data.resource.spec as any)?.selector?.matchLabels?.app as string | undefined) ?? ''}
+                                        list={selectorListId}
                                         onChange={(e) =>
                                             updateResourceField(
                                                 selectedNode.id,
@@ -331,13 +379,15 @@ export default function Canvas() {
                                                         ...(selectedNode.data.resource.spec as any),
                                                         selector: {
                                                             ...((selectedNode.data.resource.spec as any)?.selector ?? {}),
-                                                            matchLabels: parseKeyValueString(e.target.value),
+                                                            matchLabels: e.target.value
+                                                                ? { app: e.target.value }
+                                                                : undefined,
                                                         },
                                                     },
                                                 }
                                             )
                                         }
-                                        placeholder="app=my-app"
+                                        placeholder="my-app (clear to remove)"
                                     />
                                 </>
                             )}
@@ -417,7 +467,8 @@ export default function Canvas() {
                                     <label className="node-inspector__label">Selector</label>
                                     <input
                                         className="node-inspector__input"
-                                        value={toKeyValueString((selectedNode.data.resource.spec as any)?.selector)}
+                                        value={((selectedNode.data.resource.spec as any)?.selector?.app as string | undefined) ?? ''}
+                                        list={selectorListId}
                                         onChange={(e) =>
                                             updateResourceField(
                                                 selectedNode.id,
@@ -426,12 +477,14 @@ export default function Canvas() {
                                                 {
                                                     spec: {
                                                         ...(selectedNode.data.resource.spec as any),
-                                                        selector: parseKeyValueString(e.target.value),
+                                                        selector: e.target.value
+                                                            ? { app: e.target.value }
+                                                            : undefined,
                                                     },
                                                 }
                                             )
                                         }
-                                        placeholder="app=my-app"
+                                        placeholder="my-app (clear to remove)"
                                     />
                                     <label className="node-inspector__label">Port</label>
                                     <input
@@ -517,6 +570,50 @@ export default function Canvas() {
                                         }
                                         placeholder="/"
                                     />
+                                    <label className="node-inspector__label">Backend Service</label>
+                                    <input
+                                        className="node-inspector__input"
+                                        value={((selectedNode.data.resource.spec as any)?.rules?.[0]?.http?.paths?.[0]?.backend?.service?.name as string | undefined) ?? ''}
+                                        list={serviceListId}
+                                        onChange={(e) =>
+                                            updateResourceField(
+                                                selectedNode.id,
+                                                selectedNode.data.resource,
+                                                updateNodeResourceFromCanvas,
+                                                {
+                                                    spec: {
+                                                        ...(selectedNode.data.resource.spec as any),
+                                                        rules: [
+                                                            {
+                                                                ...((selectedNode.data.resource.spec as any)?.rules?.[0] ?? {}),
+                                                                http: {
+                                                                    ...((selectedNode.data.resource.spec as any)?.rules?.[0]?.http ?? {}),
+                                                                    paths: [
+                                                                        {
+                                                                            ...((selectedNode.data.resource.spec as any)?.rules?.[0]?.http?.paths?.[0] ?? {}),
+                                                                            backend: e.target.value
+                                                                                ? {
+                                                                                    service: {
+                                                                                        name: e.target.value,
+                                                                                        port: {
+                                                                                            number: Number(
+                                                                                                ((selectedNode.data.resource.spec as any)?.rules?.[0]?.http?.paths?.[0]?.backend?.service?.port?.number ?? 80)
+                                                                                            ),
+                                                                                        },
+                                                                                    },
+                                                                                }
+                                                                                : undefined,
+                                                                        },
+                                                                    ],
+                                                                },
+                                                            },
+                                                        ],
+                                                    },
+                                                }
+                                            )
+                                        }
+                                        placeholder="service-name (clear to remove)"
+                                    />
                                 </>
                             )}
                             <button
@@ -531,73 +628,82 @@ export default function Canvas() {
                             </button>
                         </div>
                     )}
-                </aside>
+                        {/* Datalists outside scrollable .node-inspector__form — avoids broken picker/typing in some browsers */}
+                        {selectedNode && (
+                            <>
+                                <datalist id={namespaceListId}>
+                                    {namespaceOptions.map((namespace) => (
+                                        <option key={namespace} value={namespace} />
+                                    ))}
+                                </datalist>
+                                <datalist id={selectorListId}>
+                                    {selectorOptions.map((option) => (
+                                        <option key={option} value={option} />
+                                    ))}
+                                </datalist>
+                                <datalist id={serviceListId}>
+                                    {serviceOptions.map((service) => (
+                                        <option key={service} value={service} />
+                                    ))}
+                                </datalist>
+                            </>
+                        )}
+                    </aside>
+                </div>
             </div>
         </div>
     );
 }
 
-function buildWorkloadGroups(nodes: Node<K8sNodeData>[]) {
-    const grouped = new Map<string, Node<K8sNodeData>[]>();
-    nodes.forEach((node) => {
-        const label = getWorkloadLabel(node.data.resource);
-        if (!label) return;
-        const list = grouped.get(label) ?? [];
-        list.push(node);
-        grouped.set(label, list);
-    });
-
-    const groups: Array<{ id: string; labelValue: string; title: string; x: number; y: number; width: number; height: number }> = [];
-    grouped.forEach((family, labelValue) => {
-        if (family.length < 2) return;
-        const bounds = family.reduce(
-            (acc, node) => {
-                const x = node.position.x;
-                const y = node.position.y;
-                return {
-                    minX: Math.min(acc.minX, x),
-                    maxX: Math.max(acc.maxX, x + 220),
-                    minY: Math.min(acc.minY, y),
-                    maxY: Math.max(acc.maxY, y + 130),
-                };
-            },
-            { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity }
-        );
-
-        groups.push({
-            id: `group-${labelValue}`,
-            labelValue,
-            title: `Workload ${labelValue}`,
-            x: bounds.minX - 24,
-            y: bounds.minY - 24,
-            width: bounds.maxX - bounds.minX + 48,
-            height: bounds.maxY - bounds.minY + 48,
-        });
-    });
-
-    return groups;
-}
-
-function getWorkloadLabel(resource: K8sResource): string | null {
+function getAppSelectorValue(resource: K8sResource): string | null {
     const labels = resource.metadata?.labels;
     if (!labels) return null;
-    return labels.app ?? labels.workload ?? labels.component ?? null;
+    return labels.app ?? null;
 }
 
-function isInsideGroup(
-    position: { x: number; y: number },
-    group: { x: number; y: number; width: number; height: number }
-): boolean {
-    const NODE_WIDTH = 220;
-    const NODE_HEIGHT = 130;
-    const centerX = position.x + NODE_WIDTH / 2;
-    const centerY = position.y + NODE_HEIGHT / 2;
-    return (
-        centerX >= group.x &&
-        centerX <= group.x + group.width &&
-        centerY >= group.y &&
-        centerY <= group.y + group.height
+function buildTeachingFrame(nodes: Node<K8sNodeData>[]) {
+    if (!nodes.length) return null;
+    const outer = getNodeBounds(nodes, 90, 110);
+    const namespaceMap = new Map<string, Node<K8sNodeData>[]>();
+    nodes.forEach((node) => {
+        const key = node.data.namespace ?? 'default';
+        const list = namespaceMap.get(key) ?? [];
+        list.push(node);
+        namespaceMap.set(key, list);
+    });
+
+    const namespaces = Array.from(namespaceMap.entries()).map(([namespace, members]) => {
+        const bounds = getNodeBounds(members, 40, 46);
+        return {
+            id: `ns-${namespace}`,
+            title: namespace,
+            ...bounds,
+        };
+    });
+
+    return { ...outer, namespaces };
+}
+
+function getNodeBounds(nodes: Node<K8sNodeData>[], xPad: number, yPad: number) {
+    const bounds = nodes.reduce(
+        (acc, node) => {
+            const x = node.position.x;
+            const y = node.position.y;
+            return {
+                minX: Math.min(acc.minX, x),
+                maxX: Math.max(acc.maxX, x + NODE_WIDTH),
+                minY: Math.min(acc.minY, y),
+                maxY: Math.max(acc.maxY, y + NODE_HEIGHT),
+            };
+        },
+        { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity }
     );
+    return {
+        x: bounds.minX - xPad,
+        y: bounds.minY - yPad,
+        width: bounds.maxX - bounds.minX + xPad * 2,
+        height: bounds.maxY - bounds.minY + yPad * 2,
+    };
 }
 
 function toOptionalNumber(value: string): number | undefined {

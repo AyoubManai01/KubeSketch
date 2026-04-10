@@ -118,7 +118,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         nodes: initialGraph.nodes,
         edges: initialGraph.edges,
         userEdges: [],
-        isBidirectionalSync: false,
+        isBidirectionalSync: true,
         selectedResource: null,
 
         setYaml: (value: string) => {

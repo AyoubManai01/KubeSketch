@@ -1,73 +1,115 @@
-# React + TypeScript + Vite
+# Veltra
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+**Design, understand, and evolve Kubernetes infrastructure visually - without losing YAML control.**
 
-Currently, two official plugins are available:
+![Veltra Banner](./assets/banner.png)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## What is Veltra?
 
-## React Compiler
+Veltra is an open-source visual Kubernetes IDE that keeps your YAML and infrastructure canvas in sync.  
+Instead of forcing teams to choose between raw manifests and visual modeling, Veltra combines both in one workflow.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Kubernetes YAML is powerful, but it becomes difficult to reason about as systems grow. Veltra helps developers:
 
-## Expanding the ESLint configuration
+- see relationships between resources at a glance
+- edit manifests with confidence
+- understand architecture changes before shipping them
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Features
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+- **YAML Editor** powered by Monaco for a familiar, code-first experience
+- **Visual Canvas** for infrastructure modeling and resource relationships
+- **YAML <-> Canvas Sync** (work in progress) to bridge visual and manifest editing
+- **Architecture Visualization** to make clusters easier to communicate and review
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## Demo / Screenshots
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+> Add screenshots or GIFs when available.
+
+![Veltra Screenshot](./assets/screenshot.png)
+
+## Tech Stack
+
+- **React + TypeScript**
+- **React Flow**
+- **Monaco Editor**
+- **Zustand**
+- **js-yaml**
+- **Vite**
+
+## Getting Started
+
+```bash
+git clone https://github.com/<your-username>/veltra.git
+cd veltra
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Open the local URL from your terminal (usually `http://localhost:5173`).
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Example YAML
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: veltra-api
+  labels:
+    app: veltra-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: veltra-api
+  template:
+    metadata:
+      labels:
+        app: veltra-api
+    spec:
+      containers:
+        - name: api
+          image: nginx:stable
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: veltra-api
+spec:
+  selector:
+    app: veltra-api
+  ports:
+    - port: 80
+      targetPort: 80
 ```
+
+## Roadmap
+
+### Current
+
+- [x] Basic YAML editing experience
+- [x] Initial visual canvas foundation
+- [x] Local development setup with Vite + React + TypeScript
+
+### Upcoming
+
+- [ ] Reliable bidirectional YAML <-> canvas synchronization
+- [ ] Resource validation and diagnostics
+- [ ] Multi-resource graph navigation
+- [ ] Export/import project states
+- [ ] Collaboration-friendly sharing flows
+
+## Contributing
+
+Contributions are welcome and appreciated.  
+Please read [`CONTRIBUTING.md`](./CONTRIBUTING.md) to get started.
+
+## License
+
+This project is licensed under the **MIT License**.
+
+## Vision
+
+**Veltra aims to become the Figma for Kubernetes infrastructure** - a place where teams can design, understand, and iterate on cloud architecture with speed and clarity.

@@ -82,7 +82,7 @@ export default function Canvas() {
     return (
         <div className="canvas-panel">
             <div className="panel-header">
-                <span className="panel-header__dot" />
+                <span className="panel-header__accent" />
                 <span className="panel-header__title">Resource Canvas</span>
             </div>
             <div className="canvas-toolbar">
@@ -167,7 +167,7 @@ export default function Canvas() {
                     />
                 </ReactFlow>
                 <aside className="node-inspector">
-                    <div className="node-inspector__title">Node Inspector</div>
+                    <div className="node-inspector__title">Resource Inspector</div>
                     {!selectedNode && (
                         <div className="node-inspector__empty">
                             Click any node to edit its metadata.
@@ -527,7 +527,7 @@ export default function Canvas() {
                                     setSelectedNodeId(null);
                                 }}
                             >
-                                Delete Node
+                                Delete Resource
                             </button>
                         </div>
                     )}

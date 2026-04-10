@@ -12,10 +12,11 @@ export default function App() {
 
   return (
     <div className="app">
+      <div className="app-brand-watermark" aria-hidden="true" />
       {/* Top toolbar */}
       <header className="toolbar">
         <div className="toolbar__brand">
-          <span className="toolbar__logo">⎈</span>
+          <img className="toolbar__logo" src="/Logo-nobg.png" alt="Veltra logo" />
           <span className="toolbar__name">Veltra</span>
         </div>
         <span className="toolbar__tagline">

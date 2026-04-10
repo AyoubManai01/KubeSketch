@@ -51,7 +51,7 @@ export default function YamlEditor() {
     return (
         <div className="editor-panel">
             <div className="panel-header">
-                <span className="panel-header__icon">📝</span>
+                <span className="panel-header__accent" />
                 <span className="panel-header__title">YAML Editor</span>
             </div>
             <div className="editor-wrapper">

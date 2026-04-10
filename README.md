@@ -1,8 +1,12 @@
-# Veltra
+<p align="center"> <img src="./public/Logo-nobg.png" width="120"/> </p> <h1 align="center" style="font-size: 48px;">Veltra</h1>
 
-**Design, understand, and evolve Kubernetes infrastructure visually - without losing YAML control.**
+<p align="center">
+  <b>Design, understand, and evolve Kubernetes infrastructure visually - without losing YAML control.</b>
+</p>
 
-![Veltra Banner](./public/Banner.PNG)
+<p align="center">
+  <img src="./public/bannergh.png"/>
+</p>
 
 ## What is Veltra?
 

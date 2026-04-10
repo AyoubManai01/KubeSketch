@@ -2,7 +2,7 @@
 
 **Design, understand, and evolve Kubernetes infrastructure visually - without losing YAML control.**
 
-![Veltra Banner](./assets/banner.png)
+![Veltra Banner](./public/Banner.PNG)
 
 ## What is Veltra?
 
@@ -24,9 +24,8 @@ Kubernetes YAML is powerful, but it becomes difficult to reason about as systems
 
 ## Demo / Screenshots
 
-> Add screenshots or GIFs when available.
 
-![Veltra Screenshot](./assets/screenshot.png)
+![Veltra Screenshot](./public/Demo.png)
 
 ## Tech Stack
 
@@ -40,7 +39,7 @@ Kubernetes YAML is powerful, but it becomes difficult to reason about as systems
 ## Getting Started
 
 ```bash
-git clone https://github.com/<your-username>/veltra.git
+git clone https://github.com/AyoubManai01/veltra.git
 cd veltra
 npm install
 npm run dev

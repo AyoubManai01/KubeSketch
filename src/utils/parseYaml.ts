@@ -12,18 +12,12 @@ import { SUPPORTED_KINDS } from '../types/types';
 export function parseYaml(input: string): K8sResource[] {
     if (!input.trim()) return [];
 
-    try {
-        const docs: unknown[] = [];
-        yaml.loadAll(input, (doc) => {
-            if (doc) docs.push(doc);
-        });
+    const docs: unknown[] = [];
+    yaml.loadAll(input, (doc) => {
+        if (doc) docs.push(doc);
+    });
 
-        return docs.filter(isK8sResource);
-    } catch {
-        // If the YAML is malformed, return whatever we could parse so far
-        // This allows the editor to show partial results while user is typing
-        return [];
-    }
+    return docs.filter(isK8sResource);
 }
 
 /**

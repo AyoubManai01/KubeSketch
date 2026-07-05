@@ -1,6 +1,17 @@
+import { useCallback, useRef, useState } from 'react';
 import YamlEditor from './components/YamlEditor';
 import Canvas from './components/Canvas';
 import { useVeltraStore, DEFAULT_YAML } from './store/store';
+
+const SPLIT_KEY = 'veltra_panel_split';
+const MIN_SPLIT = 20;
+const MAX_SPLIT = 80;
+const DEFAULT_SPLIT = 42;
+
+function loadSplitRatio(): number {
+  const saved = Number(localStorage.getItem(SPLIT_KEY));
+  return Number.isFinite(saved) && saved >= MIN_SPLIT && saved <= MAX_SPLIT ? saved : DEFAULT_SPLIT;
+}
 
 /**
  * Veltra — Kubernetes Visual IDE
@@ -12,6 +23,36 @@ export default function App() {
   const setYaml = useVeltraStore((s) => s.setYaml);
   const clearAll = useVeltraStore((s) => s.clearAll);
   const resetLayout = useVeltraStore((s) => s.resetLayout);
+
+  // User-resizable editor/canvas split — purely presentational, so it lives
+  // outside the resource-model store and is persisted directly to localStorage.
+  const panelsRef = useRef<HTMLDivElement>(null);
+  const [splitRatio, setSplitRatio] = useState(loadSplitRatio);
+  const [isResizing, setIsResizing] = useState(false);
+
+  // Pointer capture on the splitter itself keeps drag events flowing even
+  // when the cursor moves over Monaco or the React Flow canvas underneath.
+  const handleSplitterPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setIsResizing(true);
+  }, []);
+
+  const handleSplitterPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!panelsRef.current || e.buttons === 0) return;
+    const rect = panelsRef.current.getBoundingClientRect();
+    const ratio = ((e.clientX - rect.left) / rect.width) * 100;
+    setSplitRatio(Math.min(MAX_SPLIT, Math.max(MIN_SPLIT, ratio)));
+  }, []);
+
+  const handleSplitterPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    setIsResizing(false);
+    setSplitRatio((current) => {
+      localStorage.setItem(SPLIT_KEY, String(current));
+      return current;
+    });
+  }, []);
 
   // Clear YAML editor, canvas, manual edges and saved layout
   const handleClearAll = () => {
@@ -107,8 +148,17 @@ export default function App() {
       </header>
 
       {/* Split-screen panels */}
-      <main className="panels">
-        <YamlEditor />
+      <main className={`panels ${isResizing ? 'panels--resizing' : ''}`} ref={panelsRef}>
+        <YamlEditor style={{ width: `${splitRatio}%` }} />
+        <div
+          className="panel-splitter"
+          onPointerDown={handleSplitterPointerDown}
+          onPointerMove={handleSplitterPointerMove}
+          onPointerUp={handleSplitterPointerUp}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize editor and canvas panels"
+        />
         <Canvas />
       </main>
     </div>

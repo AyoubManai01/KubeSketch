@@ -298,10 +298,11 @@ body,
 /* ---------- Monaco Editor Panel ---------- */
 .editor-panel {
   width: 42%;
+  min-width: 280px;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   background: var(--bg-primary);
-  border-right: 1px solid var(--border-default);
   position: relative;
 }
 
@@ -383,9 +384,47 @@ body,
 /* ---------- Canvas Panel ---------- */
 .canvas-panel {
   flex: 1;
+  min-width: 320px;
   display: flex;
   flex-direction: column;
   background: var(--bg-primary);
+}
+
+/* ---------- Resizable Panel Splitter ---------- */
+.panel-splitter {
+  width: 5px;
+  flex-shrink: 0;
+  position: relative;
+  background: var(--border-default);
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 60;
+  transition: background var(--transition-fast);
+}
+
+/* Widen the hit area without widening the visible line */
+.panel-splitter::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  right: -4px;
+}
+
+.panel-splitter:hover,
+.panels--resizing .panel-splitter {
+  background: var(--accent-service);
+}
+
+.panels--resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.panels--resizing .editor-panel,
+.panels--resizing .canvas-panel {
+  pointer-events: none;
 }
 
 .canvas-toolbar {

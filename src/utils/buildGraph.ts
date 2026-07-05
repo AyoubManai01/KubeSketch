@@ -7,12 +7,19 @@ export interface K8sNodeData {
     name: string;
     namespace?: string;
     resource: K8sResource;
+    /** True for controller-managed resources Veltra materializes (like a real cluster
+     *  creating a Deployment's ReplicaSet and Pods). Never serialized back to YAML. */
+    synthetic?: boolean;
+    /** For synthetic resources: the nearest REAL resource that controls them. */
+    managedBy?: { kind: SupportedKind; name: string };
     [key: string]: unknown;
 }
 
 // Dimensions configuration
 const POD_WIDTH = 150;
-const POD_HEIGHT = 65;
+const POD_HEIGHT = 110; // fits header + namespace/container/image rows without overflowing the parent
+const SERVICE_HEIGHT = 104;
+const INGRESS_HEIGHT = 104;
 const RS_HEADER_HEIGHT = 45;
 const DEP_HEADER_HEIGHT = 45;
 
@@ -23,9 +30,66 @@ const POD_GAP = 12;
 const RS_GAP = 20;
 const WORKLOAD_GAP = 48;
 
+/** Upper bound on materialized Pods per ReplicaSet — keeps huge replica counts renderable.
+ *  The replica badge on the workload always shows the true desired count. */
+export const MAX_SYNTHETIC_PODS = 15;
+
 /** Canonical React Flow node ID for a resource. Kept stable and derivable everywhere. */
 export function nodeIdFor(kind: string, name: string): string {
     return `${kind}-${name}`;
+}
+
+/** Deterministic pod-template-hash-style suffix so synthetic names are stable across rebuilds. */
+function shortHash(input: string): string {
+    let h = 5381;
+    for (let i = 0; i < input.length; i++) {
+        h = ((h << 5) + h + input.charCodeAt(i)) >>> 0;
+    }
+    return h.toString(36).slice(0, 5).padEnd(5, '0');
+}
+
+/** Desired replica count of a workload (Kubernetes defaults to 1 when unset). */
+export function replicasOf(resource: K8sResource): number {
+    const spec = resource.spec as { replicas?: unknown } | undefined;
+    const n = spec?.replicas;
+    if (typeof n === 'number' && Number.isFinite(n) && n >= 0) return Math.floor(n);
+    return 1;
+}
+
+/** The ReplicaSet a real cluster would create for a Deployment. */
+function synthesizeReplicaSet(dep: K8sResource): K8sResource {
+    const spec = dep.spec as { template?: unknown } | undefined;
+    const podLabels = getWorkloadPodLabels(dep) ?? { app: dep.metadata.name };
+    return {
+        apiVersion: 'apps/v1',
+        kind: 'ReplicaSet',
+        metadata: {
+            name: `${dep.metadata.name}-${shortHash(dep.metadata.name)}`,
+            ...(dep.metadata.namespace ? { namespace: dep.metadata.namespace } : {}),
+            labels: { ...podLabels },
+        },
+        spec: {
+            replicas: replicasOf(dep),
+            selector: { matchLabels: { ...podLabels } },
+            ...(spec?.template ? { template: structuredClone(spec.template) } : {}),
+        },
+    };
+}
+
+/** One of the Pods a real cluster would run for a ReplicaSet. */
+function synthesizePod(rs: K8sResource, name: string): K8sResource {
+    const spec = rs.spec as { template?: { spec?: unknown } } | undefined;
+    const labels = getWorkloadPodLabels(rs) ?? { app: rs.metadata.name };
+    return {
+        apiVersion: 'v1',
+        kind: 'Pod',
+        metadata: {
+            name,
+            ...(rs.metadata.namespace ? { namespace: rs.metadata.namespace } : {}),
+            labels: { ...labels },
+        },
+        spec: spec?.template?.spec ? structuredClone(spec.template.spec) : {},
+    };
 }
 
 /**
@@ -48,6 +112,14 @@ function getSavedPosition(kind: string, name: string): { x: number; y: number } 
 
 /**
  * Convert an array of parsed K8s resources into React Flow nodes with true nested containment.
+ *
+ * Kubernetes controller simulation:
+ * - A Deployment with no matching ReplicaSet in the manifest gets a synthetic one
+ *   (named `<name>-<hash>` like a real pod-template-hash RS).
+ * - Every ReplicaSet (real or synthetic) materializes Pods up to `spec.replicas`,
+ *   on top of any explicit Pods in the manifest that its selector claims.
+ * - Synthetic resources are flagged `synthetic` + `managedBy` in node data; they are
+ *   display-only and are never serialized back to YAML.
  *
  * Layout rules:
  * 1. Pods are nested inside ReplicaSets. Lay out in a 3-column grid. Compute ReplicaSet size.
@@ -97,9 +169,25 @@ export function buildGraph(
         depToRs.set(dep, children);
     });
 
+    // ── Controller simulation: materialize what Kubernetes would create ─────
+    /** synthetic resource → its nearest REAL controlling resource */
+    const syntheticOwner = new Map<K8sResource, { kind: SupportedKind; name: string }>();
+
+    deployments.forEach((dep) => {
+        const children = depToRs.get(dep)!;
+        if (children.length === 0) {
+            const rs = synthesizeReplicaSet(dep);
+            syntheticOwner.set(rs, { kind: 'Deployment', name: dep.metadata.name });
+            children.push(rs);
+        }
+    });
+    const syntheticRs = [...syntheticOwner.keys()];
+
+    // Real ReplicaSets claim explicit Pods first, then synthetic ones get a chance
+    const allReplicaSets = [...replicaSets, ...syntheticRs];
     const claimedPods = new Set<K8sResource>();
     const rsToPod = new Map<K8sResource, K8sResource[]>();
-    replicaSets.forEach((rs) => {
+    allReplicaSets.forEach((rs) => {
         const children = pods.filter((pod) => {
             if (claimedPods.has(pod)) return false;
             return ownsResource(rs, pod);
@@ -107,6 +195,39 @@ export function buildGraph(
         children.forEach((pod) => claimedPods.add(pod));
         rsToPod.set(rs, children);
     });
+
+    // Materialize the pod shortfall for every ReplicaSet: replicas minus explicit pods
+    const usedPodNames = new Set(pods.map((p) => p.metadata.name));
+    const syntheticPods: K8sResource[] = [];
+    allReplicaSets.forEach((rs) => {
+        const explicit = rsToPod.get(rs) ?? [];
+        const desired = replicasOf(rs);
+        const shortfall = Math.min(Math.max(desired - explicit.length, 0), MAX_SYNTHETIC_PODS);
+        if (shortfall === 0) return;
+
+        const owner = syntheticOwner.get(rs) ?? { kind: rs.kind, name: rs.metadata.name };
+        const generated: K8sResource[] = [];
+        let suffix = 1;
+        for (let i = 0; i < shortfall; i++) {
+            let name = `${rs.metadata.name}-${suffix++}`;
+            while (usedPodNames.has(name)) name = `${rs.metadata.name}-${suffix++}`;
+            usedPodNames.add(name);
+            const pod = synthesizePod(rs, name);
+            syntheticOwner.set(pod, owner);
+            generated.push(pod);
+        }
+        syntheticPods.push(...generated);
+        rsToPod.set(rs, [...explicit, ...generated]);
+    });
+
+    /** All pods that end up on the canvas — explicit + controller-materialized. */
+    const allPods = [...pods, ...syntheticPods];
+
+    /** synthetic/managedBy node-data fragment for a resource (empty for real resources). */
+    const syntheticMeta = (resource: K8sResource): Partial<K8sNodeData> => {
+        const owner = syntheticOwner.get(resource);
+        return owner ? { synthetic: true, managedBy: owner } : {};
+    };
 
     // Standalone elements
     const standaloneRs = replicaSets.filter((rs) => !claimedRs.has(rs));
@@ -162,6 +283,7 @@ export function buildGraph(
                 name: pod.metadata.name,
                 namespace: pod.metadata.namespace,
                 resource: pod,
+                ...syntheticMeta(pod),
             },
             draggable: false,
         });
@@ -178,6 +300,51 @@ export function buildGraph(
             height = RS_HEADER_HEIGHT + RS_PADDING.top + RS_PADDING.bottom + rows * POD_HEIGHT + (rows - 1) * POD_GAP;
         }
         return { width, height };
+    };
+
+    const depWidthOf = (dep: K8sResource) => {
+        const childRs = depToRs.get(dep) ?? [];
+        if (!childRs.length) return 220;
+        let w = DEP_PADDING.left;
+        childRs.forEach((rs) => {
+            w += rsSize(rs).width + RS_GAP;
+        });
+        return w - RS_GAP + DEP_PADDING.right;
+    };
+
+    // Workload auto-placement must clear user-positioned workloads, otherwise every
+    // new node lands at the cursor origin and stacks on top of the pinned ones
+    // (which also buries their connection handles).
+    const fixedWorkloadSpans: Array<{ x: number; width: number }> = [];
+    const workloadPos = (kind: string, name: string) =>
+        prevCoords.get(`${kind}:${name}`) || getSavedPosition(kind, name);
+    deployments.forEach((dep) => {
+        const pos = workloadPos('Deployment', dep.metadata.name);
+        if (pos) fixedWorkloadSpans.push({ x: pos.x, width: depWidthOf(dep) });
+    });
+    standaloneRs.forEach((rs) => {
+        const pos = workloadPos('ReplicaSet', rs.metadata.name);
+        if (pos) fixedWorkloadSpans.push({ x: pos.x, width: rsSize(rs).width });
+    });
+    standalonePods.forEach((pod) => {
+        const pos = workloadPos('Pod', pod.metadata.name);
+        if (pos) fixedWorkloadSpans.push({ x: pos.x, width: POD_WIDTH });
+    });
+
+    const autoPlaceWorkload = (width: number): number => {
+        let x = workloadXCursor;
+        let moved = true;
+        while (moved) {
+            moved = false;
+            for (const span of fixedWorkloadSpans) {
+                if (x < span.x + span.width + WORKLOAD_GAP && x + width + WORKLOAD_GAP > span.x) {
+                    x = span.x + span.width + WORKLOAD_GAP;
+                    moved = true;
+                }
+            }
+        }
+        workloadXCursor = x + width + WORKLOAD_GAP;
+        return x;
     };
 
     // A. Deployments
@@ -215,11 +382,7 @@ export function buildGraph(
         const key = `Deployment:${dep.metadata.name}`;
         const savedPos = getSavedPosition('Deployment', dep.metadata.name);
         const prevPos = prevCoords.get(key);
-        const depPos = prevPos || savedPos || { x: workloadXCursor, y: 320 };
-
-        if (!prevPos && !savedPos) {
-            workloadXCursor += depWidth + WORKLOAD_GAP;
-        }
+        const depPos = prevPos || savedPos || { x: autoPlaceWorkload(depWidth), y: 320 };
 
         absCoords.set(depId, depPos);
 
@@ -256,6 +419,7 @@ export function buildGraph(
                     name: rsDim.node.metadata.name,
                     namespace: rsDim.node.metadata.namespace,
                     resource: rsDim.node,
+                    ...syntheticMeta(rsDim.node),
                 },
                 draggable: false,
             });
@@ -272,11 +436,7 @@ export function buildGraph(
         const key = `ReplicaSet:${rs.metadata.name}`;
         const savedPos = getSavedPosition('ReplicaSet', rs.metadata.name);
         const prevPos = prevCoords.get(key);
-        const rsPos = prevPos || savedPos || { x: workloadXCursor, y: 320 };
-
-        if (!prevPos && !savedPos) {
-            workloadXCursor += rsWidth + WORKLOAD_GAP;
-        }
+        const rsPos = prevPos || savedPos || { x: autoPlaceWorkload(rsWidth), y: 320 };
 
         absCoords.set(rsId, rsPos);
 
@@ -303,11 +463,7 @@ export function buildGraph(
         const key = `Pod:${pod.metadata.name}`;
         const savedPos = getSavedPosition('Pod', pod.metadata.name);
         const prevPos = prevCoords.get(key);
-        const podPos = prevPos || savedPos || { x: workloadXCursor, y: 320 };
-
-        if (!prevPos && !savedPos) {
-            workloadXCursor += POD_WIDTH + WORKLOAD_GAP;
-        }
+        const podPos = prevPos || savedPos || { x: autoPlaceWorkload(POD_WIDTH), y: 320 };
 
         absCoords.set(podId, podPos);
 
@@ -347,7 +503,7 @@ export function buildGraph(
             const matchingIds: string[] = [];
 
             if (selector) {
-                pods.forEach((pod) => {
+                allPods.forEach((pod) => {
                     if (matchesSelector(selector, getTargetLabels(pod))) {
                         const id = idByResource.get(pod);
                         if (id) matchingIds.push(id);
@@ -394,7 +550,7 @@ export function buildGraph(
             id: sInfo.id,
             type: 'k8sNode',
             position: pos,
-            style: { width: 170, height: 75 },
+            style: { width: 170, height: SERVICE_HEIGHT },
             data: {
                 kind: 'Service',
                 name: sInfo.node.metadata.name,
@@ -473,7 +629,7 @@ export function buildGraph(
             id: iInfo.id,
             type: 'k8sNode',
             position: pos,
-            style: { width: 180, height: 75 },
+            style: { width: 180, height: INGRESS_HEIGHT },
             data: {
                 kind: 'Ingress',
                 name: iInfo.node.metadata.name,
@@ -537,8 +693,9 @@ export function buildGraph(
         });
     });
 
-    // Service → Pod (and Service → workload when the workload's pod template matches
-    // the selector but no concrete Pod resources exist for it in the manifest)
+    // Service → Pod (real Kubernetes networking: Services select Pods by labels,
+    // including the controller-materialized ones). Falls back to a Service → workload
+    // edge only when the workload matches but currently runs no pods (replicas: 0).
     services.forEach((svc) => {
         const svcId = idByResource.get(svc);
         const selector = getSelector(svc);
@@ -549,7 +706,7 @@ export function buildGraph(
         const edgeLabel = port ? `port: ${port}` : 'selects';
 
         const matchedPods = new Set<K8sResource>();
-        pods.forEach((pod) => {
+        allPods.forEach((pod) => {
             if (matchesSelector(selector, getTargetLabels(pod))) {
                 matchedPods.add(pod);
                 const podId = idByResource.get(pod);

@@ -1,13 +1,14 @@
-import type { K8sResource } from '../types/types';
+import type { K8sResource, SupportedKind } from '../types/types';
 import { getSelector, getWorkloadPodLabels } from './buildGraph';
 
 /**
  * Semantic manual linking.
  *
- * When the user draws a connection between two nodes on the canvas we try to express
+ * When the user draws a connection between two nodes on the canvas we express
  * that relationship in the actual Kubernetes model (selectors, labels, ingress backends)
  * so it survives re-renders, round-trips through YAML, and shows up as a real inferred
- * relationship. Pairs with no K8s meaning return null and are kept as cosmetic edges.
+ * relationship. Pairs with no K8s meaning return null — the store rejects them with
+ * the message from `explainInvalidLink` instead of drawing a meaningless edge.
  *
  * Direction-agnostic: dragging Service→Pod and Pod→Service mean the same thing.
  */
@@ -40,7 +41,34 @@ export function connectResources(
     if (pair('ReplicaSet', 'Pod')) {
         return linkOwnership(resources, byKind('ReplicaSet'), byKind('Pod'));
     }
+    if (pair('Deployment', 'Pod')) {
+        // Auto-correct: Deployments never own Pods directly in Kubernetes. Labeling the
+        // Pod with the Deployment's selector lets its ReplicaSet adopt it instead.
+        const result = linkOwnership(resources, byKind('Deployment'), byKind('Pod'));
+        const podName = resources[byKind('Pod')].metadata.name;
+        const depName = resources[byKind('Deployment')].metadata.name;
+        return {
+            ...result,
+            description: `${podName} adopted by ${depName}'s ReplicaSet (Deployments own Pods via ReplicaSets)`,
+        };
+    }
     return null;
+}
+
+/** Human-readable reason why two kinds cannot be linked, with guidance on what to do instead. */
+export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
+    const pair = (x: SupportedKind, y: SupportedKind) => (a === x && b === y) || (a === y && b === x);
+
+    if (pair('Ingress', 'Pod')) {
+        return 'An Ingress cannot route to a Pod directly — route it to a Service that selects the Pod.';
+    }
+    if (pair('Ingress', 'Deployment') || pair('Ingress', 'ReplicaSet')) {
+        return `An Ingress cannot route to a ${a === 'Ingress' ? b : a} — expose the workload with a Service first, then route the Ingress to it.`;
+    }
+    if (a === b) {
+        return `Two ${a} resources have no direct relationship in Kubernetes.`;
+    }
+    return `${a} and ${b} have no valid Kubernetes relationship.`;
 }
 
 /** Point the Ingress default rule/path backend at the Service. */

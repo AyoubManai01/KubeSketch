@@ -19,7 +19,7 @@ import '@xyflow/react/dist/style.css';
 import { useVeltraStore } from '../store/store';
 import K8sNode from './K8sNode';
 import { SUPPORTED_KINDS, type K8sResource, type SupportedKind } from '../types/types';
-import type { K8sNodeData } from '../utils/buildGraph';
+import { getWorkloadPodLabels, type K8sNodeData } from '../utils/buildGraph';
 import { resourcesToYaml } from '../utils/serializeYaml';
 import CreateResourceModal from './CreateResourceModal';
 
@@ -27,7 +27,6 @@ import CreateResourceModal from './CreateResourceModal';
 const nodeTypes: NodeTypes = {
     k8sNode: K8sNode,
 };
-const ARCHITECTURE_ROWS = ['Ingress', 'Service', 'Deployment', 'ReplicaSet', 'Pod'];
 const FALLBACK_NODE_WIDTH = 220;
 const FALLBACK_NODE_HEIGHT = 130;
 const DEFAULT_NAMESPACES = ['default', 'kube-system', 'kube-public'];
@@ -94,7 +93,6 @@ function hexToRgba(hex: string, alpha: number): string {
 export default function Canvas() {
     const uid = useId().replace(/:/g, '');
     const namespaceListId = `veltra-ns-${uid}`;
-    const selectorListId = `veltra-sel-${uid}`;
 
     const nodes = useVeltraStore((s) => s.nodes);
     const edges = useVeltraStore((s) => s.edges);
@@ -109,10 +107,19 @@ export default function Canvas() {
     const addCanvasEdge = useVeltraStore((s) => s.addCanvasEdge);
     const applyCanvasEdgeChanges = useVeltraStore((s) => s.applyCanvasEdgeChanges);
     const updateNodeResourceFromCanvas = useVeltraStore((s) => s.updateNodeResourceFromCanvas);
+    const notice = useVeltraStore((s) => s.notice);
+    const setNotice = useVeltraStore((s) => s.setNotice);
 
     const [pendingKind, setPendingKind] = useState<SupportedKind | null>(null);
     const [yamlPreviewOpen, setYamlPreviewOpen] = useState(false);
     const inspectorContentRef = useRef<HTMLDivElement>(null);
+
+    // Auto-dismiss the feedback toast (errors linger a bit longer)
+    useEffect(() => {
+        if (!notice) return;
+        const timer = setTimeout(() => setNotice(null), notice.tone === 'error' ? 6000 : 4200);
+        return () => clearTimeout(timer);
+    }, [notice, setNotice]);
 
     // Selection lives in the store as {kind, name} so it survives node ID changes
     // (renames, kind changes) — the node is looked up fresh on every render.
@@ -145,13 +152,27 @@ export default function Canvas() {
         return Array.from(discovered).sort((a, b) => a.localeCompare(b));
     }, [nodes]);
 
+    // Selectable `app` label values, with the real resources they come from —
+    // selector fields are dropdowns over the live model, never free text.
     const selectorOptions = useMemo(() => {
-        const options = new Set<string>();
+        const owners = new Map<string, string[]>();
         nodes.forEach((node) => {
-            const appLabel = getAppSelectorValue(node.data.resource);
-            if (appLabel) options.add(appLabel);
+            if (node.data.synthetic) return;
+            const kind = node.data.kind;
+            let value: string | undefined;
+            if (kind === 'Deployment' || kind === 'ReplicaSet') {
+                value = getWorkloadPodLabels(node.data.resource)?.app;
+            } else if (kind === 'Pod') {
+                value = node.data.resource.metadata?.labels?.app;
+            }
+            if (!value) return;
+            const list = owners.get(value) ?? [];
+            list.push(`${kind} ${node.data.name}`);
+            owners.set(value, list);
         });
-        return Array.from(options).sort((a, b) => a.localeCompare(b));
+        return Array.from(owners.entries())
+            .map(([value, list]) => ({ value, owners: list.join(', ') }))
+            .sort((a, b) => a.value.localeCompare(b.value));
     }, [nodes]);
 
     const serviceOptions = useMemo(
@@ -241,6 +262,11 @@ export default function Canvas() {
             icon: KIND_ICONS[kind] ?? KIND_ICONS.Pod,
         };
     }, [selectedNode]);
+
+    // Controller-managed (synthetic) resources are inspectable but not editable —
+    // like a real cluster, their spec lives on the owning controller.
+    const isManaged = !!selectedNode?.data.synthetic;
+    const managedOwner = selectedNode?.data.managedBy ?? null;
 
     /** Empty string = valid; otherwise the validation error to show. */
     const validateName = useCallback(
@@ -380,12 +406,11 @@ export default function Canvas() {
                                 ))}
                             </ViewportPortal>
                             <Panel position="top-left">
-                                <div className="architecture-legend">
-                                    {ARCHITECTURE_ROWS.map((row) => (
-                                        <span key={row} className="architecture-legend__item">
-                                            {row}
-                                        </span>
-                                    ))}
+                                <div className="canvas-legend">
+                                    <span className="canvas-legend__item canvas-legend__item--own">Ownership = nesting</span>
+                                    <span className="canvas-legend__item canvas-legend__item--svc">Service traffic</span>
+                                    <span className="canvas-legend__item canvas-legend__item--ing">Ingress route</span>
+                                    <span className="canvas-legend__item canvas-legend__item--auto">auto = managed by controller</span>
                                 </div>
                             </Panel>
                             <Background
@@ -396,6 +421,18 @@ export default function Canvas() {
                             />
                             <Controls showInteractive={false} className="canvas-controls" />
                         </ReactFlow>
+
+                        {/* Transient feedback: link results, validation errors, managed-resource guard rails */}
+                        {notice && (
+                            <div key={notice.id} className={`canvas-toast canvas-toast--${notice.tone}`} role="status">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    {notice.tone === 'success' && <path d="M20 6L9 17l-5-5" />}
+                                    {notice.tone === 'error' && <path d="M12 8v5M12 16.5h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z" />}
+                                    {notice.tone === 'info' && <><circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" /></>}
+                                </svg>
+                                <span>{notice.text}</span>
+                            </div>
+                        )}
 
                         {isEmpty && (
                             <div className="canvas-empty-state">
@@ -502,7 +539,79 @@ export default function Canvas() {
                                     </div>
                                 </div>
 
+                                {/* ── Managed-resource banner ─────────────── */}
+                                {isManaged && managedOwner && (
+                                    <div className="inspector-managed-banner">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                                        </svg>
+                                        <div className="inspector-managed-banner__text">
+                                            <strong>Managed by {managedOwner.kind} {managedOwner.name}</strong>
+                                            <p>
+                                                Kubernetes creates this {inspectorData.kind} automatically — it is not
+                                                part of the manifest. Edit the owner to change it; scale its replicas
+                                                to change the Pod count.
+                                            </p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className="inspector-managed-banner__btn"
+                                            onClick={() =>
+                                                setSelectedResource({
+                                                    kind: managedOwner.kind,
+                                                    name: managedOwner.name,
+                                                })
+                                            }
+                                        >
+                                            Inspect {managedOwner.kind}
+                                        </button>
+                                    </div>
+                                )}
+
+                                {/* ── Managed-resource read-only details ──── */}
+                                {isManaged && (
+                                    <div className="inspector-section">
+                                        <div className="inspector-section__header">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                <circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" />
+                                            </svg>
+                                            Details
+                                        </div>
+                                        <div className="inspector-section__body">
+                                            {(() => {
+                                                const spec = (selectedNode.data.resource.spec ?? {}) as Record<string, any>;
+                                                const labels = selectedNode.data.resource.metadata?.labels ?? {};
+                                                const rows: Array<{ k: string; v: string }> = [];
+                                                if (inspectorData.namespace) rows.push({ k: 'Namespace', v: inspectorData.namespace });
+                                                if (inspectorData.kind === 'ReplicaSet' && typeof spec.replicas === 'number') {
+                                                    rows.push({ k: 'Replicas', v: String(spec.replicas) });
+                                                }
+                                                if (spec.containers?.[0]?.name) rows.push({ k: 'Container', v: spec.containers[0].name });
+                                                if (spec.containers?.[0]?.image) rows.push({ k: 'Image', v: spec.containers[0].image });
+                                                return (
+                                                    <>
+                                                        {rows.map((row) => (
+                                                            <div key={row.k} className="inspector-static-row">
+                                                                <span className="inspector-static-row__key">{row.k}</span>
+                                                                <span className="inspector-static-row__val" title={row.v}>{row.v}</span>
+                                                            </div>
+                                                        ))}
+                                                        {Object.keys(labels).length > 0 && (
+                                                            <div className="inspector-label-chips">
+                                                                {Object.entries(labels).map(([k, v]) => (
+                                                                    <span key={k} className="inspector-label-chip">{k}={v}</span>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </>
+                                                );
+                                            })()}
+                                        </div>
+                                    </div>
+                                )}
+
                                 {/* ── Section: General ────────────────────── */}
+                                {!isManaged && (
                                 <div className="inspector-section">
                                     <div className="inspector-section__header">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -547,8 +656,10 @@ export default function Canvas() {
                                         </div>
                                     </div>
                                 </div>
+                                )}
 
                                 {/* ── Section: Metadata ───────────────────── */}
+                                {!isManaged && (
                                 <div className="inspector-section">
                                     <div className="inspector-section__header">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -614,9 +725,10 @@ export default function Canvas() {
                                         </div>
                                     </div>
                                 </div>
+                                )}
 
                                 {/* ── Section: Scaling (Deployment / ReplicaSet) ── */}
-                                {(inspectorData.kind === 'Deployment' || inspectorData.kind === 'ReplicaSet') && (
+                                {!isManaged && (inspectorData.kind === 'Deployment' || inspectorData.kind === 'ReplicaSet') && (
                                     <div className="inspector-section">
                                         <div className="inspector-section__header">
                                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -651,37 +763,58 @@ export default function Canvas() {
                                                     }
                                                     placeholder="3"
                                                 />
+                                                <span className="inspector-field__hint">
+                                                    Pods are materialized on the canvas to match this count, like a real cluster.
+                                                </span>
                                             </div>
                                             <div className="inspector-field">
                                                 <label className="inspector-field__label">Selector (app=)</label>
-                                                <input
-                                                    className="inspector-field__input"
-                                                    value={
+                                                {(() => {
+                                                    const current =
                                                         ((selectedNode.data.resource.spec as any)?.selector
-                                                            ?.matchLabels?.app as string | undefined) ?? ''
-                                                    }
-                                                    list={selectorListId}
-                                                    onChange={(e) =>
-                                                        updateResourceField(
-                                                            selectedNode.id,
-                                                            selectedNode.data.resource,
-                                                            updateNodeResourceFromCanvas,
-                                                            {
-                                                                spec: {
-                                                                    ...(selectedNode.data.resource.spec as any),
-                                                                    selector: e.target.value
-                                                                        ? {
-                                                                              ...((selectedNode.data.resource.spec as any)
-                                                                                  ?.selector ?? {}),
-                                                                              matchLabels: { app: e.target.value },
-                                                                          }
-                                                                        : undefined,
-                                                                },
+                                                            ?.matchLabels?.app as string | undefined) ?? '';
+                                                    const ownName = selectedNode.data.name as string;
+                                                    const known = selectorOptions.some((o) => o.value === current);
+                                                    return (
+                                                        <select
+                                                            className="inspector-field__input inspector-field__input--select"
+                                                            value={current}
+                                                            onChange={(e) =>
+                                                                updateResourceField(
+                                                                    selectedNode.id,
+                                                                    selectedNode.data.resource,
+                                                                    updateNodeResourceFromCanvas,
+                                                                    {
+                                                                        spec: {
+                                                                            ...(selectedNode.data.resource.spec as any),
+                                                                            selector: e.target.value
+                                                                                ? {
+                                                                                      ...((selectedNode.data.resource.spec as any)
+                                                                                          ?.selector ?? {}),
+                                                                                      matchLabels: { app: e.target.value },
+                                                                                  }
+                                                                                : undefined,
+                                                                        },
+                                                                    }
+                                                                )
                                                             }
-                                                        )
-                                                    }
-                                                    placeholder="my-app"
-                                                />
+                                                        >
+                                                            <option value="">(no selector)</option>
+                                                            {selectorOptions.map((o) => (
+                                                                <option key={o.value} value={o.value}>
+                                                                    {o.value} — {o.owners}
+                                                                </option>
+                                                            ))}
+                                                            {!selectorOptions.some((o) => o.value === ownName) &&
+                                                                current !== ownName && (
+                                                                    <option value={ownName}>{ownName} (create new label)</option>
+                                                                )}
+                                                            {current && !known && (
+                                                                <option value={current}>{current} (no match on canvas)</option>
+                                                            )}
+                                                        </select>
+                                                    );
+                                                })()}
                                                 <span className="inspector-field__hint">
                                                     Pods/ReplicaSets carrying this app label are rendered inside this workload.
                                                 </span>
@@ -691,7 +824,7 @@ export default function Canvas() {
                                 )}
 
                                 {/* ── Section: Containers (Pod) ───────────── */}
-                                {inspectorData.kind === 'Pod' && (
+                                {!isManaged && inspectorData.kind === 'Pod' && (
                                     <div className="inspector-section">
                                         <div className="inspector-section__header">
                                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -801,33 +934,46 @@ export default function Canvas() {
                                                 </select>
                                             </div>
                                             <div className="inspector-field">
-                                                <label className="inspector-field__label">Selector (app=)</label>
-                                                <input
-                                                    className="inspector-field__input"
-                                                    value={
+                                                <label className="inspector-field__label">Route to (selector app=)</label>
+                                                {(() => {
+                                                    const current =
                                                         ((selectedNode.data.resource.spec as any)?.selector
-                                                            ?.app as string | undefined) ?? ''
-                                                    }
-                                                    list={selectorListId}
-                                                    onChange={(e) =>
-                                                        updateResourceField(
-                                                            selectedNode.id,
-                                                            selectedNode.data.resource,
-                                                            updateNodeResourceFromCanvas,
-                                                            {
-                                                                spec: {
-                                                                    ...(selectedNode.data.resource.spec as any),
-                                                                    selector: e.target.value
-                                                                        ? { app: e.target.value }
-                                                                        : undefined,
-                                                                },
+                                                            ?.app as string | undefined) ?? '';
+                                                    const known = selectorOptions.some((o) => o.value === current);
+                                                    return (
+                                                        <select
+                                                            className="inspector-field__input inspector-field__input--select"
+                                                            value={current}
+                                                            onChange={(e) =>
+                                                                updateResourceField(
+                                                                    selectedNode.id,
+                                                                    selectedNode.data.resource,
+                                                                    updateNodeResourceFromCanvas,
+                                                                    {
+                                                                        spec: {
+                                                                            ...(selectedNode.data.resource.spec as any),
+                                                                            selector: e.target.value
+                                                                                ? { app: e.target.value }
+                                                                                : undefined,
+                                                                        },
+                                                                    }
+                                                                )
                                                             }
-                                                        )
-                                                    }
-                                                    placeholder="my-app"
-                                                />
+                                                        >
+                                                            <option value="">(no selector)</option>
+                                                            {selectorOptions.map((o) => (
+                                                                <option key={o.value} value={o.value}>
+                                                                    {o.value} — {o.owners}
+                                                                </option>
+                                                            ))}
+                                                            {current && !known && (
+                                                                <option value={current}>{current} (no match on canvas)</option>
+                                                            )}
+                                                        </select>
+                                                    );
+                                                })()}
                                                 <span className="inspector-field__hint">
-                                                    Pick an existing app label to route this Service to those Pods.
+                                                    Lists the workloads and Pods that currently exist on the canvas.
                                                 </span>
                                             </div>
                                             <div className="inspector-field">
@@ -1124,11 +1270,26 @@ export default function Canvas() {
                                         </svg>
                                     </button>
                                     {yamlPreviewOpen && resourceYaml && (
-                                        <pre className="inspector-yaml-preview">{resourceYaml}</pre>
+                                        <>
+                                            <pre className="inspector-yaml-preview">{resourceYaml}</pre>
+                                            {isManaged && (
+                                                <span className="inspector-field__hint inspector-field__hint--pad">
+                                                    Effective state generated by the controller — not part of the manifest.
+                                                </span>
+                                            )}
+                                        </>
                                     )}
                                 </div>
 
                                 {/* ── Footer: Delete ───────────────────────── */}
+                                {isManaged ? (
+                                    <div className="inspector-footer">
+                                        <span className="inspector-footer__hint">
+                                            Managed resources can't be deleted directly — Kubernetes would recreate
+                                            them. Delete the owner or lower its replicas.
+                                        </span>
+                                    </div>
+                                ) : (
                                 <div className="inspector-footer">
                                     <button
                                         type="button"
@@ -1147,19 +1308,15 @@ export default function Canvas() {
                                         </span>
                                     )}
                                 </div>
+                                )}
                             </div>
                         )}
 
                         {/* Datalists (always rendered when inspector open) */}
                         {selectedNode && (
-                            <>
-                                <datalist id={namespaceListId}>
-                                    {namespaceOptions.map((ns) => <option key={ns} value={ns} />)}
-                                </datalist>
-                                <datalist id={selectorListId}>
-                                    {selectorOptions.map((opt) => <option key={opt} value={opt} />)}
-                                </datalist>
-                            </>
+                            <datalist id={namespaceListId}>
+                                {namespaceOptions.map((ns) => <option key={ns} value={ns} />)}
+                            </datalist>
                         )}
                     </aside>
                 </div>
@@ -1237,12 +1394,6 @@ function NameField({
 }
 
 // ─── Helper functions ───────────────────────────────────────────────────────
-
-function getAppSelectorValue(resource: K8sResource): string | null {
-    const labels = resource.metadata?.labels;
-    if (!labels) return null;
-    return labels.app ?? null;
-}
 
 /**
  * Compute the Cluster/namespace guide frames from the *top-level* nodes only,

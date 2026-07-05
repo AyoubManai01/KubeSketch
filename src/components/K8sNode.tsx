@@ -56,10 +56,11 @@ function K8sNodeComponent({ data }: NodeProps) {
 
     const isContainer = kind === 'Deployment' || kind === 'ReplicaSet';
     const spec = (nodeData.resource?.spec ?? {}) as Record<string, any>;
+    const managedBy = nodeData.synthetic ? nodeData.managedBy : undefined;
 
     return (
         <div
-            className={`k8s-node k8s-node--${kind.toLowerCase()} ${isContainer ? 'k8s-node--container' : 'k8s-node--leaf'}`}
+            className={`k8s-node k8s-node--${kind.toLowerCase()} ${isContainer ? 'k8s-node--container' : 'k8s-node--leaf'} ${nodeData.synthetic ? 'k8s-node--managed' : ''}`}
             style={{ ['--kind-color' as string]: color }}
         >
             {/* Every node accepts manual connections; the store resolves their K8s meaning */}
@@ -82,14 +83,22 @@ function K8sNodeComponent({ data }: NodeProps) {
                 </div>
 
                 {/* Badges / Quick stats */}
+                {managedBy && (
+                    <div
+                        className="k8s-node__badge k8s-node__badge--managed"
+                        title={`Created automatically by ${managedBy.kind} ${managedBy.name} (like a real cluster)`}
+                    >
+                        auto
+                    </div>
+                )}
                 {kind === 'Deployment' && typeof spec.replicas === 'number' && (
                     <div className="k8s-node__badge" title="Desired Replicas">
                         {spec.replicas} Replicas
                     </div>
                 )}
                 {kind === 'ReplicaSet' && typeof spec.replicas === 'number' && (
-                    <div className="k8s-node__badge" title="Desired Replicas">
-                        {spec.replicas} RS
+                    <div className="k8s-node__badge" title="Desired Pods">
+                        ×{spec.replicas} Pods
                     </div>
                 )}
             </div>

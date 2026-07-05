@@ -1,9 +1,9 @@
 import { create } from 'zustand';
-import { applyEdgeChanges, type Connection, type EdgeChange, type Node, type Edge, MarkerType } from '@xyflow/react';
+import { applyEdgeChanges, type Connection, type EdgeChange, type Node, type Edge } from '@xyflow/react';
 import { parseYaml } from '../utils/parseYaml';
 import { buildGraph, nodeIdFor, type K8sNodeData } from '../utils/buildGraph';
 import { resourcesToYaml } from '../utils/serializeYaml';
-import { connectResources } from '../utils/linkResources';
+import { connectResources, explainInvalidLink } from '../utils/linkResources';
 import type { SupportedKind, K8sResource } from '../types/types';
 
 const YAML_KEY = 'veltra_yaml';
@@ -11,9 +11,11 @@ const USER_EDGES_KEY = 'veltra_user_edges';
 const POSITIONS_KEY = 'veltra_node_positions';
 
 /** Default YAML shown when the app first loads */
-export const DEFAULT_YAML = `# Paste your Kubernetes YAML here
-# Supports multi-document YAML (---)
+export const DEFAULT_YAML = `# Paste your Kubernetes YAML here (multi-document with ---)
 # Recognized resources: Deployment, Service, Ingress, ReplicaSet, Pod
+#
+# Like a real cluster, Veltra materializes a Deployment's ReplicaSet and
+# Pods on the canvas automatically — you only declare the Deployment.
 
 apiVersion: apps/v1
 kind: Deployment
@@ -26,29 +28,14 @@ spec:
   selector:
     matchLabels:
       app: my-app
----
-apiVersion: apps/v1
-kind: ReplicaSet
-metadata:
-  name: my-app-rs
-  labels:
-    app: my-app
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: my-app
----
-apiVersion: v1
-kind: Pod
-metadata:
-  name: my-app-pod
-  labels:
-    app: my-app
-spec:
-  containers:
-    - name: app
-      image: nginx:latest
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+        - name: app
+          image: nginx:latest
 ---
 apiVersion: v1
 kind: Service
@@ -84,6 +71,20 @@ export interface SelectedResource {
     name: string;
 }
 
+/** Transient feedback surfaced as a toast on the canvas (link results, guard rails). */
+export interface CanvasNotice {
+    id: number;
+    tone: 'success' | 'error' | 'info';
+    text: string;
+}
+
+let noticeSeq = 0;
+const makeNotice = (tone: CanvasNotice['tone'], text: string): CanvasNotice => ({
+    id: ++noticeSeq,
+    tone,
+    text,
+});
+
 interface VeltraState {
     /** Raw YAML string from the editor */
     yaml: string;
@@ -112,6 +113,10 @@ interface VeltraState {
     /** Syntax/validation error message if YAML parsing fails */
     yamlError: string | null;
 
+    /** Latest transient feedback message (auto-dismissed by the canvas toast). */
+    notice: CanvasNotice | null;
+
+    setNotice: (notice: CanvasNotice | null) => void;
     setYaml: (value: string) => void;
     setBidirectionalSync: (enabled: boolean) => void;
     /** Structural node changes coming from React Flow (e.g. keyboard delete). */
@@ -215,6 +220,9 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         canvasDirtyWhilePaused: false,
         selectedResource: null,
         yamlError: initialError,
+        notice: null,
+
+        setNotice: (notice) => set({ notice }),
 
         setYaml: (value: string) => {
             localStorage.setItem(YAML_KEY, value);
@@ -257,19 +265,28 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
 
         setCanvasNodes: (nodes: Node<K8sNodeData>[]) =>
             set((state) => {
-                const removedIds = new Set(
-                    state.nodes.filter((n) => !nodes.some((m) => m.id === n.id)).map((n) => n.id)
-                );
+                const removed = state.nodes.filter((n) => !nodes.some((m) => m.id === n.id));
+                const removedIds = new Set(removed.map((n) => n.id));
                 const userEdges = removedIds.size
                     ? state.userEdges.filter((e) => !removedIds.has(e.source) && !removedIds.has(e.target))
                     : state.userEdges;
                 const sel = state.selectedResource;
                 const selectionRemoved =
                     sel && !nodes.some((n) => n.data.kind === sel.kind && n.data.name === sel.name);
-                return commitResources(state, toResources(nodes), nodes, {
+                const result = commitResources(state, toResources(nodes), nodes, {
                     userEdges,
                     selectedResource: selectionRemoved ? null : sel,
                 });
+                // Deleting a controller-managed resource behaves like a real cluster:
+                // the commit re-materializes it from the owner's spec.
+                const managed = removed.find((n) => n.data.synthetic);
+                if (managed?.data.managedBy) {
+                    result.notice = makeNotice(
+                        'info',
+                        `${managed.data.name} is managed by ${managed.data.managedBy.kind} ${managed.data.managedBy.name} — the controller recreated it. Delete the owner or lower its replicas instead.`
+                    );
+                }
+                return result;
             }),
 
         setCanvasNodesPositionOnly: (nodes: Node<K8sNodeData>[]) => set({ nodes }),
@@ -283,6 +300,9 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
             set((state) => {
                 const node = state.nodes.find((n) => n.id === nodeId);
                 if (!node) return {};
+                if (node.data.synthetic) {
+                    return { notice: managedGuardNotice(node) };
+                }
 
                 const kind = (patch.kind ?? node.data.kind) as SupportedKind;
                 const name = (patch.name ?? node.data.name).trim();
@@ -352,6 +372,9 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
             set((state) => {
                 const node = state.nodes.find((n) => n.id === nodeId);
                 if (!node) return {};
+                if (node.data.synthetic) {
+                    return { notice: managedGuardNotice(node) };
+                }
 
                 const kind = (resource.kind as SupportedKind) ?? node.data.kind;
                 const name = resource.metadata?.name ?? node.data.name;
@@ -392,6 +415,10 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
 
         deleteNodeFromCanvas: (nodeId) =>
             set((state) => {
+                const node = state.nodes.find((n) => n.id === nodeId);
+                if (node?.data.synthetic) {
+                    return { notice: managedGuardNotice(node) };
+                }
                 // Cascade like Kubernetes: deleting a controller removes what it owns.
                 const doomed = collectWithDescendants(state.nodes, nodeId);
                 if (doomed.size === 0) return {};
@@ -418,53 +445,78 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 const { source, target } = connection;
                 if (!source || !target || source === target) return {};
 
-                const sourceIdx = state.nodes.findIndex((n) => n.id === source);
-                const targetIdx = state.nodes.findIndex((n) => n.id === target);
-                if (sourceIdx < 0 || targetIdx < 0) return {};
+                // Connections to controller-managed resources are redirected to their real
+                // owner — linking a Service to a materialized Pod means "select this
+                // workload's pods", which lives on the workload's spec.
+                const realNodes = state.nodes.filter((n) => !n.data.synthetic);
+                const resolveReal = (id: string): Node<K8sNodeData> | null => {
+                    const node = state.nodes.find((n) => n.id === id);
+                    if (!node) return null;
+                    if (!node.data.synthetic) return node;
+                    const owner = node.data.managedBy;
+                    if (!owner) return null;
+                    return (
+                        realNodes.find(
+                            (n) => n.data.kind === owner.kind && n.data.name === owner.name
+                        ) ?? null
+                    );
+                };
 
-                // No-op if the relationship already exists (either direction, inferred or manual)
+                const sourceNode = resolveReal(source);
+                const targetNode = resolveReal(target);
+                if (!sourceNode || !targetNode) return {};
+                if (sourceNode.id === targetNode.id) {
+                    return {
+                        notice: makeNotice('info', 'Those resources already belong to the same workload.'),
+                    };
+                }
+
+                // Already related? Check edges between the two resources *including* their
+                // managed descendants (a Service selecting a Deployment's pods draws its
+                // edges to the pod nodes), and existing containment.
+                const sourceTree = collectWithDescendants(state.nodes, sourceNode.id);
+                const targetTree = collectWithDescendants(state.nodes, targetNode.id);
                 const alreadyLinked = state.edges.some(
                     (e) =>
-                        (e.source === source && e.target === target) ||
-                        (e.source === target && e.target === source)
+                        (sourceTree.has(e.source) && targetTree.has(e.target)) ||
+                        (targetTree.has(e.source) && sourceTree.has(e.target))
                 );
-                if (alreadyLinked) return {};
-
-                // No-op if one node already contains the other (ownership already expressed)
+                if (alreadyLinked) {
+                    return {
+                        notice: makeNotice(
+                            'info',
+                            `${sourceNode.data.name} and ${targetNode.data.name} are already connected.`
+                        ),
+                    };
+                }
                 if (
-                    isAncestor(state.nodes, source, target) ||
-                    isAncestor(state.nodes, target, source)
+                    isAncestor(state.nodes, sourceNode.id, targetNode.id) ||
+                    isAncestor(state.nodes, targetNode.id, sourceNode.id)
                 ) {
-                    return {};
+                    return {
+                        notice: makeNotice('info', 'That ownership already exists — it is shown as nesting.'),
+                    };
                 }
 
-                // Try to express the link semantically in the K8s model (selector/labels/backend).
-                // toResources maps nodes 1:1 in order, so node indices are resource indices.
+                // Express the link semantically in the K8s model (selector/labels/backend).
+                // toResources drops synthetic nodes, so indices align with realNodes.
                 const resources = toResources(state.nodes);
-                const linked = connectResources(resources, sourceIdx, targetIdx);
-                if (linked) {
-                    return commitResources(state, linked.resources, state.nodes);
+                const linked = connectResources(
+                    resources,
+                    realNodes.indexOf(sourceNode),
+                    realNodes.indexOf(targetNode)
+                );
+                if (!linked) {
+                    return {
+                        notice: makeNotice(
+                            'error',
+                            explainInvalidLink(sourceNode.data.kind, targetNode.data.kind)
+                        ),
+                    };
                 }
-
-                // No K8s meaning for this pair — keep a persistent cosmetic edge
-                const edge: Edge = {
-                    id: `manual-${source}->${target}`,
-                    source,
-                    target,
-                    label: 'manual',
-                    animated: true,
-                    deletable: true,
-                    // keep the invisible hit-area thin so the edge doesn't swallow
-                    // clicks on nodes it crosses (it may be z-elevated above them)
-                    interactionWidth: 6,
-                    style: { stroke: '#60a5fa', strokeWidth: 2.2, strokeDasharray: '7 4' },
-                    markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#60a5fa' },
-                };
-                const userEdges = [...state.userEdges, edge];
-                persistUserEdges(userEdges);
                 return {
-                    userEdges,
-                    edges: mergeEdges(state.inferredEdges, userEdges, state.nodes),
+                    ...commitResources(state, linked.resources, state.nodes),
+                    notice: makeNotice('success', linked.description),
                 };
             }),
 
@@ -518,6 +570,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 userEdges: [],
                 selectedResource: null,
                 yamlError: null,
+                notice: null,
                 canvasDirtyWhilePaused: false,
             });
         },
@@ -544,9 +597,22 @@ function mergeEdges(inferredEdges: Edge[], userEdges: Edge[], nodes: Node<K8sNod
     return [...inferredEdges, ...validUserEdges];
 }
 
-/** The single conversion from render nodes back to the authoritative resource list. */
+/** Feedback shown when the user tries to mutate a controller-managed resource directly. */
+function managedGuardNotice(node: Node<K8sNodeData>): CanvasNotice {
+    const owner = node.data.managedBy;
+    const ownerDesc = owner ? `${owner.kind} ${owner.name}` : 'its controller';
+    return makeNotice(
+        'info',
+        `${node.data.name} is managed by ${ownerDesc} — edit or delete the owner instead (scale replicas to change pod count).`
+    );
+}
+
+/**
+ * The single conversion from render nodes back to the authoritative resource list.
+ * Controller-materialized (synthetic) nodes are display-only and never serialized.
+ */
 function toResources(nodes: Node<K8sNodeData>[]): K8sResource[] {
-    return nodes.map((node) => {
+    return nodes.filter((node) => !node.data.synthetic).map((node) => {
         const data = node.data;
         const metadataBase = data.resource?.metadata ?? {};
         const metadata = {

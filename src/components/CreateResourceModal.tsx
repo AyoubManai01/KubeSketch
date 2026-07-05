@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { K8sResource, SupportedKind } from '../types/types';
+import { getWorkloadPodLabels } from '../utils/buildGraph';
 import { useVeltraStore } from '../store/store';
 
 interface Props {
@@ -83,8 +84,10 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     }, [name, kind, nodes]);
 
     const [namespace, setNamespace] = useState('default');
-    const [appLabel, setAppLabel] = useState('');
-    const [replicas, setReplicas] = useState('1');
+    // Workloads/Pods auto-derive their app label from the name until the user edits it
+    const [appLabelDraft, setAppLabelDraft] = useState('');
+    const [appLabelTouched, setAppLabelTouched] = useState(false);
+    const [replicas, setReplicas] = useState('3');
     const [containerName, setContainerName] = useState('app');
     const [containerImage, setContainerImage] = useState('nginx:latest');
     const [serviceType, setServiceType] = useState('ClusterIP');
@@ -99,18 +102,35 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     const color = KIND_COLORS[kind] ?? '#3b82f6';
     const icon = KIND_ICONS[kind];
 
+    const isWorkload = kind === 'Deployment' || kind === 'ReplicaSet';
+
+    // Auto-generated label follows the resource name until the user overrides it
+    const appLabel = appLabelTouched
+        ? appLabelDraft
+        : isWorkload || kind === 'Pod'
+        ? name.trim() || suggestedName
+        : appLabelDraft;
+
     const serviceOptions = useMemo(
         () => nodes.filter((n) => n.data.kind === 'Service').map((n) => n.data.name as string),
         [nodes]
     );
 
-    const existingAppLabels = useMemo(() => {
-        const vals = new Set<string>();
+    // Existing selectable targets: app-label values with the real resources carrying them
+    const workloadTargets = useMemo(() => {
+        const owners = new Map<string, string[]>();
         nodes.forEach((n) => {
-            const lbl = (n.data.resource.metadata?.labels as Record<string, string> | undefined)?.app;
-            if (lbl) vals.add(lbl);
+            if (n.data.synthetic) return;
+            const k = n.data.kind;
+            let value: string | undefined;
+            if (k === 'Deployment' || k === 'ReplicaSet') value = getWorkloadPodLabels(n.data.resource)?.app;
+            else if (k === 'Pod') value = n.data.resource.metadata?.labels?.app;
+            if (!value) return;
+            const list = owners.get(value) ?? [];
+            list.push(`${k} ${n.data.name}`);
+            owners.set(value, list);
         });
-        return Array.from(vals);
+        return Array.from(owners.entries()).map(([value, list]) => ({ value, owners: list.join(', ') }));
     }, [nodes]);
 
     const namespaceOptions = useMemo(() => {
@@ -137,15 +157,20 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
             case 'Deployment':
             case 'ReplicaSet': {
                 const replicaNum = parseInt(replicas, 10);
+                const label = appLabel.trim() || meta.name;
                 return {
                     apiVersion: 'apps/v1',
                     kind,
-                    metadata: meta,
+                    metadata: { ...meta, labels: { app: label } },
                     spec: {
                         replicas: Number.isFinite(replicaNum) ? replicaNum : 1,
-                        ...(appLabel.trim()
-                            ? { selector: { matchLabels: { app: appLabel.trim() } } }
-                            : {}),
+                        selector: { matchLabels: { app: label } },
+                        template: {
+                            metadata: { labels: { app: label } },
+                            spec: {
+                                containers: [{ name: 'app', image: 'nginx:latest' }],
+                            },
+                        },
                     },
                 };
             }
@@ -222,8 +247,6 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         onClose();
     }
 
-    const isWorkload = kind === 'Deployment' || kind === 'ReplicaSet';
-
     return (
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
@@ -278,43 +301,72 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                         </div>
                     </div>
 
-                    {/* App Label — shared by all kinds as a convenience */}
-                    <div className="modal-field">
-                        <label className="modal-field__label">
-                            App Label
-                            <span className="modal-field__hint">
-                                {isWorkload
-                                    ? 'Sets metadata.labels.app and spec.selector.matchLabels.app — enables automatic nesting'
-                                    : kind === 'Service'
-                                    ? 'Sets spec.selector.app — Service will route to Pods with this label'
-                                    : kind === 'Pod'
-                                    ? 'Sets metadata.labels.app — enables containment inside matching ReplicaSets'
-                                    : ''}
-                            </span>
-                        </label>
-                        <input
-                            className="modal-field__input"
-                            value={appLabel}
-                            list="modal-label-list"
-                            onChange={(e) => setAppLabel(e.target.value)}
-                            placeholder="my-app"
-                        />
-                        <datalist id="modal-label-list">
-                            {existingAppLabels.map((l) => <option key={l} value={l} />)}
-                        </datalist>
-                    </div>
+                    {/* App Label — auto-generated for workloads/Pods, target picker for Services */}
+                    {(isWorkload || kind === 'Pod') && (
+                        <div className="modal-field">
+                            <label className="modal-field__label">
+                                App Label
+                                <span className="modal-field__hint">
+                                    {isWorkload
+                                        ? 'Auto-generated from the name. Sets metadata.labels.app and spec.selector.matchLabels.app.'
+                                        : 'Auto-generated from the name. Sets metadata.labels.app — enables containment inside matching ReplicaSets.'}
+                                </span>
+                            </label>
+                            <input
+                                className="modal-field__input"
+                                value={appLabel}
+                                onChange={(e) => {
+                                    setAppLabelTouched(true);
+                                    setAppLabelDraft(e.target.value);
+                                }}
+                                placeholder="my-app"
+                            />
+                        </div>
+                    )}
+                    {kind === 'Service' && (
+                        <div className="modal-field">
+                            <label className="modal-field__label">
+                                Route to workload
+                                <span className="modal-field__hint">
+                                    Sets spec.selector.app — pick an existing workload or Pod to send traffic to.
+                                </span>
+                            </label>
+                            <select
+                                className="modal-field__input modal-field__input--select"
+                                value={appLabel}
+                                onChange={(e) => {
+                                    setAppLabelTouched(true);
+                                    setAppLabelDraft(e.target.value);
+                                }}
+                            >
+                                <option value="">(no selector yet)</option>
+                                {workloadTargets.map((t) => (
+                                    <option key={t.value} value={t.value}>
+                                        {t.value} — {t.owners}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
 
                     {/* Workload: replicas */}
                     {isWorkload && (
                         <div className="modal-field">
-                            <label className="modal-field__label">Replicas</label>
+                            <label className="modal-field__label">
+                                Replicas
+                                <span className="modal-field__hint">
+                                    {kind === 'Deployment'
+                                        ? 'Its ReplicaSet and this many Pods are created automatically, like a real cluster.'
+                                        : 'This many Pods are created automatically.'}
+                                </span>
+                            </label>
                             <input
                                 className="modal-field__input"
                                 type="number"
                                 min={0}
                                 value={replicas}
                                 onChange={(e) => setReplicas(e.target.value)}
-                                placeholder="1"
+                                placeholder="3"
                             />
                         </div>
                     )}
@@ -410,17 +462,22 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                                 </div>
                             </div>
                             <div className="modal-field">
-                                <label className="modal-field__label">Backend Service</label>
-                                <input
-                                    className="modal-field__input"
+                                <label className="modal-field__label">
+                                    Backend Service
+                                    <span className="modal-field__hint">
+                                        Lists the Services that currently exist on the canvas.
+                                    </span>
+                                </label>
+                                <select
+                                    className="modal-field__input modal-field__input--select"
                                     value={backendService}
-                                    list="modal-svc-list"
                                     onChange={(e) => setBackendService(e.target.value)}
-                                    placeholder="Select or type a service name"
-                                />
-                                <datalist id="modal-svc-list">
-                                    {serviceOptions.map((s) => <option key={s} value={s} />)}
-                                </datalist>
+                                >
+                                    <option value="">(no backend yet)</option>
+                                    {serviceOptions.map((s) => (
+                                        <option key={s} value={s}>{s}</option>
+                                    ))}
+                                </select>
                             </div>
                         </>
                     )}

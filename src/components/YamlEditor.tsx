@@ -6,7 +6,7 @@ import { useVeltraStore } from '../store/store';
  * Monaco Editor configured for YAML editing.
  * Updates the Zustand store on every change, triggering re-parse.
  */
-export default function YamlEditor() {
+export default function YamlEditor({ style }: { style?: React.CSSProperties }) {
     const yaml = useVeltraStore((s) => s.yaml);
     const setYaml = useVeltraStore((s) => s.setYaml);
     const yamlError = useVeltraStore((s) => s.yamlError);
@@ -50,7 +50,7 @@ export default function YamlEditor() {
     }, [yaml, selectedResource]);
 
     return (
-        <div className="editor-panel">
+        <div className="editor-panel" style={style}>
             <div className="panel-header">
                 <div className="panel-header__left">
                     <span className="panel-header__accent" />

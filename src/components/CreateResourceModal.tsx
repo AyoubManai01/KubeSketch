@@ -68,7 +68,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     const suggestedName = useMemo(() => {
         const base = kind.toLowerCase();
         let idx = 1;
-        while (nodes.some((n) => n.data.name === `${base}-${idx}`)) idx++;
+        while (nodes.some((n) => n.data.kind === kind && n.data.name === `${base}-${idx}`)) idx++;
         return `${base}-${idx}`;
     }, [kind, nodes]);
 

@@ -90,6 +90,7 @@ export interface MockStoreState {
     isBidirectionalSync: boolean;
     selectedResource: { kind: SupportedKind; name: string } | null;
     notice: { id: number; tone: 'success' | 'error' | 'info'; text: string } | null;
+    hpaOverrides: { kind: string; name: string; original: number; effective: number; hpaName: string; reason: 'minReplicas' | 'maxReplicas'; bound: number; viaDeployment?: string }[];
     setNotice: Mock;
     setYaml: Mock;
     setBidirectionalSync: Mock;
@@ -116,6 +117,7 @@ export function createDefaultStoreState(): MockStoreState {
         isBidirectionalSync: true,
         selectedResource: null,
         notice: null,
+        hpaOverrides: [],
         setNotice: vi.fn(),
         setYaml: vi.fn(),
         setBidirectionalSync: vi.fn(),

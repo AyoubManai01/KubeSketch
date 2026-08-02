@@ -52,6 +52,13 @@ export function connectResources(
             description: `${podName} adopted by ${depName}'s ReplicaSet (Deployments own Pods via ReplicaSets)`,
         };
     }
+    if (pair('HPA', 'Deployment') || pair('HPA', 'ReplicaSet')) {
+        return linkHpaToWorkload(
+            resources,
+            byKind('HPA'),
+            source.kind === 'HPA' ? targetIdx : sourceIdx
+        );
+    }
     return null;
 }
 
@@ -64,6 +71,10 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
     }
     if (pair('Ingress', 'Deployment') || pair('Ingress', 'ReplicaSet')) {
         return `An Ingress cannot route to a ${a === 'Ingress' ? b : a} — expose the workload with a Service first, then route the Ingress to it.`;
+    }
+    if (pair('HPA', 'Service') || pair('HPA', 'Ingress') || pair('HPA', 'Pod')) {
+        const other = a === 'HPA' ? b : a;
+        return `An HPA can only scale a Deployment or ReplicaSet, not a ${other}.`;
     }
     if (a === b) {
         return `Two ${a} resources have no direct relationship in Kubernetes.`;
@@ -195,6 +206,33 @@ function linkOwnership(
     return {
         resources: next,
         description: `${child.metadata.name} is now owned by ${parent.metadata.name}`,
+    };
+}
+
+/** Point the HPA's scaleTargetRef at the workload. */
+function linkHpaToWorkload(
+    resources: K8sResource[],
+    hpaIdx: number,
+    workloadIdx: number
+): { resources: K8sResource[]; description: string } {
+    const next = [...resources];
+    const workload = resources[workloadIdx];
+
+    const hpa = clone(resources[hpaIdx]);
+    const spec = (hpa.spec ?? {}) as Record<string, any>;
+    spec.scaleTargetRef = {
+        apiVersion: 'apps/v1',
+        kind: workload.kind,
+        name: workload.metadata.name,
+    };
+    if (typeof spec.minReplicas !== 'number') spec.minReplicas = 1;
+    if (typeof spec.maxReplicas !== 'number') spec.maxReplicas = 10;
+    hpa.spec = spec;
+    next[hpaIdx] = hpa;
+
+    return {
+        resources: next,
+        description: `${hpa.metadata.name} now scales ${workload.kind} ${workload.metadata.name}`,
     };
 }
 

@@ -30,7 +30,11 @@ import {
   type K8sResource,
   type SupportedKind,
 } from "../types/types";
-import { getWorkloadPodLabels, type K8sNodeData } from "../utils/buildGraph";
+import {
+  getWorkloadPodLabels,
+  getHpaTarget,
+  type K8sNodeData,
+} from "../utils/buildGraph";
 import { resourcesToYaml } from "../utils/serializeYaml";
 import CreateResourceModal from "./CreateResourceModal";
 
@@ -49,6 +53,7 @@ const KIND_COLORS: Record<string, string> = {
   Pod: "#14b8a6",
   Service: "#3b82f6",
   Ingress: "#8b5cf6",
+  HPA: "#f59e0b",
 };
 
 const KIND_ICONS: Record<string, React.ReactNode> = {
@@ -123,6 +128,20 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
       <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" />
     </svg>
   ),
+  HPA: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 20V10M12 6V4" />
+      <path d="M12 16l3-3-3-3-3 3 3 3z" />
+      <path d="M5 6a7 7 0 0014 0" />
+    </svg>
+  ),
 };
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -161,6 +180,7 @@ export default function Canvas() {
   );
   const notice = useVeltraStore((s) => s.notice);
   const setNotice = useVeltraStore((s) => s.setNotice);
+  const hpaOverrides = useVeltraStore((s) => s.hpaOverrides);
 
   const [pendingKind, setPendingKind] = useState<SupportedKind | null>(null);
   const [yamlPreviewOpen, setYamlPreviewOpen] = useState(false);
@@ -242,6 +262,51 @@ export default function Canvas() {
         .sort((a, b) => a.localeCompare(b)),
     [nodes],
   );
+
+  // HPA scale targets: Deployments and ReplicaSets on the canvas
+  const workloadOptions = useMemo(
+    () =>
+      nodes
+        .filter(
+          (node) =>
+            node.data.kind === "Deployment" || node.data.kind === "ReplicaSet",
+        )
+        .map((node) => ({
+          kind: node.data.kind as string,
+          name: node.data.name as string,
+        }))
+        .sort((a, b) =>
+          `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`),
+        ),
+    [nodes],
+  );
+
+  // When the selected workload is scaled by an HPA, replicas are clamped into
+  // [minReplicas, maxReplicas] — surface that priority right at the input.
+  const hpaConstraint = useMemo(() => {
+    if (
+      !selectedNode ||
+      (selectedNode.data.kind !== "Deployment" &&
+        selectedNode.data.kind !== "ReplicaSet")
+    ) {
+      return null;
+    }
+    const hpa = nodes.find(
+      (n) =>
+        n.data.kind === "HPA" &&
+        getHpaTarget(n.data.resource)?.kind === selectedNode.data.kind &&
+        getHpaTarget(n.data.resource)?.name === selectedNode.data.name,
+    );
+    if (!hpa) return null;
+    const spec = hpa.data.resource.spec as
+      | { minReplicas?: number; maxReplicas?: number }
+      | undefined;
+    return {
+      name: hpa.data.name as string,
+      min: spec?.minReplicas,
+      max: spec?.maxReplicas,
+    };
+  }, [nodes, selectedNode]);
 
   // Edge relationships + containment (nesting) for the selected node
   const relationships = useMemo(() => {
@@ -485,6 +550,9 @@ export default function Canvas() {
                   <span className="canvas-legend__item canvas-legend__item--ing">
                     Ingress route
                   </span>
+                  <span className="canvas-legend__item canvas-legend__item--hpa">
+                    HPA scales
+                  </span>
                   <span className="canvas-legend__item canvas-legend__item--auto">
                     auto = managed by controller
                   </span>
@@ -564,6 +632,38 @@ export default function Canvas() {
                     + Add Service
                   </button>
                 </div>
+              </div>
+            )}
+
+            {/* Persistent HPA-priority warnings: an HPA overrode a workload's
+                spec.replicas this commit (clamped into [minReplicas, maxReplicas]). */}
+            {hpaOverrides.length > 0 && (
+              <div className="canvas-statusbar" role="status">
+                {hpaOverrides.map((o) => (
+                  <div
+                    key={`${o.kind}:${o.name}`}
+                    className="canvas-statusbar__item"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path d="M3 3v18h18" />
+                      <path d="M7 14l4-4 3 3 5-6" />
+                    </svg>
+                    <span>
+                      HPA {o.hpaName} has more priority — {o.kind} {o.name}{" "}
+                      {o.viaDeployment
+                        ? `(via Deployment ${o.viaDeployment}) `
+                        : ""}
+                      replicas forced {o.original} → {o.effective} ({o.reason}=
+                      {o.bound}). Make sure that the HPA's min/max replicas are
+                      set correctly.
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -992,6 +1092,14 @@ export default function Canvas() {
                             Pods are materialized on the canvas to match this
                             count, like a real cluster.
                           </span>
+                          {hpaConstraint && (
+                            <span className="inspector-field__hint inspector-field__hint--hpa">
+                              HPA {hpaConstraint.name} has priority — replicas
+                              are clamped to {hpaConstraint.min ?? 1}–
+                              {hpaConstraint.max ?? "∞"} and written back to
+                              YAML.
+                            </span>
+                          )}
                         </div>
                         <div className="inspector-field">
                           <label className="inspector-field__label">
@@ -1496,6 +1604,189 @@ export default function Canvas() {
                         <span className="inspector-field__hint">
                           Lists the Services that currently exist on the canvas.
                         </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Section: Autoscaling (HPA) ─────────── */}
+                {!isManaged && inspectorData.kind === "HPA" && (
+                  <div className="inspector-section">
+                    <div className="inspector-section__header">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <line x1="18" y1="20" x2="18" y2="10" />
+                        <line x1="12" y1="20" x2="12" y2="4" />
+                        <line x1="6" y1="20" x2="6" y2="14" />
+                      </svg>
+                      Autoscaling
+                    </div>
+                    <div className="inspector-section__body">
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Scale Target
+                        </label>
+                        {(() => {
+                          const ref = (selectedNode.data.resource.spec as any)
+                            ?.scaleTargetRef as
+                            | { kind?: string; name?: string }
+                            | undefined;
+                          const current =
+                            ref?.kind && ref.name
+                              ? `${ref.kind}|${ref.name}`
+                              : "";
+                          const known = workloadOptions.some(
+                            (w) => `${w.kind}|${w.name}` === current,
+                          );
+                          return (
+                            <select
+                              className="inspector-field__input inspector-field__input--select"
+                              value={current}
+                              onChange={(e) =>
+                                updateResourceField(
+                                  selectedNode.id,
+                                  selectedNode.data.resource,
+                                  updateNodeResourceFromCanvas,
+                                  {
+                                    spec: {
+                                      ...(selectedNode.data.resource
+                                        .spec as any),
+                                      scaleTargetRef: e.target.value
+                                        ? {
+                                            apiVersion: "apps/v1",
+                                            kind: e.target.value.split("|")[0],
+                                            name: e.target.value.split("|")[1],
+                                          }
+                                        : undefined,
+                                    },
+                                  },
+                                )
+                              }
+                            >
+                              <option value="">(no target)</option>
+                              {workloadOptions.map((w) => (
+                                <option
+                                  key={`${w.kind}|${w.name}`}
+                                  value={`${w.kind}|${w.name}`}
+                                >
+                                  {w.kind} {w.name}
+                                </option>
+                              ))}
+                              {current && !known && (
+                                <option value={current}>
+                                  {ref?.kind} {ref?.name} (missing)
+                                </option>
+                              )}
+                            </select>
+                          );
+                        })()}
+                        <span className="inspector-field__hint">
+                          Lists the Deployments and ReplicaSets currently on the
+                          canvas.
+                        </span>
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Min Replicas
+                        </label>
+                        <input
+                          className="inspector-field__input"
+                          type="number"
+                          min={1}
+                          value={String(
+                            (selectedNode.data.resource.spec as any)
+                              ?.minReplicas ?? "",
+                          )}
+                          onChange={(e) =>
+                            updateResourceField(
+                              selectedNode.id,
+                              selectedNode.data.resource,
+                              updateNodeResourceFromCanvas,
+                              {
+                                spec: {
+                                  ...(selectedNode.data.resource.spec as any),
+                                  minReplicas: toOptionalNumber(e.target.value),
+                                },
+                              },
+                            )
+                          }
+                          placeholder="1"
+                        />
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Max Replicas
+                        </label>
+                        <input
+                          className="inspector-field__input"
+                          type="number"
+                          min={1}
+                          value={String(
+                            (selectedNode.data.resource.spec as any)
+                              ?.maxReplicas ?? "",
+                          )}
+                          onChange={(e) =>
+                            updateResourceField(
+                              selectedNode.id,
+                              selectedNode.data.resource,
+                              updateNodeResourceFromCanvas,
+                              {
+                                spec: {
+                                  ...(selectedNode.data.resource.spec as any),
+                                  maxReplicas: toOptionalNumber(e.target.value),
+                                },
+                              },
+                            )
+                          }
+                          placeholder="10"
+                        />
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          CPU Target %
+                        </label>
+                        <input
+                          className="inspector-field__input"
+                          type="number"
+                          min={1}
+                          max={100}
+                          value={String(
+                            (selectedNode.data.resource.spec as any)
+                              ?.metrics?.[0]?.resource?.target
+                              ?.averageUtilization ?? "",
+                          )}
+                          onChange={(e) =>
+                            updateResourceField(
+                              selectedNode.id,
+                              selectedNode.data.resource,
+                              updateNodeResourceFromCanvas,
+                              {
+                                spec: {
+                                  ...(selectedNode.data.resource.spec as any),
+                                  metrics: [
+                                    {
+                                      type: "Resource",
+                                      resource: {
+                                        name: "cpu",
+                                        target: {
+                                          type: "Utilization",
+                                          averageUtilization: toOptionalNumber(
+                                            e.target.value,
+                                          ),
+                                        },
+                                      },
+                                    },
+                                  ],
+                                },
+                              },
+                            )
+                          }
+                          placeholder="70"
+                        />
                       </div>
                     </div>
                   </div>

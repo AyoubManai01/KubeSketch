@@ -769,13 +769,15 @@ body,
 
 /* Traffic edges: colored lines */
 .canvas-legend__item--svc::before,
-.canvas-legend__item--ing::before {
+.canvas-legend__item--ing::before,
+.canvas-legend__item--hpa::before {
   width: 14px;
   height: 2px;
   border-radius: 2px;
 }
 .canvas-legend__item--svc::before { background: #60a5fa; }
 .canvas-legend__item--ing::before { background: #a78bfa; }
+.canvas-legend__item--hpa::before { background: #f59e0b; }
 
 /* Managed (controller-created) resources: dashed box */
 .canvas-legend__item--auto::before {
@@ -1747,6 +1749,52 @@ body,
 .canvas-toast--error svg { color: #ef4444; }
 .canvas-toast--info { border-color: rgba(96, 165, 250, 0.45); }
 .canvas-toast--info svg { color: #60a5fa; }
+
+/* ---------- Persistent HPA-priority status bar ---------- */
+.canvas-statusbar {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 54px; /* clears the transient toast */
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: min(680px, calc(100% - 32px));
+  pointer-events: none;
+}
+
+.canvas-statusbar__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 13px;
+  border-radius: var(--radius-md);
+  background: rgba(30, 25, 8, 0.94);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(8px);
+  color: #fbbf24;
+  font-size: 12px;
+  line-height: 1.45;
+  animation: statusbar-in 160ms ease-out;
+}
+
+.canvas-statusbar__item svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+@keyframes statusbar-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.inspector-field__hint--hpa {
+  color: #fbbf24;
+}
 
 @keyframes toast-in {
   from { opacity: 0; transform: translate(-50%, 6px); }

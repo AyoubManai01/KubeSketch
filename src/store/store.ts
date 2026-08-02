@@ -9,7 +9,12 @@ import {
     type K8sNodeData,
 } from '../utils/buildGraph';
 import { resourcesToYaml } from '../utils/serializeYaml';
-import { connectResources, explainInvalidLink } from '../utils/linkResources';
+import {
+    connectResources,
+    explainInvalidLink,
+    linkConfigMapToWorkload,
+    type ConfigMapMechanism,
+} from '../utils/linkResources';
 import type { SupportedKind, K8sResource } from '../types/types';
 
 const YAML_KEY = 'veltra_yaml';
@@ -18,7 +23,7 @@ const POSITIONS_KEY = 'veltra_node_positions';
 
 /** Default YAML shown when the app first loads */
 export const DEFAULT_YAML = `# Paste your Kubernetes YAML here (multi-document with ---)
-# Recognized resources: Deployment, Service, Ingress, ReplicaSet, Pod, HPA
+# Recognized resources: Deployment, Service, Ingress, ReplicaSet, Pod, HPA, ConfigMap
 #
 # Like a real cluster, Veltra materializes a Deployment's ReplicaSet and
 # Pods on the canvas automatically — you only declare the Deployment.
@@ -103,6 +108,24 @@ export interface CanvasNotice {
     text: string;
 }
 
+/**
+ * A ConfigMap → workload canvas drag waiting for the user to pick the consumption
+ * mechanism (envFrom / volumes / env-key) in the post-drag prompt. Both resources
+ * are REAL (synthetic targets are resolved to their owner before this is set).
+ */
+export interface PendingConfigMapLink {
+    cm: { name: string };
+    target: { kind: 'Pod' | 'Deployment' | 'ReplicaSet'; name: string };
+}
+
+/** Target + mechanism for writing a ConfigMap reference (create-modal path). */
+export interface ConfigMapLinkPayload {
+    targetKind: 'Pod' | 'Deployment' | 'ReplicaSet';
+    targetName: string;
+    mechanism: ConfigMapMechanism;
+    key?: string;
+}
+
 let noticeSeq = 0;
 const makeNotice = (tone: CanvasNotice['tone'], text: string): CanvasNotice => ({
     id: ++noticeSeq,
@@ -144,6 +167,9 @@ interface VeltraState {
     /** Active HPA replica clamps from the last commit — drives the bottom status bar. */
     hpaOverrides: HpaReplicaOverride[];
 
+    /** A ConfigMap→workload drag awaiting the mechanism choice in the post-drag prompt. */
+    pendingConfigMapLink: PendingConfigMapLink | null;
+
     setNotice: (notice: CanvasNotice | null) => void;
     setYaml: (value: string) => void;
     setBidirectionalSync: (enabled: boolean) => void;
@@ -163,7 +189,16 @@ interface VeltraState {
     applyCanvasEdgeChanges: (changes: EdgeChange[]) => void;
     updateNodeResourceFromCanvas: (nodeId: string, resource: K8sResource) => void;
     /** Add a fully configured resource (from the creation modal). */
-    addConfiguredNode: (kind: SupportedKind, resource: K8sResource) => void;
+    addConfiguredNode: (
+        kind: SupportedKind,
+        resource: K8sResource,
+        link?: ConfigMapLinkPayload
+    ) => void;
+    /** Surface the mechanism prompt after a ConfigMap→workload drag (or dismiss it). */
+    setPendingConfigMapLink: (link: PendingConfigMapLink | null) => void;
+    /** Commit the pending ConfigMap link with the chosen mechanism. */
+    confirmConfigMapLink: (mechanism: ConfigMapMechanism, key?: string) => void;
+    cancelConfigMapLink: () => void;
     /** Discard manual positions and re-run automatic layout. */
     resetLayout: () => void;
     /** Clear the manifest, canvas, manual edges and saved layout. */
@@ -264,6 +299,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         yamlError: initialError,
         notice: null,
         hpaOverrides: initialHpaOverrides,
+        pendingConfigMapLink: null,
 
         setNotice: (notice) => set({ notice }),
 
@@ -404,6 +440,9 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                         node.data.name,
                         name
                     );
+                }
+                if (node.data.kind === 'ConfigMap' && kind === 'ConfigMap' && name !== node.data.name) {
+                    updatedNodes = renameConfigMapReferences(updatedNodes, node.data.name, name);
                 }
 
                 // Identity may have changed (kind/name are part of the node ID):
@@ -561,6 +600,29 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     };
                 }
 
+                // ConfigMap ↔ workload/Pod: a valid semantic link, but the user must pick
+                // the consumption mechanism (envFrom / volumes / env-key) first — surface
+                // the post-drag prompt instead of committing immediately. `sourceNode`/
+                // `targetNode` are real (synthetic targets were redirected to their owner).
+                const isConfigMapTarget = (kind: string) =>
+                    kind === 'Pod' || kind === 'Deployment' || kind === 'ReplicaSet';
+                if (
+                    (sourceNode.data.kind === 'ConfigMap' && isConfigMapTarget(targetNode.data.kind)) ||
+                    (targetNode.data.kind === 'ConfigMap' && isConfigMapTarget(sourceNode.data.kind))
+                ) {
+                    const cm = sourceNode.data.kind === 'ConfigMap' ? sourceNode : targetNode;
+                    const workload = sourceNode.data.kind === 'ConfigMap' ? targetNode : sourceNode;
+                    return {
+                        pendingConfigMapLink: {
+                            cm: { name: cm.data.name },
+                            target: {
+                                kind: workload.data.kind as 'Pod' | 'Deployment' | 'ReplicaSet',
+                                name: workload.data.name,
+                            },
+                        },
+                    };
+                }
+
                 // Express the link semantically in the K8s model (selector/labels/backend).
                 // toResources drops synthetic nodes, so indices align with realNodes.
                 const resources = toResources(state.nodes);
@@ -599,7 +661,34 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 };
             }),
 
-        addConfiguredNode: (kind: SupportedKind, resource: K8sResource) =>
+        setPendingConfigMapLink: (link) => set({ pendingConfigMapLink: link }),
+
+        cancelConfigMapLink: () => set({ pendingConfigMapLink: null }),
+
+        confirmConfigMapLink: (mechanism, key) =>
+            set((state) => {
+                const pending = state.pendingConfigMapLink;
+                if (!pending) return {};
+                const resources = toResources(state.nodes);
+                const cmIdx = resources.findIndex(
+                    (r) => r.kind === 'ConfigMap' && r.metadata.name === pending.cm.name
+                );
+                const targetIdx = resources.findIndex(
+                    (r) =>
+                        r.kind === pending.target.kind && r.metadata.name === pending.target.name
+                );
+                if (cmIdx < 0 || targetIdx < 0) {
+                    return { pendingConfigMapLink: null };
+                }
+                const linked = linkConfigMapToWorkload(resources, cmIdx, targetIdx, mechanism, key);
+                return {
+                    ...commitResources(state, linked.resources, state.nodes),
+                    pendingConfigMapLink: null,
+                    notice: makeNotice('success', linked.description),
+                };
+            }),
+
+        addConfiguredNode: (kind: SupportedKind, resource: K8sResource, link?: ConfigMapLinkPayload) =>
             set((state) => {
                 const name = resource.metadata?.name?.trim();
                 if (!name) return {};
@@ -607,7 +696,25 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     return {}; // modal validates and surfaces this
                 }
                 // Let buildGraph auto-place the new resource (lane/cursor layout)
-                const resources = [...toResources(state.nodes), resource];
+                let resources = [...toResources(state.nodes), resource];
+                // Create-modal ConfigMap link: also write the reference into the target
+                // resource's Pod spec in the same commit (synthetic targets are already
+                // resolved to their real owner by the modal).
+                if (link) {
+                    const cmIdx = resources.length - 1;
+                    const targetIdx = resources.findIndex(
+                        (r) => r.kind === link.targetKind && r.metadata.name === link.targetName
+                    );
+                    if (targetIdx >= 0) {
+                        resources = linkConfigMapToWorkload(
+                            resources,
+                            cmIdx,
+                            targetIdx,
+                            link.mechanism,
+                            link.key
+                        ).resources;
+                    }
+                }
                 return commitResources(state, resources, state.nodes, {
                     selectedResource: { kind, name },
                 });
@@ -639,6 +746,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 yamlError: null,
                 notice: null,
                 hpaOverrides: [],
+                pendingConfigMapLink: null,
                 canvasDirtyWhilePaused: false,
             });
         },
@@ -704,6 +812,7 @@ function apiVersionForKind(kind: SupportedKind): string {
     if (kind === 'Deployment' || kind === 'ReplicaSet') return 'apps/v1';
     if (kind === 'Ingress') return 'networking.k8s.io/v1';
     if (kind === 'HPA') return 'autoscaling/v2';
+    if (kind === 'ConfigMap') return 'v1';
     return 'v1';
 }
 
@@ -757,6 +866,77 @@ function renameWorkloadReferences(
             clonedSpec.scaleTargetRef.name = newName;
         }
         return { ...n, data: { ...n.data, resource } };
+    });
+}
+
+/** Rewrite Pod-spec ConfigMap references when a ConfigMap is renamed (envFrom, env.valueFrom, volumes). */
+function renameConfigMapReferences(
+    nodes: Node<K8sNodeData>[],
+    oldName: string,
+    newName: string
+): Node<K8sNodeData>[] {
+    return nodes.map((n) => {
+        if (n.data.kind !== 'Deployment' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod') {
+            return n;
+        }
+        const spec = n.data.resource.spec as Record<string, any> | undefined;
+        const podSpec =
+            n.data.kind === 'Pod' ? spec : (spec?.template?.spec as Record<string, any> | undefined);
+        if (!podSpec || !referencesConfigMap(podSpec, oldName)) return n;
+
+        const resource = structuredClone(n.data.resource);
+        const clonedSpec = resource.spec as Record<string, any>;
+        const clonedPodSpec =
+            n.data.kind === 'Pod' ? clonedSpec : (clonedSpec.template?.spec as Record<string, any>);
+        rewriteConfigMapNames(clonedPodSpec, oldName, newName);
+        return { ...n, data: { ...n.data, resource } };
+    });
+}
+
+/** True when a Pod spec references the given ConfigMap by name anywhere. */
+function referencesConfigMap(podSpec: Record<string, any>, name: string): boolean {
+    return configMapRefNames(podSpec).includes(name);
+}
+
+/** All ConfigMap names a Pod spec references (envFrom, env.valueFrom, volumes). */
+function configMapRefNames(podSpec: Record<string, any>): string[] {
+    const names: string[] = [];
+    const containers: any[] = [
+        ...(Array.isArray(podSpec.containers) ? podSpec.containers : []),
+        ...(Array.isArray(podSpec.initContainers) ? podSpec.initContainers : []),
+    ];
+    containers.forEach((container) => {
+        (Array.isArray(container?.envFrom) ? container.envFrom : []).forEach((envFrom: any) => {
+            if (envFrom?.configMapRef?.name) names.push(envFrom.configMapRef.name);
+        });
+        (Array.isArray(container?.env) ? container.env : []).forEach((env: any) => {
+            if (env?.valueFrom?.configMapKeyRef?.name) names.push(env.valueFrom.configMapKeyRef.name);
+        });
+    });
+    (Array.isArray(podSpec.volumes) ? podSpec.volumes : []).forEach((volume: any) => {
+        if (volume?.configMap?.name) names.push(volume.configMap.name);
+    });
+    return names;
+}
+
+/** Rewrite every ConfigMap reference inside a Pod spec from oldName to newName. */
+function rewriteConfigMapNames(podSpec: Record<string, any>, oldName: string, newName: string) {
+    const containers: any[] = [
+        ...(Array.isArray(podSpec.containers) ? podSpec.containers : []),
+        ...(Array.isArray(podSpec.initContainers) ? podSpec.initContainers : []),
+    ];
+    containers.forEach((container) => {
+        (Array.isArray(container.envFrom) ? container.envFrom : []).forEach((envFrom: any) => {
+            if (envFrom?.configMapRef?.name === oldName) envFrom.configMapRef.name = newName;
+        });
+        (Array.isArray(container.env) ? container.env : []).forEach((env: any) => {
+            if (env?.valueFrom?.configMapKeyRef?.name === oldName) {
+                env.valueFrom.configMapKeyRef.name = newName;
+            }
+        });
+    });
+    (Array.isArray(podSpec.volumes) ? podSpec.volumes : []).forEach((volume: any) => {
+        if (volume?.configMap?.name === oldName) volume.configMap.name = newName;
     });
 }
 

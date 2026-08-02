@@ -66,6 +66,10 @@ export function connectResources(
 export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
     const pair = (x: SupportedKind, y: SupportedKind) => (a === x && b === y) || (a === y && b === x);
 
+    if (a === 'ConfigMap' || b === 'ConfigMap') {
+        const other = a === 'ConfigMap' ? b : a;
+        return `A ConfigMap is consumed by a Pod spec (envFrom, env.valueFrom or volumes), not linked to a ${other} directly.`;
+    }
     if (pair('Ingress', 'Pod')) {
         return 'An Ingress cannot route to a Pod directly — route it to a Service that selects the Pod.';
     }
@@ -233,6 +237,72 @@ function linkHpaToWorkload(
     return {
         resources: next,
         description: `${hpa.metadata.name} now scales ${workload.kind} ${workload.metadata.name}`,
+    };
+}
+
+/** How a ConfigMap is consumed by a workload's Pod spec. */
+export type ConfigMapMechanism = 'envFrom' | 'volumes' | 'envKey';
+
+/**
+ * Write a ConfigMap reference into a workload (or standalone Pod) so it consumes
+ * the ConfigMap. `envFrom` injects every data key as an env var, `volumes` mounts
+ * the ConfigMap as files, `envKey` injects a single key via `configMapKeyRef`
+ * (requires `key`). Workloads (Deployment/ReplicaSet) get the reference under
+ * `spec.template.spec`; Pods use `spec` directly. De-dupes existing references.
+ */
+export function linkConfigMapToWorkload(
+    resources: K8sResource[],
+    configMapIdx: number,
+    workloadIdx: number,
+    mechanism: ConfigMapMechanism,
+    key?: string
+): { resources: K8sResource[]; description: string } {
+    const next = [...resources];
+    const configMap = resources[configMapIdx];
+    const workload = resources[workloadIdx];
+    const cmName = configMap.metadata.name;
+
+    const patched = clone(workload);
+    const spec = (patched.spec ?? {}) as Record<string, any>;
+    let podSpec: Record<string, any>;
+    if (patched.kind === 'Deployment' || patched.kind === 'ReplicaSet') {
+        spec.template = spec.template ?? {};
+        spec.template.spec = spec.template.spec ?? {};
+        podSpec = spec.template.spec;
+    } else {
+        podSpec = spec;
+    }
+
+    podSpec.containers = Array.isArray(podSpec.containers) ? podSpec.containers : [{ name: 'app' }];
+    const container = podSpec.containers[0];
+
+    if (mechanism === 'envFrom') {
+        container.envFrom = Array.isArray(container.envFrom) ? container.envFrom : [];
+        if (!container.envFrom.some((ef: any) => ef?.configMapRef?.name === cmName)) {
+            container.envFrom.push({ configMapRef: { name: cmName } });
+        }
+    } else if (mechanism === 'volumes') {
+        podSpec.volumes = Array.isArray(podSpec.volumes) ? podSpec.volumes : [];
+        if (!podSpec.volumes.some((v: any) => v?.configMap?.name === cmName)) {
+            podSpec.volumes.push({ name: cmName, configMap: { name: cmName } });
+        }
+    } else {
+        const envName = key?.trim() || cmName;
+        container.env = Array.isArray(container.env) ? container.env : [];
+        if (!container.env.some((e: any) => e?.valueFrom?.configMapKeyRef?.name === cmName && e.valueFrom.configMapKeyRef.key === key)) {
+            container.env.push({
+                name: envName,
+                valueFrom: { configMapKeyRef: { name: cmName, key } },
+            });
+        }
+    }
+
+    patched.spec = spec;
+    next[workloadIdx] = patched;
+
+    return {
+        resources: next,
+        description: `${patched.kind} ${patched.metadata.name} now consumes ${cmName} via ${mechanism}${mechanism === 'envKey' ? ` (key: ${key})` : ''}`,
     };
 }
 

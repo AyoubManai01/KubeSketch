@@ -33,10 +33,14 @@ import {
 import {
   getWorkloadPodLabels,
   getHpaTarget,
+  getConfigMapRefs,
+  getConfigMapRefDetails,
   type K8sNodeData,
 } from "../utils/buildGraph";
 import { resourcesToYaml } from "../utils/serializeYaml";
 import CreateResourceModal from "./CreateResourceModal";
+import ConfigMapDataEditor from "./ConfigMapDataEditor";
+import ConfigMapLinkModal from "./ConfigMapLinkModal";
 
 /** Register our custom node type so React Flow can render it */
 const nodeTypes: NodeTypes = {
@@ -54,6 +58,7 @@ const KIND_COLORS: Record<string, string> = {
   Service: "#3b82f6",
   Ingress: "#8b5cf6",
   HPA: "#f59e0b",
+  ConfigMap: "#06b6d4",
 };
 
 const KIND_ICONS: Record<string, React.ReactNode> = {
@@ -140,6 +145,19 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
       <path d="M12 20V10M12 6V4" />
       <path d="M12 16l3-3-3-3-3 3 3 3z" />
       <path d="M5 6a7 7 0 0014 0" />
+    </svg>
+  ),
+  ConfigMap: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M4 6h16v12H4z" />
+      <path d="M8 10h8M8 14h5" />
     </svg>
   ),
 };
@@ -306,6 +324,33 @@ export default function Canvas() {
       min: spec?.minReplicas,
       max: spec?.maxReplicas,
     };
+  }, [nodes, selectedNode]);
+
+  // ConfigMaps referenced by the selected workload/Pod (from its Pod spec:
+  // envFrom, env.valueFrom, volumes) — read-only projection of the YAML model.
+  const selectedNodeConfigMaps = useMemo(() => {
+    if (!selectedNode) return [];
+    const kind = selectedNode.data.kind;
+    if (kind !== "Pod" && kind !== "Deployment" && kind !== "ReplicaSet") {
+      return [];
+    }
+    return getConfigMapRefDetails(selectedNode.data.resource);
+  }, [selectedNode]);
+
+  // Real workloads/Pods that reference the selected ConfigMap by name —
+  // read-only projection, no canvas edges (invariant 6).
+  const configMapUsedBy = useMemo(() => {
+    if (!selectedNode || selectedNode.data.kind !== "ConfigMap") return [];
+    return nodes
+      .filter(
+        (n) =>
+          !n.data.synthetic &&
+          (n.data.kind === "Deployment" ||
+            n.data.kind === "ReplicaSet" ||
+            n.data.kind === "Pod") &&
+          getConfigMapRefs(n.data.resource).includes(selectedNode.data.name),
+      )
+      .map((n) => ({ kind: n.data.kind, name: n.data.name }));
   }, [nodes, selectedNode]);
 
   // Edge relationships + containment (nesting) for the selected node
@@ -552,6 +597,9 @@ export default function Canvas() {
                   </span>
                   <span className="canvas-legend__item canvas-legend__item--hpa">
                     HPA scales
+                  </span>
+                  <span className="canvas-legend__item canvas-legend__item--cm">
+                    ConfigMap use
                   </span>
                   <span className="canvas-legend__item canvas-legend__item--auto">
                     auto = managed by controller
@@ -1259,6 +1307,183 @@ export default function Canvas() {
                   </div>
                 )}
 
+                {/* ── Section: Config Maps (workloads/Pods) ── */}
+                {!isManaged &&
+                  (inspectorData.kind === "Pod" ||
+                    inspectorData.kind === "Deployment" ||
+                    inspectorData.kind === "ReplicaSet") &&
+                  selectedNodeConfigMaps.length > 0 && (
+                    <div className="inspector-section">
+                      <div className="inspector-section__header">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M4 6h16v12H4z" />
+                          <path d="M8 10h8M8 14h5" />
+                        </svg>
+                        Config Maps
+                        <span className="inspector-section__count">
+                          {selectedNodeConfigMaps.length}
+                        </span>
+                      </div>
+                      <div className="inspector-section__body">
+                        <div className="inspector-rel-list">
+                          {selectedNodeConfigMaps.map((ref) => {
+                            const exists = nodes.some(
+                              (n) =>
+                                n.data.kind === "ConfigMap" &&
+                                n.data.name === ref.name,
+                            );
+                            return (
+                              <button
+                                key={`${ref.name}:${ref.mechanism}:${ref.key ?? ""}`}
+                                type="button"
+                                className="inspector-rel-item inspector-rel-item--link"
+                                title={
+                                  exists
+                                    ? `Select ConfigMap ${ref.name}`
+                                    : `ConfigMap ${ref.name} is referenced but not on the canvas`
+                                }
+                                onClick={() =>
+                                  setSelectedResource({
+                                    kind: "ConfigMap",
+                                    name: ref.name,
+                                  })
+                                }
+                              >
+                                <span
+                                  className="inspector-rel-arrow inspector-rel-arrow--outgoing"
+                                  title="referenced"
+                                >
+                                  ▤
+                                </span>
+                                <div className="inspector-rel-info">
+                                  <span className="inspector-rel-kind">
+                                    ConfigMap
+                                  </span>
+                                  <span className="inspector-rel-name">
+                                    {ref.name}
+                                  </span>
+                                </div>
+                                <span className="inspector-rel-badge">
+                                  {ref.mechanism}
+                                  {ref.mechanism === "envKey" && ref.key
+                                    ? `:${ref.key}`
+                                    : ""}
+                                </span>
+                                {!exists && (
+                                  <span className="inspector-rel-badge">
+                                    missing
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <span className="inspector-field__hint">
+                          Referenced via envFrom / env.valueFrom / volumes in
+                          this Pod spec. Editable in the YAML.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                {/* ── Section: Data (ConfigMap) ─────────────── */}
+                {!isManaged && inspectorData.kind === "ConfigMap" && (
+                  <div className="inspector-section">
+                    <div className="inspector-section__header">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M4 6h16v12H4z" />
+                        <path d="M8 10h8M8 14h5" />
+                      </svg>
+                      Data
+                    </div>
+                    <div className="inspector-section__body">
+                      <ConfigMapDataEditor
+                        resource={selectedNode.data.resource}
+                        resetToken={selectionKey}
+                        onCommit={(data) =>
+                          updateResourceField(
+                            selectedNode.id,
+                            selectedNode.data.resource,
+                            updateNodeResourceFromCanvas,
+                            { data },
+                          )
+                        }
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Section: Used by (ConfigMap) ─────────── */}
+                {inspectorData.kind === "ConfigMap" &&
+                  configMapUsedBy.length > 0 && (
+                    <div className="inspector-section">
+                      <div className="inspector-section__header">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                        >
+                          <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                          <polyline points="15 3 21 3 21 9" />
+                          <line x1="10" y1="14" x2="21" y2="3" />
+                        </svg>
+                        Used by
+                        <span className="inspector-section__count">
+                          {configMapUsedBy.length}
+                        </span>
+                      </div>
+                      <div className="inspector-section__body">
+                        <div className="inspector-rel-list">
+                          {configMapUsedBy.map((ref) => (
+                            <button
+                              key={`${ref.kind}:${ref.name}`}
+                              type="button"
+                              className="inspector-rel-item inspector-rel-item--link"
+                              title={`Select ${ref.kind} ${ref.name}`}
+                              onClick={() =>
+                                setSelectedResource({
+                                  kind: ref.kind,
+                                  name: ref.name,
+                                })
+                              }
+                            >
+                              <span className="inspector-rel-arrow inspector-rel-arrow--incoming">
+                                ↑
+                              </span>
+                              <div className="inspector-rel-info">
+                                <span className="inspector-rel-kind">
+                                  {ref.kind}
+                                </span>
+                                <span className="inspector-rel-name">
+                                  {ref.name}
+                                </span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                        <span className="inspector-field__hint">
+                          Resources referencing this ConfigMap via envFrom /
+                          env.valueFrom / volumes in their Pod spec.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
                 {/* ── Section: Networking (Service) ───────── */}
                 {inspectorData.kind === "Service" && (
                   <div className="inspector-section">
@@ -1955,6 +2180,9 @@ export default function Canvas() {
           onClose={() => setPendingKind(null)}
         />
       )}
+
+      {/* Post-drag mechanism prompt for ConfigMap → workload connections */}
+      <ConfigMapLinkModal />
     </div>
   );
 }

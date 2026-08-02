@@ -45,6 +45,12 @@ const ICONS: Record<string, React.ReactNode> = {
             <path d="M5 6a7 7 0 0014 0" />
         </svg>
     ),
+    ConfigMap: (
+        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 6h16v12H4z" />
+            <path d="M8 10h8M8 14h5" />
+        </svg>
+    ),
 };
 
 const KIND_COLORS: Record<string, string> = {
@@ -54,6 +60,7 @@ const KIND_COLORS: Record<string, string> = {
     Service: '#3b82f6',    // Blue
     Ingress: '#8b5cf6',    // Purple
     HPA: '#f59e0b',        // Amber
+    ConfigMap: '#06b6d4',  // Cyan
 };
 
 function K8sNodeComponent({ data }: NodeProps) {
@@ -203,6 +210,14 @@ function buildResourceDetails(nodeData: K8sNodeData): DetailPair[] {
         const utilization = spec.metrics?.[0]?.resource?.target?.averageUtilization;
         if (typeof utilization === 'number') {
             details.push({ key: 'cpu target', val: `${utilization}%` });
+        }
+    }
+    if (nodeData.kind === 'ConfigMap') {
+        const data = (nodeData.resource?.data ?? {}) as Record<string, unknown>;
+        const keys = Object.keys(data);
+        details.push({ key: 'keys', val: String(keys.length) });
+        if (keys.length > 0) {
+            details.push({ key: 'first', val: keys[0] });
         }
     }
     return details;

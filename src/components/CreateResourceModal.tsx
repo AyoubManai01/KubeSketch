@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { K8sResource, SupportedKind } from '../types/types';
 import { getWorkloadPodLabels } from '../utils/buildGraph';
-import { useVeltraStore } from '../store/store';
+import type { ConfigMapMechanism } from '../utils/linkResources';
+import { useVeltraStore, type ConfigMapLinkPayload } from '../store/store';
+import ConfigMapDataEditor from './ConfigMapDataEditor';
 
 interface Props {
     kind: SupportedKind;
@@ -15,6 +17,7 @@ const KIND_COLORS: Record<string, string> = {
     Service: '#3b82f6',
     Ingress: '#8b5cf6',
     HPA: '#f59e0b',
+    ConfigMap: '#06b6d4',
 };
 
 const KIND_ICONS: Record<string, React.ReactNode> = {
@@ -59,6 +62,12 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
             <path d="M12 20V10M12 6V4" />
             <path d="M12 16l3-3-3-3-3 3 3 3z" />
             <path d="M5 6a7 7 0 0014 0" />
+        </svg>
+    ),
+    ConfigMap: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 6h16v12H4z" />
+            <path d="M8 10h8M8 14h5" />
         </svg>
     ),
 };
@@ -108,6 +117,12 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     const [minReplicas, setMinReplicas] = useState('1');
     const [maxReplicas, setMaxReplicas] = useState('10');
     const [cpuTarget, setCpuTarget] = useState('70');
+    const [cmLabels, setCmLabels] = useState('');
+    const [cmAnnotations, setCmAnnotations] = useState('');
+    const [cmData, setCmData] = useState<Record<string, string> | undefined>(undefined);
+    const [cmTarget, setCmTarget] = useState('');
+    const [cmMechanism, setCmMechanism] = useState<ConfigMapMechanism>('envFrom');
+    const [cmKey, setCmKey] = useState('');
 
     const firstInputRef = useRef<HTMLInputElement>(null);
 
@@ -160,6 +175,34 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         nodes.forEach((n) => { if (n.data.namespace) vals.add(n.data.namespace); });
         return Array.from(vals).sort();
     }, [nodes]);
+
+    // Link targets for a new ConfigMap: real Deployments/ReplicaSets/standalone Pods,
+    // plus controller-materialized Pods (their ref is written to the real owner's pod
+    // template). De-duped by the resolved real owner, so several synthetic Pods of the
+    // same workload collapse into one option.
+    const cmTargetOptions = useMemo(() => {
+        const seen = new Set<string>();
+        const options: Array<{ label: string; value: string }> = [];
+        nodes.forEach((n) => {
+            const k = n.data.kind;
+            if (k !== 'Pod' && k !== 'Deployment' && k !== 'ReplicaSet') return;
+            let realKind: string = k;
+            let realName: string = n.data.name;
+            let label = `${k} ${n.data.name}`;
+            if (n.data.synthetic && n.data.managedBy) {
+                realKind = n.data.managedBy.kind;
+                realName = n.data.managedBy.name;
+                label = `${k} ${n.data.name} (via ${n.data.managedBy.kind} ${n.data.managedBy.name})`;
+            }
+            const value = `${realKind}|${realName}`;
+            if (seen.has(value)) return;
+            seen.add(value);
+            options.push({ label, value });
+        });
+        return options.sort((a, b) => a.label.localeCompare(b.label));
+    }, [nodes]);
+
+    const cmDataKeys = useMemo(() => Object.keys(cmData ?? {}), [cmData]);
 
     useEffect(() => {
         firstInputRef.current?.focus();
@@ -295,12 +338,38 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                     },
                 };
             }
+            case 'ConfigMap': {
+                const labels = parseKeyValueString(cmLabels);
+                const annotations = parseKeyValueString(cmAnnotations);
+                return {
+                    apiVersion: 'v1',
+                    kind,
+                    metadata: {
+                        name: meta.name,
+                        namespace: meta.namespace,
+                        ...(labels ? { labels } : {}),
+                        ...(annotations ? { annotations } : {}),
+                    },
+                    ...(cmData ? { data: cmData } : {}),
+                };
+            }
         }
     }
 
     function handleCreate() {
         if (nameError) return;
-        addConfiguredNode(kind, buildResource());
+        if (cmTarget && cmMechanism === 'envKey' && !cmKey) return;
+        let link: ConfigMapLinkPayload | undefined;
+        if (cmTarget) {
+            const [targetKind, targetName] = cmTarget.split('|');
+            link = {
+                targetKind: targetKind as 'Pod' | 'Deployment' | 'ReplicaSet',
+                targetName,
+                mechanism: cmMechanism,
+                ...(cmMechanism === 'envKey' && cmKey ? { key: cmKey } : {}),
+            };
+        }
+        addConfiguredNode(kind, buildResource(), link);
         onClose();
     }
 
@@ -605,6 +674,137 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                             </div>
                         </>
                     )}
+
+                    {/* ConfigMap: labels + annotations + data */}
+                    {kind === 'ConfigMap' && (
+                        <>
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    Labels
+                                    <span className="modal-field__hint">
+                                        Comma-separated key=value pairs (optional). These can be
+                                        matched by workloads and selectors elsewhere in the cluster.
+                                    </span>
+                                </label>
+                                <input
+                                    className="modal-field__input"
+                                    value={cmLabels}
+                                    onChange={(e) => setCmLabels(e.target.value)}
+                                    placeholder="app=my-app,tier=config"
+                                />
+                            </div>
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    Annotations
+                                    <span className="modal-field__hint">
+                                        Comma-separated key=value pairs (optional).
+                                    </span>
+                                </label>
+                                <input
+                                    className="modal-field__input"
+                                    value={cmAnnotations}
+                                    onChange={(e) => setCmAnnotations(e.target.value)}
+                                    placeholder="owner=team-a"
+                                />
+                            </div>
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    Data
+                                    <span className="modal-field__hint">
+                                        Optional key/value entries — injected into Pods via
+                                        envFrom, env.valueFrom or volumes.
+                                    </span>
+                                </label>
+                                <ConfigMapDataEditor
+                                    resource={{
+                                        apiVersion: 'v1',
+                                        kind: 'ConfigMap',
+                                        metadata: { name: name.trim() || suggestedName },
+                                        data: cmData,
+                                    }}
+                                    resetToken="create-configmap"
+                                    onCommit={setCmData}
+                                />
+                            </div>
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    Link to a resource (optional)
+                                    <span className="modal-field__hint">
+                                        Picks a Pod, ReplicaSet or Deployment that will consume
+                                        this ConfigMap. Selecting a controller-created Pod writes
+                                        the reference to its owner&apos;s Pod template.
+                                    </span>
+                                </label>
+                                <select
+                                    className="modal-field__input modal-field__input--select"
+                                    value={cmTarget}
+                                    onChange={(e) => {
+                                        setCmTarget(e.target.value);
+                                        setCmKey('');
+                                    }}
+                                >
+                                    <option value="">(no target — just create the ConfigMap)</option>
+                                    {cmTargetOptions.map((opt) => (
+                                        <option key={opt.value} value={opt.value}>
+                                            {opt.label}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            {cmTarget && (
+                                <>
+                                    <div className="modal-field">
+                                        <label className="modal-field__label">
+                                            Reference mechanism
+                                            <span className="modal-field__hint">
+                                                How the target consumes the ConfigMap.
+                                            </span>
+                                        </label>
+                                        <select
+                                            className="modal-field__input modal-field__input--select"
+                                            value={cmMechanism}
+                                            onChange={(e) => {
+                                                setCmMechanism(e.target.value as ConfigMapMechanism);
+                                                setCmKey('');
+                                            }}
+                                        >
+                                            <option value="envFrom">envFrom — inject all keys as env vars</option>
+                                            <option value="volumes">volumes — mount as files</option>
+                                            <option value="envKey">env — inject a single key</option>
+                                        </select>
+                                    </div>
+                                    {cmMechanism === 'envKey' && (
+                                        <div className="modal-field">
+                                            <label className="modal-field__label">
+                                                Data key
+                                                <span className="modal-field__hint">
+                                                    The ConfigMap key injected as an env var.
+                                                </span>
+                                            </label>
+                                            <select
+                                                className="modal-field__input modal-field__input--select"
+                                                value={cmKey}
+                                                onChange={(e) => setCmKey(e.target.value)}
+                                            >
+                                                <option value="">(select a key)</option>
+                                                {cmDataKeys.map((k) => (
+                                                    <option key={k} value={k}>
+                                                        {k}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            {cmDataKeys.length === 0 && (
+                                                <span className="modal-field__error">
+                                                    This ConfigMap has no data keys — add some above or
+                                                    pick envFrom / volumes.
+                                                </span>
+                                            )}
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </>
+                    )}
                 </div>
 
                 {/* Footer */}
@@ -617,8 +817,16 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                         className="modal-btn modal-btn--primary"
                         style={{ '--btn-color': color } as React.CSSProperties}
                         onClick={handleCreate}
-                        disabled={!!nameError}
-                        title={nameError || `Create ${kind}`}
+                        disabled={
+                            !!nameError ||
+                            (kind === 'ConfigMap' && !!cmTarget && cmMechanism === 'envKey' && !cmKey)
+                        }
+                        title={
+                            nameError ||
+                            (kind === 'ConfigMap' && cmTarget && cmMechanism === 'envKey' && !cmKey
+                                ? 'Select a data key first'
+                                : `Create ${kind}`)
+                        }
                     >
                         Create {kind}
                     </button>
@@ -626,4 +834,20 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
             </div>
         </div>
     );
+}
+
+/** Parse "k=v,k2=v2" into a map (empty input → undefined). */
+function parseKeyValueString(value: string): Record<string, string> | undefined {
+    if (!value.trim()) return undefined;
+    const obj: Record<string, string> = {};
+    value
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .forEach((pair) => {
+            const [k, ...rest] = pair.split('=');
+            if (!k || rest.length === 0) return;
+            obj[k.trim()] = rest.join('=').trim();
+        });
+    return Object.keys(obj).length ? obj : undefined;
 }

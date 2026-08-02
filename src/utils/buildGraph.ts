@@ -22,6 +22,8 @@ const SERVICE_HEIGHT = 104;
 const INGRESS_HEIGHT = 104;
 const HPA_WIDTH = 175;
 const HPA_HEIGHT = 104; // fits header + target/min/max rows without overflowing
+const CONFIGMAP_WIDTH = 180;
+const CONFIGMAP_HEIGHT = 104; // fits header + data rows without overflowing the leaf box
 const RS_HEADER_HEIGHT = 45;
 const DEP_HEADER_HEIGHT = 45;
 
@@ -233,7 +235,9 @@ function getSavedPosition(kind: string, name: string): { x: number; y: number } 
  * 3. Services are placed in a lane above workloads (Y = 175). Auto-align horizontally above the Pods they select.
  * 4. Ingresses are placed in the top lane (Y = 25). Auto-align horizontally above the Services they target.
  * 5. HPAs are placed in a lane below workloads (Y = 520). Auto-align horizontally above the workload they scale.
- * 6. Manual layout adjustments are preserved for all top-level elements.
+ * 6. ConfigMaps are placed in a lane below HPAs (Y = 680). They receive inferred
+ *    "uses" edges from every workload whose Pod spec references them.
+ * 7. Manual layout adjustments are preserved for all top-level elements.
  *
  * Invariants:
  * - Every Pod belongs to at most one ReplicaSet, every ReplicaSet to at most one Deployment
@@ -262,6 +266,7 @@ export function buildGraph(
     const replicaSets = resources.filter((r) => r.kind === 'ReplicaSet');
     const pods = resources.filter((r) => r.kind === 'Pod');
     const hpas = resources.filter((r) => r.kind === 'HPA');
+    const configmaps = resources.filter((r) => r.kind === 'ConfigMap');
 
     // Ownership assignment: each ReplicaSet is claimed by at most ONE Deployment,
     // each Pod by at most ONE ReplicaSet (first match wins). This prevents a resource
@@ -842,7 +847,71 @@ export function buildGraph(
         });
     });
 
-    // 5. GENERATE EDGES (Traffic Flow)
+    // 5. LAY OUT CONFIGMAPS
+    const configmapLayoutInfo: Array<{ id: string; x: number; width: number; node: K8sResource }> = [];
+    let configmapXCursor = 50;
+
+    configmaps.forEach((cm) => {
+        const cmId = allocateId(cm);
+        const key = `ConfigMap:${cm.metadata.name}`;
+        const savedPos = getSavedPosition('ConfigMap', cm.metadata.name);
+        const prevPos = prevCoords.get(key);
+
+        let preferredX = 0;
+        if (prevPos) {
+            preferredX = prevPos.x;
+        } else if (savedPos) {
+            preferredX = savedPos.x;
+        } else {
+            preferredX = configmapXCursor;
+            configmapXCursor += 210;
+        }
+
+        configmapLayoutInfo.push({
+            id: cmId,
+            x: preferredX,
+            width: CONFIGMAP_WIDTH,
+            node: cm,
+        });
+    });
+
+    const draggedConfigmapIds = new Set(
+        configmapLayoutInfo
+            .filter(
+                ({ node }) =>
+                    prevCoords.has(`ConfigMap:${node.metadata.name}`) ||
+                    getSavedPosition('ConfigMap', node.metadata.name)
+            )
+            .map(({ id }) => id)
+    );
+
+    resolveCollisions(configmapLayoutInfo, draggedConfigmapIds, 24);
+
+    configmapLayoutInfo.forEach((cmInfo) => {
+        const key = `ConfigMap:${cmInfo.node.metadata.name}`;
+        const prevPos = prevCoords.get(key);
+        const savedPos = getSavedPosition('ConfigMap', cmInfo.node.metadata.name);
+        const yCoord = prevPos?.y ?? savedPos?.y ?? 680;
+
+        const pos = { x: cmInfo.x, y: yCoord };
+        absCoords.set(cmInfo.id, pos);
+
+        nodes.push({
+            id: cmInfo.id,
+            type: 'k8sNode',
+            position: pos,
+            style: { width: CONFIGMAP_WIDTH, height: CONFIGMAP_HEIGHT },
+            data: {
+                kind: 'ConfigMap',
+                name: cmInfo.node.metadata.name,
+                namespace: cmInfo.node.metadata.namespace,
+                resource: cmInfo.node,
+            },
+            draggable: true,
+        });
+    });
+
+    // 6. GENERATE EDGES (Traffic Flow)
     const edges: Edge[] = [];
     const byId = new Map<string, Node<K8sNodeData>>();
     nodes.forEach((n) => byId.set(n.id, n));
@@ -872,7 +941,7 @@ export function buildGraph(
             selectable: false,
             interactionWidth: 0,
             style: {
-                stroke: edgeColorFor(source.data.kind),
+                stroke: target.data.kind === 'ConfigMap' ? '#06b6d4' : edgeColorFor(source.data.kind),
                 strokeWidth: 2.2,
                 filter: 'drop-shadow(0 0 4px rgba(96, 165, 250, 0.4))'
             },
@@ -880,7 +949,7 @@ export function buildGraph(
                 type: MarkerType.ArrowClosed,
                 width: 14,
                 height: 14,
-                color: edgeColorFor(source.data.kind),
+                color: target.data.kind === 'ConfigMap' ? '#06b6d4' : edgeColorFor(source.data.kind),
             }
         });
     };
@@ -949,6 +1018,28 @@ export function buildGraph(
         if (!target) return;
         const targetId = workloadIdByName.get(`${target.kind}:${target.name}`);
         if (targetId) addEdge(hpaId, targetId, 'scales');
+    });
+
+    // ConfigMap → "uses": every workload (real Deployment/ReplicaSet/Pod) whose Pod
+    // spec references a ConfigMap draws an edge to it. Synthetic RSs/Pods are not
+    // part of `resources`, so no double edges for inherited refs.
+    const configmapIdByName = new Map<string, string>();
+    nodes.forEach((n) => {
+        if (n.data.kind === 'ConfigMap' && !configmapIdByName.has(n.data.name)) {
+            configmapIdByName.set(n.data.name, n.id);
+        }
+    });
+
+    resources.forEach((workload) => {
+        if (workload.kind !== 'Deployment' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod') {
+            return;
+        }
+        const workloadId = idByResource.get(workload);
+        if (!workloadId) return;
+        getConfigMapRefs(workload).forEach((cmName) => {
+            const cmId = configmapIdByName.get(cmName);
+            if (cmId) addEdge(workloadId, cmId, 'uses');
+        });
     });
 
     return { nodes, edges };
@@ -1090,4 +1181,118 @@ export function getHpaTarget(
         return undefined;
     }
     return { kind: ref.kind, name: ref.name };
+}
+
+/**
+ * The ConfigMap names a resource references through its Pod spec: `envFrom[].configMapRef`,
+ * `env[].valueFrom.configMapKeyRef` and `volumes[].configMap`. Workloads (Deployment/ReplicaSet)
+ * carry these under `spec.template.spec`; Pods use `spec` directly. Returns unique names in
+ * document order.
+ */
+export function getConfigMapRefs(resource: K8sResource): string[] {
+    const spec = resource.spec as
+        | { template?: { spec?: Record<string, unknown> }; [key: string]: unknown }
+        | undefined;
+    const podSpec =
+        (resource.kind === 'Deployment' || resource.kind === 'ReplicaSet')
+            ? (spec?.template?.spec as Record<string, any> | undefined)
+            : (spec as Record<string, any> | undefined);
+    if (!podSpec) return [];
+
+    const names = new Set<string>();
+    const containers: any[] = [
+        ...(Array.isArray(podSpec.containers) ? podSpec.containers : []),
+        ...(Array.isArray(podSpec.initContainers) ? podSpec.initContainers : []),
+    ];
+
+    containers.forEach((container) => {
+        if (!container || typeof container !== 'object') return;
+        if (Array.isArray(container.envFrom)) {
+            container.envFrom.forEach((envFrom: any) => {
+                const name = envFrom?.configMapRef?.name;
+                if (typeof name === 'string') names.add(name);
+            });
+        }
+        if (Array.isArray(container.env)) {
+            container.env.forEach((env: any) => {
+                const name = env?.valueFrom?.configMapKeyRef?.name;
+                if (typeof name === 'string') names.add(name);
+            });
+        }
+    });
+
+    if (Array.isArray(podSpec.volumes)) {
+        podSpec.volumes.forEach((volume: any) => {
+            const name = volume?.configMap?.name;
+            if (typeof name === 'string') names.add(name);
+        });
+    }
+
+    return [...names];
+}
+
+/** All resources that reference the given ConfigMap by name (via getConfigMapRefs). */
+export function getResourcesUsingConfigMap(resources: K8sResource[], cmName: string): K8sResource[] {
+    return resources.filter(
+        (r) =>
+            r.kind === 'Deployment' ||
+            r.kind === 'ReplicaSet' ||
+            r.kind === 'Pod'
+    ).filter((r) => getConfigMapRefs(r).includes(cmName));
+}
+
+/**
+ * How a resource consumes each ConfigMap it references, for inspector display:
+ * `envFrom` (inject all keys), `envKey` (single key via configMapKeyRef, with the
+ * key), `volumes` (mounted as a volume). One entry per mechanism per ConfigMap.
+ */
+export function getConfigMapRefDetails(resource: K8sResource): Array<{
+    name: string;
+    mechanism: 'envFrom' | 'envKey' | 'volumes';
+    key?: string;
+}> {
+    const spec = resource.spec as
+        | { template?: { spec?: Record<string, unknown> }; [key: string]: unknown }
+        | undefined;
+    const podSpec =
+        resource.kind === 'Deployment' || resource.kind === 'ReplicaSet'
+            ? (spec?.template?.spec as Record<string, any> | undefined)
+            : (spec as Record<string, any> | undefined);
+    if (!podSpec) return [];
+
+    const entries: Array<{ name: string; mechanism: 'envFrom' | 'envKey' | 'volumes'; key?: string }> = [];
+    const seen = new Set<string>();
+    const push = (name: string, mechanism: 'envFrom' | 'envKey' | 'volumes', key?: string) => {
+        const id = `${name}:${mechanism}:${key ?? ''}`;
+        if (seen.has(id)) return;
+        seen.add(id);
+        entries.push({ name, mechanism, ...(key ? { key } : {}) });
+    };
+
+    const containers: any[] = [
+        ...(Array.isArray(podSpec.containers) ? podSpec.containers : []),
+        ...(Array.isArray(podSpec.initContainers) ? podSpec.initContainers : []),
+    ];
+    containers.forEach((container) => {
+        if (!container || typeof container !== 'object') return;
+        if (Array.isArray(container.envFrom)) {
+            container.envFrom.forEach((envFrom: any) => {
+                const name = envFrom?.configMapRef?.name;
+                if (typeof name === 'string') push(name, 'envFrom');
+            });
+        }
+        if (Array.isArray(container.env)) {
+            container.env.forEach((env: any) => {
+                const ref = env?.valueFrom?.configMapKeyRef;
+                if (typeof ref?.name === 'string') push(ref.name, 'envKey', ref.key);
+            });
+        }
+    });
+    if (Array.isArray(podSpec.volumes)) {
+        podSpec.volumes.forEach((volume: any) => {
+            const name = volume?.configMap?.name;
+            if (typeof name === 'string') push(name, 'volumes');
+        });
+    }
+    return entries;
 }

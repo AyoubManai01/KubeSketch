@@ -4,7 +4,7 @@
  */
 export interface K8sResource {
   apiVersion: string;
-  kind: 'Deployment' | 'Service' | 'Ingress' | 'Pod' | 'ReplicaSet' | 'HPA';
+  kind: 'Deployment' | 'Service' | 'Ingress' | 'Pod' | 'ReplicaSet' | 'HPA' | 'ConfigMap';
   metadata: {
     name: string;
     namespace?: string;
@@ -22,5 +22,6 @@ export const SUPPORTED_KINDS = [
   'Pod',
   'ReplicaSet',
   'HPA',
+  'ConfigMap',
 ] as const;
 export type SupportedKind = (typeof SUPPORTED_KINDS)[number];

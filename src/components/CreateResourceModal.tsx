@@ -14,6 +14,7 @@ const KIND_COLORS: Record<string, string> = {
     Pod: '#14b8a6',
     Service: '#3b82f6',
     Ingress: '#8b5cf6',
+    HPA: '#f59e0b',
 };
 
 const KIND_ICONS: Record<string, React.ReactNode> = {
@@ -51,6 +52,13 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
             <circle cx="12" cy="12" r="10" />
             <line x1="2" y1="12" x2="22" y2="12" />
             <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" />
+        </svg>
+    ),
+    HPA: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 20V10M12 6V4" />
+            <path d="M12 16l3-3-3-3-3 3 3 3z" />
+            <path d="M5 6a7 7 0 0014 0" />
         </svg>
     ),
 };
@@ -96,6 +104,10 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     const [host, setHost] = useState('');
     const [path, setPath] = useState('/');
     const [backendService, setBackendService] = useState('');
+    const [targetWorkload, setTargetWorkload] = useState('');
+    const [minReplicas, setMinReplicas] = useState('1');
+    const [maxReplicas, setMaxReplicas] = useState('10');
+    const [cpuTarget, setCpuTarget] = useState('70');
 
     const firstInputRef = useRef<HTMLInputElement>(null);
 
@@ -113,6 +125,16 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
 
     const serviceOptions = useMemo(
         () => nodes.filter((n) => n.data.kind === 'Service').map((n) => n.data.name as string),
+        [nodes]
+    );
+
+    // HPA scale targets: Deployments and ReplicaSets on the canvas
+    const workloadOptions = useMemo(
+        () =>
+            nodes
+                .filter((n) => n.data.kind === 'Deployment' || n.data.kind === 'ReplicaSet')
+                .map((n) => ({ kind: n.data.kind as string, name: n.data.name as string }))
+                .sort((a, b) => `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`)),
         [nodes]
     );
 
@@ -238,6 +260,41 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                         ],
                     },
                 };
+            case 'HPA': {
+                const minNum = parseInt(minReplicas, 10);
+                const maxNum = parseInt(maxReplicas, 10);
+                const cpuNum = parseInt(cpuTarget, 10);
+                const [targetKindRaw, targetNameRaw] = targetWorkload.split('|');
+                const fallback = workloadOptions[0];
+                const targetKind = targetKindRaw || fallback?.kind || 'Deployment';
+                const targetName = targetNameRaw || fallback?.name || '';
+                return {
+                    apiVersion: 'autoscaling/v2',
+                    kind,
+                    metadata: { name: meta.name, namespace: meta.namespace },
+                    spec: {
+                        scaleTargetRef: {
+                            apiVersion: 'apps/v1',
+                            kind: targetKind,
+                            name: targetName,
+                        },
+                        minReplicas: Number.isFinite(minNum) ? minNum : 1,
+                        maxReplicas: Number.isFinite(maxNum) ? maxNum : 10,
+                        metrics: [
+                            {
+                                type: 'Resource',
+                                resource: {
+                                    name: 'cpu',
+                                    target: {
+                                        type: 'Utilization',
+                                        averageUtilization: Number.isFinite(cpuNum) ? cpuNum : 70,
+                                    },
+                                },
+                            },
+                        ],
+                    },
+                };
+            }
         }
     }
 
@@ -478,6 +535,73 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                                         <option key={s} value={s}>{s}</option>
                                     ))}
                                 </select>
+                            </div>
+                        </>
+                    )}
+
+                    {/* HPA: scale target + replica bounds */}
+                    {kind === 'HPA' && (
+                        <>
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    Scale target
+                                    <span className="modal-field__hint">
+                                        Sets spec.scaleTargetRef — the Deployment or ReplicaSet this HPA scales.
+                                    </span>
+                                </label>
+                                <select
+                                    className="modal-field__input modal-field__input--select"
+                                    value={targetWorkload}
+                                    onChange={(e) => setTargetWorkload(e.target.value)}
+                                >
+                                    <option value="">(select a workload)</option>
+                                    {workloadOptions.map((w) => (
+                                        <option key={`${w.kind}|${w.name}`} value={`${w.kind}|${w.name}`}>
+                                            {w.kind} {w.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="modal-row">
+                                <div className="modal-field">
+                                    <label className="modal-field__label">Min Replicas</label>
+                                    <input
+                                        className="modal-field__input"
+                                        type="number"
+                                        min={1}
+                                        value={minReplicas}
+                                        onChange={(e) => setMinReplicas(e.target.value)}
+                                        placeholder="1"
+                                    />
+                                </div>
+                                <div className="modal-field">
+                                    <label className="modal-field__label">Max Replicas</label>
+                                    <input
+                                        className="modal-field__input"
+                                        type="number"
+                                        min={1}
+                                        value={maxReplicas}
+                                        onChange={(e) => setMaxReplicas(e.target.value)}
+                                        placeholder="10"
+                                    />
+                                </div>
+                            </div>
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    CPU Target %
+                                    <span className="modal-field__hint">
+                                        Sets metrics[0].resource.target.averageUtilization.
+                                    </span>
+                                </label>
+                                <input
+                                    className="modal-field__input"
+                                    type="number"
+                                    min={1}
+                                    max={100}
+                                    value={cpuTarget}
+                                    onChange={(e) => setCpuTarget(e.target.value)}
+                                    placeholder="70"
+                                />
                             </div>
                         </>
                     )}

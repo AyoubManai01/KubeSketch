@@ -20,6 +20,8 @@ const POD_WIDTH = 150;
 const POD_HEIGHT = 110; // fits header + namespace/container/image rows without overflowing the parent
 const SERVICE_HEIGHT = 104;
 const INGRESS_HEIGHT = 104;
+const HPA_WIDTH = 175;
+const HPA_HEIGHT = 104; // fits header + target/min/max rows without overflowing
 const RS_HEADER_HEIGHT = 45;
 const DEP_HEADER_HEIGHT = 45;
 
@@ -56,8 +58,112 @@ export function replicasOf(resource: K8sResource): number {
     return 1;
 }
 
+/** One HPA-enforced replica clamp on a workload (or on a ReplicaSet inherited from its Deployment). */
+export interface HpaReplicaOverride {
+    kind: 'Deployment' | 'ReplicaSet';
+    name: string;
+    original: number;
+    effective: number;
+    hpaName: string;
+    /** Which bound forced the change (for the warning text). */
+    reason: 'minReplicas' | 'maxReplicas';
+    bound: number;
+    /** Set when a ReplicaSet inherited the count from its Deployment's HPA. */
+    viaDeployment?: string;
+}
+
+/** The lower/upper bounds an HPA enforces on a workload (min defaults to 1, max to Infinity). */
+function hpaBounds(hpa: K8sResource): { min: number; max: number } | undefined {
+    const spec = hpa.spec as { minReplicas?: unknown; maxReplicas?: unknown } | undefined;
+    const minRaw = spec?.minReplicas;
+    const maxRaw = spec?.maxReplicas;
+    const min =
+        typeof minRaw === 'number' && Number.isFinite(minRaw) && minRaw >= 0
+            ? Math.floor(minRaw)
+            : 1;
+    const max =
+        typeof maxRaw === 'number' && Number.isFinite(maxRaw) && maxRaw >= 0
+            ? Math.floor(maxRaw)
+            : Infinity;
+    return { min, max: Math.max(max, min) };
+}
+
+/** True when the HPA's scaleTargetRef points at this exact workload. */
+function hpaTargets(hpa: K8sResource, resource: K8sResource): boolean {
+    const target = getHpaTarget(hpa);
+    return !!target && target.kind === resource.kind && target.name === resource.metadata.name;
+}
+
+/** The effective replica count an HPA forces onto a workload: clamp(spec.replicas, [min, max]). */
+export function effectiveReplicas(hpa: K8sResource, resource: K8sResource): number | undefined {
+    const bounds = hpaBounds(hpa);
+    if (!bounds || !hpaTargets(hpa, resource)) return undefined;
+    return Math.min(Math.max(replicasOf(resource), bounds.min), bounds.max);
+}
+
+/**
+ * HPA priority over `spec.replicas` (HorizontalPodAutoscalers win over Deployments
+ * and ReplicaSets). Clamps every targeted workload's replicas into the HPA's
+ * [minReplicas, maxReplicas] window and WRITES the clamped value back into the
+ * workload's spec — YAML, canvas pod count and badges all agree afterwards.
+ *
+ * A Deployment's HPA also propagates the effective count to the ReplicaSets it
+ * owns (the Deployment controller drives its ReplicaSets' scale). The first
+ * matching HPA wins per workload. Returns the clamps that actually changed a
+ * count (used for the persistent bottom status-bar warning).
+ */
+export function applyHpaReplicaOverrides(resources: K8sResource[]): HpaReplicaOverride[] {
+    const hpas = resources.filter((r) => r.kind === 'HPA');
+    if (hpas.length === 0) return [];
+    const overrides: HpaReplicaOverride[] = [];
+
+    const clampTo = (
+        resource: K8sResource,
+        hpa: K8sResource,
+        effective: number,
+        viaDeployment?: string
+    ): void => {
+        const original = replicasOf(resource);
+        if (effective === original) return;
+        const bounds = hpaBounds(hpa)!;
+        const reason: HpaReplicaOverride['reason'] =
+            effective < original ? 'maxReplicas' : 'minReplicas';
+        const bound = reason === 'minReplicas' ? bounds.min : bounds.max;
+        const spec = resource.spec as { replicas?: unknown };
+        spec.replicas = effective;
+        overrides.push({
+            kind: resource.kind as 'Deployment' | 'ReplicaSet',
+            name: resource.metadata.name,
+            original,
+            effective,
+            hpaName: hpa.metadata.name,
+            reason,
+            bound,
+            viaDeployment,
+        });
+    };
+
+    resources.forEach((resource) => {
+        if (resource.kind !== 'Deployment' && resource.kind !== 'ReplicaSet') return;
+        for (const hpa of hpas) {
+            const effective = effectiveReplicas(hpa, resource);
+            if (effective === undefined) continue;
+            clampTo(resource, hpa, effective);
+            if (resource.kind === 'Deployment') {
+                const depEffective = effective;
+                resources.forEach((rs) => {
+                    if (rs.kind !== 'ReplicaSet' || !ownsResource(resource, rs)) return;
+                    clampTo(rs, hpa, depEffective, resource.metadata.name);
+                });
+            }
+            break; // first matching HPA wins
+        }
+    });
+    return overrides;
+}
+
 /** The ReplicaSet a real cluster would create for a Deployment. */
-function synthesizeReplicaSet(dep: K8sResource): K8sResource {
+function synthesizeReplicaSet(dep: K8sResource, replicas?: number): K8sResource {
     const spec = dep.spec as { template?: unknown } | undefined;
     const podLabels = getWorkloadPodLabels(dep) ?? { app: dep.metadata.name };
     return {
@@ -69,7 +175,7 @@ function synthesizeReplicaSet(dep: K8sResource): K8sResource {
             labels: { ...podLabels },
         },
         spec: {
-            replicas: replicasOf(dep),
+            replicas: replicas ?? replicasOf(dep),
             selector: { matchLabels: { ...podLabels } },
             ...(spec?.template ? { template: structuredClone(spec.template) } : {}),
         },
@@ -126,7 +232,8 @@ function getSavedPosition(kind: string, name: string): { x: number; y: number } 
  * 2. ReplicaSets are nested inside Deployments. Lay out horizontally in a row. Compute Deployment size.
  * 3. Services are placed in a lane above workloads (Y = 175). Auto-align horizontally above the Pods they select.
  * 4. Ingresses are placed in the top lane (Y = 25). Auto-align horizontally above the Services they target.
- * 5. Manual layout adjustments are preserved for all top-level elements.
+ * 5. HPAs are placed in a lane below workloads (Y = 520). Auto-align horizontally above the workload they scale.
+ * 6. Manual layout adjustments are preserved for all top-level elements.
  *
  * Invariants:
  * - Every Pod belongs to at most one ReplicaSet, every ReplicaSet to at most one Deployment
@@ -154,6 +261,7 @@ export function buildGraph(
     const deployments = resources.filter((r) => r.kind === 'Deployment');
     const replicaSets = resources.filter((r) => r.kind === 'ReplicaSet');
     const pods = resources.filter((r) => r.kind === 'Pod');
+    const hpas = resources.filter((r) => r.kind === 'HPA');
 
     // Ownership assignment: each ReplicaSet is claimed by at most ONE Deployment,
     // each Pod by at most ONE ReplicaSet (first match wins). This prevents a resource
@@ -173,10 +281,35 @@ export function buildGraph(
     /** synthetic resource → its nearest REAL controlling resource */
     const syntheticOwner = new Map<K8sResource, { kind: SupportedKind; name: string }>();
 
+    /**
+     * The effective replica count of a workload under HPA priority:
+     * clamp(spec.replicas, [minReplicas, maxReplicas]) of the first HPA that
+     * targets it. The store has already written the clamped value back into
+     * spec.replicas, so this mostly returns replicasOf() — the fallback keeps
+     * materialization correct even when buildGraph runs pre-override.
+     */
+    const effectiveReplicasOf = (resource: K8sResource): number => {
+        for (const hpa of hpas) {
+            const effective = effectiveReplicas(hpa, resource);
+            if (effective !== undefined) return effective;
+        }
+        return replicasOf(resource);
+    };
+
+    /** A ReplicaSet inside an HPA-scaled Deployment materializes to the Deployment's
+     *  effective count (the Deployment controller drives its ReplicaSets' scale). */
+    const desiredReplicasFor = (rs: K8sResource): number => {
+        const ownerDep = deployments.find((dep) => depToRs.get(dep)?.includes(rs));
+        if (ownerDep && hpas.some((hpa) => hpaTargets(hpa, ownerDep))) {
+            return effectiveReplicasOf(ownerDep);
+        }
+        return effectiveReplicasOf(rs);
+    };
+
     deployments.forEach((dep) => {
         const children = depToRs.get(dep)!;
         if (children.length === 0) {
-            const rs = synthesizeReplicaSet(dep);
+            const rs = synthesizeReplicaSet(dep, effectiveReplicasOf(dep));
             syntheticOwner.set(rs, { kind: 'Deployment', name: dep.metadata.name });
             children.push(rs);
         }
@@ -201,7 +334,7 @@ export function buildGraph(
     const syntheticPods: K8sResource[] = [];
     allReplicaSets.forEach((rs) => {
         const explicit = rsToPod.get(rs) ?? [];
-        const desired = replicasOf(rs);
+        const desired = desiredReplicasFor(rs);
         const shortfall = Math.min(Math.max(desired - explicit.length, 0), MAX_SYNTHETIC_PODS);
         if (shortfall === 0) return;
 
@@ -640,7 +773,76 @@ export function buildGraph(
         });
     });
 
-    // 4. GENERATE EDGES (Traffic Flow)
+    // 4. LAY OUT HPAs
+    const hpaLayoutInfo: Array<{ id: string; x: number; width: number; node: K8sResource }> = [];
+    let hpaXCursor = 50;
+
+    hpas.forEach((hpa) => {
+        const hpaId = allocateId(hpa);
+        const key = `HPA:${hpa.metadata.name}`;
+        const savedPos = getSavedPosition('HPA', hpa.metadata.name);
+        const prevPos = prevCoords.get(key);
+
+        let preferredX = 0;
+        if (prevPos) {
+            preferredX = prevPos.x;
+        } else if (savedPos) {
+            preferredX = savedPos.x;
+        } else {
+            // Center above the workload it scales when possible
+            const target = getHpaTarget(hpa);
+            const targetId = target
+                ? nodes.find((n) => n.data.kind === target.kind && n.data.name === target.name)?.id
+                : undefined;
+            if (targetId && absCoords.has(targetId)) {
+                preferredX = absCoords.get(targetId)!.x;
+            } else {
+                preferredX = hpaXCursor;
+                hpaXCursor += 200;
+            }
+        }
+
+        hpaLayoutInfo.push({
+            id: hpaId,
+            x: preferredX,
+            width: HPA_WIDTH,
+            node: hpa,
+        });
+    });
+
+    const draggedHpaIds = new Set(
+        hpaLayoutInfo
+            .filter(({ node }) => prevCoords.has(`HPA:${node.metadata.name}`) || getSavedPosition('HPA', node.metadata.name))
+            .map(({ id }) => id)
+    );
+
+    resolveCollisions(hpaLayoutInfo, draggedHpaIds, 24);
+
+    hpaLayoutInfo.forEach((hInfo) => {
+        const key = `HPA:${hInfo.node.metadata.name}`;
+        const prevPos = prevCoords.get(key);
+        const savedPos = getSavedPosition('HPA', hInfo.node.metadata.name);
+        const yCoord = prevPos?.y ?? savedPos?.y ?? 520;
+
+        const pos = { x: hInfo.x, y: yCoord };
+        absCoords.set(hInfo.id, pos);
+
+        nodes.push({
+            id: hInfo.id,
+            type: 'k8sNode',
+            position: pos,
+            style: { width: HPA_WIDTH, height: HPA_HEIGHT },
+            data: {
+                kind: 'HPA',
+                name: hInfo.node.metadata.name,
+                namespace: hInfo.node.metadata.namespace,
+                resource: hInfo.node,
+            },
+            draggable: true,
+        });
+    });
+
+    // 5. GENERATE EDGES (Traffic Flow)
     const edges: Edge[] = [];
     const byId = new Map<string, Node<K8sNodeData>>();
     nodes.forEach((n) => byId.set(n.id, n));
@@ -670,7 +872,7 @@ export function buildGraph(
             selectable: false,
             interactionWidth: 0,
             style: {
-                stroke: source.data.kind === 'Ingress' ? '#a78bfa' : '#60a5fa',
+                stroke: edgeColorFor(source.data.kind),
                 strokeWidth: 2.2,
                 filter: 'drop-shadow(0 0 4px rgba(96, 165, 250, 0.4))'
             },
@@ -678,7 +880,7 @@ export function buildGraph(
                 type: MarkerType.ArrowClosed,
                 width: 14,
                 height: 14,
-                color: source.data.kind === 'Ingress' ? '#a78bfa' : '#60a5fa',
+                color: edgeColorFor(source.data.kind),
             }
         });
     };
@@ -731,7 +933,32 @@ export function buildGraph(
         });
     });
 
+    // HPA → scale target (Deployment/ReplicaSet)
+    const workloadIdByName = new Map<string, string>();
+    nodes.forEach((n) => {
+        if (n.data.kind === 'Deployment' || n.data.kind === 'ReplicaSet') {
+            const key = `${n.data.kind}:${n.data.name}`;
+            if (!workloadIdByName.has(key)) workloadIdByName.set(key, n.id);
+        }
+    });
+
+    hpas.forEach((hpa) => {
+        const hpaId = idByResource.get(hpa);
+        if (!hpaId) return;
+        const target = getHpaTarget(hpa);
+        if (!target) return;
+        const targetId = workloadIdByName.get(`${target.kind}:${target.name}`);
+        if (targetId) addEdge(hpaId, targetId, 'scales');
+    });
+
     return { nodes, edges };
+}
+
+/** Inferred edge stroke color by source kind: HPA scaling (amber), Ingress routes (purple), everything else (blue). */
+function edgeColorFor(kind: string): string {
+    if (kind === 'HPA') return '#f59e0b';
+    if (kind === 'Ingress') return '#a78bfa';
+    return '#60a5fa';
 }
 
 /**
@@ -849,4 +1076,18 @@ export function getIngressServiceNames(resource: K8sResource): string[] {
         });
     });
     return names;
+}
+
+/** The workload a HorizontalPodAutoscaler scales (from spec.scaleTargetRef). */
+export function getHpaTarget(
+    resource: K8sResource
+): { kind: 'Deployment' | 'ReplicaSet'; name: string } | undefined {
+    const spec = resource.spec as
+        | { scaleTargetRef?: { kind?: string; name?: string } }
+        | undefined;
+    const ref = spec?.scaleTargetRef;
+    if (!ref || !ref.name || (ref.kind !== 'Deployment' && ref.kind !== 'ReplicaSet')) {
+        return undefined;
+    }
+    return { kind: ref.kind, name: ref.name };
 }

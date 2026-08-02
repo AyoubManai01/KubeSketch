@@ -1,10 +1,10 @@
 /**
  * Represents a parsed Kubernetes resource extracted from YAML.
- * Supports core workload/network resource kinds for architecture mapping.
+ * Supports core workload/network/autoscaling resource kinds for architecture mapping.
  */
 export interface K8sResource {
   apiVersion: string;
-  kind: 'Deployment' | 'Service' | 'Ingress' | 'Pod' | 'ReplicaSet';
+  kind: 'Deployment' | 'Service' | 'Ingress' | 'Pod' | 'ReplicaSet' | 'HPA';
   metadata: {
     name: string;
     namespace?: string;
@@ -15,5 +15,12 @@ export interface K8sResource {
 }
 
 /** The set of Kubernetes resource kinds supported in the canvas */
-export const SUPPORTED_KINDS = ['Deployment', 'Service', 'Ingress', 'Pod', 'ReplicaSet'] as const;
+export const SUPPORTED_KINDS = [
+  'Deployment',
+  'Service',
+  'Ingress',
+  'Pod',
+  'ReplicaSet',
+  'HPA',
+] as const;
 export type SupportedKind = (typeof SUPPORTED_KINDS)[number];

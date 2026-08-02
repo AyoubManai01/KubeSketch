@@ -38,6 +38,13 @@ const ICONS: Record<string, React.ReactNode> = {
             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
         </svg>
     ),
+    HPA: (
+        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 20V10M12 6V4" />
+            <path d="M12 16l3-3-3-3-3 3 3 3z" />
+            <path d="M5 6a7 7 0 0014 0" />
+        </svg>
+    ),
 };
 
 const KIND_COLORS: Record<string, string> = {
@@ -46,6 +53,7 @@ const KIND_COLORS: Record<string, string> = {
     Pod: '#14b8a6',        // Teal
     Service: '#3b82f6',    // Blue
     Ingress: '#8b5cf6',    // Purple
+    HPA: '#f59e0b',        // Amber
 };
 
 function K8sNodeComponent({ data }: NodeProps) {
@@ -99,6 +107,11 @@ function K8sNodeComponent({ data }: NodeProps) {
                 {kind === 'ReplicaSet' && typeof spec.replicas === 'number' && (
                     <div className="k8s-node__badge" title="Desired Pods">
                         ×{spec.replicas} Pods
+                    </div>
+                )}
+                {kind === 'HPA' && typeof spec.maxReplicas === 'number' && (
+                    <div className="k8s-node__badge" title="Max replicas">
+                        ≤ {spec.maxReplicas}
                     </div>
                 )}
             </div>
@@ -174,6 +187,22 @@ function buildResourceDetails(nodeData: K8sNodeData): DetailPair[] {
         }
         if (path) {
             details.push({ key: 'path', val: path });
+        }
+    }
+    if (nodeData.kind === 'HPA') {
+        const target = spec.scaleTargetRef;
+        if (target?.kind && target.name) {
+            details.push({ key: 'scales', val: `${target.kind} ${target.name}` });
+        }
+        if (typeof spec.minReplicas === 'number') {
+            details.push({ key: 'min', val: String(spec.minReplicas) });
+        }
+        if (typeof spec.maxReplicas === 'number') {
+            details.push({ key: 'max', val: String(spec.maxReplicas) });
+        }
+        const utilization = spec.metrics?.[0]?.resource?.target?.averageUtilization;
+        if (typeof utilization === 'number') {
+            details.push({ key: 'cpu target', val: `${utilization}%` });
         }
     }
     return details;

@@ -1,7 +1,13 @@
 import { create } from 'zustand';
 import { applyEdgeChanges, type Connection, type EdgeChange, type Node, type Edge } from '@xyflow/react';
 import { parseYaml } from '../utils/parseYaml';
-import { buildGraph, nodeIdFor, type K8sNodeData } from '../utils/buildGraph';
+import {
+    applyHpaReplicaOverrides,
+    buildGraph,
+    nodeIdFor,
+    type HpaReplicaOverride,
+    type K8sNodeData,
+} from '../utils/buildGraph';
 import { resourcesToYaml } from '../utils/serializeYaml';
 import { connectResources, explainInvalidLink } from '../utils/linkResources';
 import type { SupportedKind, K8sResource } from '../types/types';
@@ -12,7 +18,7 @@ const POSITIONS_KEY = 'veltra_node_positions';
 
 /** Default YAML shown when the app first loads */
 export const DEFAULT_YAML = `# Paste your Kubernetes YAML here (multi-document with ---)
-# Recognized resources: Deployment, Service, Ingress, ReplicaSet, Pod
+# Recognized resources: Deployment, Service, Ingress, ReplicaSet, Pod, HPA
 #
 # Like a real cluster, Veltra materializes a Deployment's ReplicaSet and
 # Pods on the canvas automatically — you only declare the Deployment.
@@ -64,6 +70,25 @@ spec:
                 name: my-app-svc
                 port:
                   number: 80
+---
+apiVersion: autoscaling/v2
+kind: HPA
+metadata:
+  name: my-app-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: my-app
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
 `;
 
 export interface SelectedResource {
@@ -116,6 +141,9 @@ interface VeltraState {
     /** Latest transient feedback message (auto-dismissed by the canvas toast). */
     notice: CanvasNotice | null;
 
+    /** Active HPA replica clamps from the last commit — drives the bottom status bar. */
+    hpaOverrides: HpaReplicaOverride[];
+
     setNotice: (notice: CanvasNotice | null) => void;
     setYaml: (value: string) => void;
     setBidirectionalSync: (enabled: boolean) => void;
@@ -167,12 +195,16 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         if (opts.userEdges) {
             persistUserEdges(userEdges);
         }
+        // HPA priority: clamp each targeted workload's spec.replicas into the HPA's
+        // [minReplicas, maxReplicas] window and write the clamped value back, so the
+        // derived graph, the YAML serialization and the badges all agree.
+        const hpaOverrides = applyHpaReplicaOverrides(resources);
         // Note: positions are only persisted when the user drags a node —
         // pinning auto-layout positions here would permanently disable
         // alignment and collision handling for every node after the first edit.
         const derived = deriveGraph(resources, prevNodes, userEdges);
 
-        const result: Partial<VeltraState> = { ...derived, userEdges };
+        const result: Partial<VeltraState> = { ...derived, userEdges, hpaOverrides };
         if ('selectedResource' in opts) {
             result.selectedResource = opts.selectedResource ?? null;
         }
@@ -191,7 +223,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
 
     // ── Initial load ──────────────────────────────────────────────────────
     const savedYaml = localStorage.getItem(YAML_KEY);
-    const yamlVal = savedYaml !== null ? savedYaml : DEFAULT_YAML;
+    let yamlVal = savedYaml !== null ? savedYaml : DEFAULT_YAML;
     const userEdgesVal = readUserEdges();
 
     let initialGraph = {
@@ -199,10 +231,20 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         inferredEdges: [] as Edge[],
         edges: [] as Edge[],
     };
+    let initialHpaOverrides: HpaReplicaOverride[] = [];
     let initialError: string | null = null;
 
     try {
         const resources = parseYaml(yamlVal);
+        // HPA priority also corrects pasted/saved YAML on load: the clamped value
+        // is written back into the model AND the editor so nothing disagrees.
+        const overrides = applyHpaReplicaOverrides(resources);
+        if (overrides.length) {
+            const nextYaml = resourcesToYaml(resources);
+            localStorage.setItem(YAML_KEY, nextYaml);
+            yamlVal = nextYaml;
+            initialHpaOverrides = overrides;
+        }
         initialGraph = deriveGraph(resources, [], userEdgesVal);
     } catch (e: any) {
         // Keep the editor content (with error surfaced) and an empty canvas —
@@ -221,24 +263,32 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         selectedResource: null,
         yamlError: initialError,
         notice: null,
+        hpaOverrides: initialHpaOverrides,
 
         setNotice: (notice) => set({ notice }),
 
         setYaml: (value: string) => {
-            localStorage.setItem(YAML_KEY, value);
             try {
                 const resources = parseYaml(value);
+                // HPA priority: clamp + write back the corrected YAML to the editor
+                // (a targeted workload's replicas can never stay below minReplicas).
+                const hpaOverrides = applyHpaReplicaOverrides(resources);
+                const nextYaml = hpaOverrides.length ? resourcesToYaml(resources) : value;
+                if (hpaOverrides.length) {
+                    localStorage.setItem(YAML_KEY, nextYaml);
+                }
                 const state = get();
                 const derived = deriveGraph(resources, state.nodes, state.userEdges);
                 const sel = state.selectedResource;
                 const selectionStillExists =
                     sel && derived.nodes.some((n) => n.data.kind === sel.kind && n.data.name === sel.name);
                 set({
-                    yaml: value,
+                    yaml: nextYaml,
                     ...derived,
                     yamlError: null,
                     canvasDirtyWhilePaused: false,
                     selectedResource: selectionStillExists ? sel : null,
+                    hpaOverrides,
                 });
             } catch (err: any) {
                 // Graceful error: update raw text and store the error, but do NOT wipe/flicker the graph
@@ -337,10 +387,23 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     };
                 });
 
-                // Cascade rename into name-based references (Ingress backends point at
-                // Services by name; label selectors are unaffected by renames)
+                // Cascade rename into name-based references: Ingress backends point at
+                // Services by name, HPA scaleTargetRefs at Deployments/ReplicaSets by
+                // name (label selectors are unaffected by renames)
                 if (node.data.kind === 'Service' && kind === 'Service' && name !== node.data.name) {
                     updatedNodes = renameServiceReferences(updatedNodes, node.data.name, name);
+                }
+                if (
+                    (node.data.kind === 'Deployment' || node.data.kind === 'ReplicaSet') &&
+                    kind === node.data.kind &&
+                    name !== node.data.name
+                ) {
+                    updatedNodes = renameWorkloadReferences(
+                        updatedNodes,
+                        node.data.kind as 'Deployment' | 'ReplicaSet',
+                        node.data.name,
+                        name
+                    );
                 }
 
                 // Identity may have changed (kind/name are part of the node ID):
@@ -553,8 +616,12 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         resetLayout: () => {
             localStorage.removeItem(POSITIONS_KEY);
             set((state) => {
-                // Rebuild with no previous coordinates so every node returns to auto-layout
-                return deriveGraph(toResources(state.nodes), [], state.userEdges);
+                // Rebuild with no previous coordinates so every node returns to auto-layout.
+                // HPA clamps are already written into the node resources; re-run the
+                // override pass so the status bar reflects the current state.
+                const resources = toResources(state.nodes);
+                const hpaOverrides = applyHpaReplicaOverrides(resources);
+                return { ...deriveGraph(resources, [], state.userEdges), hpaOverrides };
             });
         },
 
@@ -571,6 +638,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 selectedResource: null,
                 yamlError: null,
                 notice: null,
+                hpaOverrides: [],
                 canvasDirtyWhilePaused: false,
             });
         },
@@ -635,6 +703,7 @@ function toResources(nodes: Node<K8sNodeData>[]): K8sResource[] {
 function apiVersionForKind(kind: SupportedKind): string {
     if (kind === 'Deployment' || kind === 'ReplicaSet') return 'apps/v1';
     if (kind === 'Ingress') return 'networking.k8s.io/v1';
+    if (kind === 'HPA') return 'autoscaling/v2';
     return 'v1';
 }
 
@@ -663,6 +732,30 @@ function renameServiceReferences(
                 }
             });
         });
+        return { ...n, data: { ...n.data, resource } };
+    });
+}
+
+/** Rewrite HPA scaleTargetRef names when a Deployment/ReplicaSet is renamed. */
+function renameWorkloadReferences(
+    nodes: Node<K8sNodeData>[],
+    kind: 'Deployment' | 'ReplicaSet',
+    oldName: string,
+    newName: string
+): Node<K8sNodeData>[] {
+    return nodes.map((n) => {
+        if (n.data.kind !== 'HPA') return n;
+        const spec = n.data.resource.spec as
+            | { scaleTargetRef?: { kind?: string; name?: string } }
+            | undefined;
+        const ref = spec?.scaleTargetRef;
+        if (!ref || ref.kind !== kind || ref.name !== oldName) return n;
+
+        const resource = structuredClone(n.data.resource);
+        const clonedSpec = resource.spec as { scaleTargetRef?: { name?: string } };
+        if (clonedSpec.scaleTargetRef) {
+            clonedSpec.scaleTargetRef.name = newName;
+        }
         return { ...n, data: { ...n.data, resource } };
     });
 }

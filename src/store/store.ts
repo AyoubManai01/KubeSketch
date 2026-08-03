@@ -13,6 +13,7 @@ import {
     connectResources,
     explainInvalidLink,
     linkConfigMapToWorkload,
+    linkPvcToPod,
     type ConfigMapMechanism,
 } from '../utils/linkResources';
 import type { SupportedKind, K8sResource } from '../types/types';
@@ -23,7 +24,8 @@ const POSITIONS_KEY = 'veltra_node_positions';
 
 /** Default YAML shown when the app first loads */
 export const DEFAULT_YAML = `# Paste your Kubernetes YAML here (multi-document with ---)
-# Recognized resources: Deployment, Service, Ingress, ReplicaSet, Pod, HPA, ConfigMap
+# Recognized resources: Deployment, Service, Ingress, ReplicaSet, Pod, HPA,
+# ConfigMap, PersistentVolumeClaim, PersistentVolume, StorageClass
 #
 # Like a real cluster, Veltra materializes a Deployment's ReplicaSet and
 # Pods on the canvas automatically — you only declare the Deployment.
@@ -126,6 +128,27 @@ export interface ConfigMapLinkPayload {
     key?: string;
 }
 
+/**
+ * A PVC → Pod canvas drag waiting for the user to pick the volume name in the
+ * post-drag prompt. Both resources are REAL (synthetic targets resolve to their
+ * owner first — which for a PVC means the drag gets rejected as workload-only,
+ * matching "PVCs mount into standalone Pods").
+ */
+export interface PendingPvcLink {
+    pvc: { name: string };
+    target: { kind: 'Pod'; name: string };
+}
+
+/**
+ * Optional links for a newly created PVC (create-modal path): a Pod to mount the
+ * claim into (with the volume name) and exactly one bind target — a PV or a
+ * StorageClass. Setting one bind kind clears the other field on the PVC.
+ */
+export interface PvcLinkPayload {
+    podTarget?: { name: string; volumeName: string };
+    bindTarget?: { kind: 'PersistentVolume' | 'StorageClass'; name: string };
+}
+
 let noticeSeq = 0;
 const makeNotice = (tone: CanvasNotice['tone'], text: string): CanvasNotice => ({
     id: ++noticeSeq,
@@ -170,6 +193,9 @@ interface VeltraState {
     /** A ConfigMap→workload drag awaiting the mechanism choice in the post-drag prompt. */
     pendingConfigMapLink: PendingConfigMapLink | null;
 
+    /** A PVC→Pod drag awaiting the volume name in the post-drag prompt. */
+    pendingPvcLink: PendingPvcLink | null;
+
     setNotice: (notice: CanvasNotice | null) => void;
     setYaml: (value: string) => void;
     setBidirectionalSync: (enabled: boolean) => void;
@@ -192,13 +218,18 @@ interface VeltraState {
     addConfiguredNode: (
         kind: SupportedKind,
         resource: K8sResource,
-        link?: ConfigMapLinkPayload
+        link?: ConfigMapLinkPayload | PvcLinkPayload
     ) => void;
     /** Surface the mechanism prompt after a ConfigMap→workload drag (or dismiss it). */
     setPendingConfigMapLink: (link: PendingConfigMapLink | null) => void;
     /** Commit the pending ConfigMap link with the chosen mechanism. */
     confirmConfigMapLink: (mechanism: ConfigMapMechanism, key?: string) => void;
     cancelConfigMapLink: () => void;
+    /** Surface the volume-name prompt after a PVC→Pod drag (or dismiss it). */
+    setPendingPvcLink: (link: PendingPvcLink | null) => void;
+    /** Commit the pending PVC→Pod link with the chosen volume name. */
+    confirmPvcLink: (volumeName: string) => void;
+    cancelPvcLink: () => void;
     /** Discard manual positions and re-run automatic layout. */
     resetLayout: () => void;
     /** Clear the manifest, canvas, manual edges and saved layout. */
@@ -300,6 +331,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         notice: null,
         hpaOverrides: initialHpaOverrides,
         pendingConfigMapLink: null,
+        pendingPvcLink: null,
 
         setNotice: (notice) => set({ notice }),
 
@@ -443,6 +475,27 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 }
                 if (node.data.kind === 'ConfigMap' && kind === 'ConfigMap' && name !== node.data.name) {
                     updatedNodes = renameConfigMapReferences(updatedNodes, node.data.name, name);
+                }
+                if (
+                    node.data.kind === 'PersistentVolumeClaim' &&
+                    kind === 'PersistentVolumeClaim' &&
+                    name !== node.data.name
+                ) {
+                    updatedNodes = renamePvcReferences(updatedNodes, node.data.name, name);
+                }
+                if (
+                    node.data.kind === 'PersistentVolume' &&
+                    kind === 'PersistentVolume' &&
+                    name !== node.data.name
+                ) {
+                    updatedNodes = renamePvReferences(updatedNodes, node.data.name, name);
+                }
+                if (
+                    node.data.kind === 'StorageClass' &&
+                    kind === 'StorageClass' &&
+                    name !== node.data.name
+                ) {
+                    updatedNodes = renameStorageClassReferences(updatedNodes, node.data.name, name);
                 }
 
                 // Identity may have changed (kind/name are part of the node ID):
@@ -623,6 +676,23 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     };
                 }
 
+                // PVC ↔ Pod: strictly standalone Pods (Deployment/ReplicaSet get rejected
+                // below, since synthetic Pods already resolved to their workload owner).
+                // The volume name is picked in the post-drag prompt before committing.
+                if (
+                    (sourceNode.data.kind === 'PersistentVolumeClaim' && targetNode.data.kind === 'Pod') ||
+                    (targetNode.data.kind === 'PersistentVolumeClaim' && sourceNode.data.kind === 'Pod')
+                ) {
+                    const pvc = sourceNode.data.kind === 'PersistentVolumeClaim' ? sourceNode : targetNode;
+                    const pod = sourceNode.data.kind === 'Pod' ? sourceNode : targetNode;
+                    return {
+                        pendingPvcLink: {
+                            pvc: { name: pvc.data.name },
+                            target: { kind: 'Pod', name: pod.data.name },
+                        },
+                    };
+                }
+
                 // Express the link semantically in the K8s model (selector/labels/backend).
                 // toResources drops synthetic nodes, so indices align with realNodes.
                 const resources = toResources(state.nodes);
@@ -688,7 +758,39 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 };
             }),
 
-        addConfiguredNode: (kind: SupportedKind, resource: K8sResource, link?: ConfigMapLinkPayload) =>
+        setPendingPvcLink: (link) => set({ pendingPvcLink: link }),
+
+        cancelPvcLink: () => set({ pendingPvcLink: null }),
+
+        confirmPvcLink: (volumeName) =>
+            set((state) => {
+                const pending = state.pendingPvcLink;
+                if (!pending) return {};
+                const resources = toResources(state.nodes);
+                const pvcIdx = resources.findIndex(
+                    (r) =>
+                        r.kind === 'PersistentVolumeClaim' &&
+                        r.metadata.name === pending.pvc.name
+                );
+                const podIdx = resources.findIndex(
+                    (r) => r.kind === 'Pod' && r.metadata.name === pending.target.name
+                );
+                if (pvcIdx < 0 || podIdx < 0) {
+                    return { pendingPvcLink: null };
+                }
+                const linked = linkPvcToPod(resources, pvcIdx, podIdx, volumeName);
+                return {
+                    ...commitResources(state, linked.resources, state.nodes),
+                    pendingPvcLink: null,
+                    notice: makeNotice('success', linked.description),
+                };
+            }),
+
+        addConfiguredNode: (
+            kind: SupportedKind,
+            resource: K8sResource,
+            link?: ConfigMapLinkPayload | PvcLinkPayload
+        ) =>
             set((state) => {
                 const name = resource.metadata?.name?.trim();
                 if (!name) return {};
@@ -697,11 +799,12 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 }
                 // Let buildGraph auto-place the new resource (lane/cursor layout)
                 let resources = [...toResources(state.nodes), resource];
+                const newIdx = resources.length - 1;
                 // Create-modal ConfigMap link: also write the reference into the target
                 // resource's Pod spec in the same commit (synthetic targets are already
                 // resolved to their real owner by the modal).
-                if (link) {
-                    const cmIdx = resources.length - 1;
+                if (link && 'targetKind' in link) {
+                    const cmIdx = newIdx;
                     const targetIdx = resources.findIndex(
                         (r) => r.kind === link.targetKind && r.metadata.name === link.targetName
                     );
@@ -713,6 +816,40 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                             link.mechanism,
                             link.key
                         ).resources;
+                    }
+                }
+                // Create-modal PVC links: mount the claim into a standalone Pod
+                // (volume name prompt) and bind it to exactly one PV or StorageClass.
+                if (link && 'podTarget' in link) {
+                    if (link.podTarget) {
+                        const podIdx = resources.findIndex(
+                            (r) => r.kind === 'Pod' && r.metadata.name === link.podTarget!.name
+                        );
+                        if (podIdx >= 0) {
+                            resources = linkPvcToPod(
+                                resources,
+                                newIdx,
+                                podIdx,
+                                link.podTarget.volumeName
+                            ).resources;
+                        }
+                    }
+                    if (link.bindTarget) {
+                        const bindIdx = resources.findIndex(
+                            (r) =>
+                                r.kind === link.bindTarget!.kind &&
+                                r.metadata.name === link.bindTarget!.name
+                        );
+                        if (bindIdx >= 0) {
+                            const pvcSpec = (resources[newIdx].spec ?? {}) as Record<string, any>;
+                            if (link.bindTarget.kind === 'PersistentVolume') {
+                                pvcSpec.volumeName = link.bindTarget.name;
+                                delete pvcSpec.storageClassName;
+                            } else {
+                                pvcSpec.storageClassName = link.bindTarget.name;
+                                delete pvcSpec.volumeName;
+                            }
+                        }
                     }
                 }
                 return commitResources(state, resources, state.nodes, {
@@ -747,6 +884,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 notice: null,
                 hpaOverrides: [],
                 pendingConfigMapLink: null,
+                pendingPvcLink: null,
                 canvasDirtyWhilePaused: false,
             });
         },
@@ -812,7 +950,7 @@ function apiVersionForKind(kind: SupportedKind): string {
     if (kind === 'Deployment' || kind === 'ReplicaSet') return 'apps/v1';
     if (kind === 'Ingress') return 'networking.k8s.io/v1';
     if (kind === 'HPA') return 'autoscaling/v2';
-    if (kind === 'ConfigMap') return 'v1';
+    if (kind === 'StorageClass') return 'storage.k8s.io/v1';
     return 'v1';
 }
 
@@ -937,6 +1075,71 @@ function rewriteConfigMapNames(podSpec: Record<string, any>, oldName: string, ne
     });
     (Array.isArray(podSpec.volumes) ? podSpec.volumes : []).forEach((volume: any) => {
         if (volume?.configMap?.name === oldName) volume.configMap.name = newName;
+    });
+}
+
+/** Rewrite Pod-spec PersistentVolumeClaim references when a PVC is renamed (volumes[].persistentVolumeClaim.claimName). */
+function renamePvcReferences(
+    nodes: Node<K8sNodeData>[],
+    oldName: string,
+    newName: string
+): Node<K8sNodeData>[] {
+    return nodes.map((n) => {
+        if (n.data.kind !== 'Deployment' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod') {
+            return n;
+        }
+        const spec = n.data.resource.spec as Record<string, any> | undefined;
+        const podSpec =
+            n.data.kind === 'Pod' ? spec : (spec?.template?.spec as Record<string, any> | undefined);
+        const referencesPvc = Array.isArray(podSpec?.volumes) && podSpec.volumes.some(
+            (v: any) => v?.persistentVolumeClaim?.claimName === oldName
+        );
+        if (!referencesPvc) return n;
+
+        const resource = structuredClone(n.data.resource);
+        const clonedSpec = resource.spec as Record<string, any>;
+        const clonedPodSpec =
+            n.data.kind === 'Pod' ? clonedSpec : (clonedSpec.template?.spec as Record<string, any>);
+        (Array.isArray(clonedPodSpec.volumes) ? clonedPodSpec.volumes : []).forEach((volume: any) => {
+            if (volume?.persistentVolumeClaim?.claimName === oldName) {
+                volume.persistentVolumeClaim.claimName = newName;
+            }
+        });
+        return { ...n, data: { ...n.data, resource } };
+    });
+}
+
+/** Rewrite PVC spec.volumeName references when a PV is renamed. */
+function renamePvReferences(
+    nodes: Node<K8sNodeData>[],
+    oldName: string,
+    newName: string
+): Node<K8sNodeData>[] {
+    return nodes.map((n) => {
+        if (n.data.kind !== 'PersistentVolumeClaim') return n;
+        const spec = n.data.resource.spec as { volumeName?: string } | undefined;
+        if (spec?.volumeName !== oldName) return n;
+        const resource = structuredClone(n.data.resource);
+        const clonedSpec = resource.spec as { volumeName?: string };
+        if (clonedSpec.volumeName === oldName) clonedSpec.volumeName = newName;
+        return { ...n, data: { ...n.data, resource } };
+    });
+}
+
+/** Rewrite PVC spec.storageClassName references when a StorageClass is renamed. */
+function renameStorageClassReferences(
+    nodes: Node<K8sNodeData>[],
+    oldName: string,
+    newName: string
+): Node<K8sNodeData>[] {
+    return nodes.map((n) => {
+        if (n.data.kind !== 'PersistentVolumeClaim') return n;
+        const spec = n.data.resource.spec as { storageClassName?: string } | undefined;
+        if (spec?.storageClassName !== oldName) return n;
+        const resource = structuredClone(n.data.resource);
+        const clonedSpec = resource.spec as { storageClassName?: string };
+        if (clonedSpec.storageClassName === oldName) clonedSpec.storageClassName = newName;
+        return { ...n, data: { ...n.data, resource } };
     });
 }
 

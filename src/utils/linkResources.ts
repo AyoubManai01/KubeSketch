@@ -59,12 +59,57 @@ export function connectResources(
             source.kind === 'HPA' ? targetIdx : sourceIdx
         );
     }
+    if (pair('PersistentVolumeClaim', 'PersistentVolume')) {
+        return linkPvcToPv(resources, byKind('PersistentVolumeClaim'), byKind('PersistentVolume'));
+    }
+    if (pair('PersistentVolumeClaim', 'StorageClass')) {
+        return linkPvcToStorageClass(
+            resources,
+            byKind('PersistentVolumeClaim'),
+            byKind('StorageClass')
+        );
+    }
+    // PVC ↔ Pod is intercepted by the store (pending volume-name prompt) and never
+    // reaches connectResources.
     return null;
 }
 
 /** Human-readable reason why two kinds cannot be linked, with guidance on what to do instead. */
 export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
     const pair = (x: SupportedKind, y: SupportedKind) => (a === x && b === y) || (a === y && b === x);
+
+    // Storage pairs: PVC mounts into Pods and binds to exactly one PV or StorageClass;
+    // PVs and StorageClasses are only reachable through a PVC.
+    if (a === 'PersistentVolumeClaim' || b === 'PersistentVolumeClaim') {
+        const other = a === 'PersistentVolumeClaim' ? b : a;
+        if (pair('PersistentVolumeClaim', 'Pod')) {
+            return 'A PVC mounts into a Pod via spec.volumes[].persistentVolumeClaim — connect it to the Pod directly.';
+        }
+        if (pair('PersistentVolumeClaim', 'PersistentVolume')) {
+            return 'A PVC already binds to this PV (spec.volumeName).';
+        }
+        if (pair('PersistentVolumeClaim', 'StorageClass')) {
+            return 'A PVC already references this StorageClass (spec.storageClassName).';
+        }
+        if (other === 'Deployment' || other === 'ReplicaSet') {
+            return `A PVC is claimed by a Pod only, not by a ${other} — mount it into a Pod's spec.volumes instead.`;
+        }
+        return `A PVC is claimed by a Pod and binds to a PV or StorageClass — it has no direct relationship with a ${other}.`;
+    }
+    if (a === 'PersistentVolume' || b === 'PersistentVolume') {
+        const other = a === 'PersistentVolume' ? b : a;
+        if (other === 'Pod' || other === 'Deployment' || other === 'ReplicaSet') {
+            return `A ${other} cannot use a PV directly — claim it with a PVC (spec.volumeName) and mount the PVC into the Pod.`;
+        }
+        return `A PV is bound by a PVC via the claim's spec.volumeName — it has no direct relationship with a ${other}.`;
+    }
+    if (a === 'StorageClass' || b === 'StorageClass') {
+        const other = a === 'StorageClass' ? b : a;
+        if (other === 'Pod' || other === 'Deployment' || other === 'ReplicaSet') {
+            return `A ${other} cannot reference a StorageClass directly — a PVC with spec.storageClassName provisions storage that the Pod then claims.`;
+        }
+        return `A StorageClass is referenced by a PVC via spec.storageClassName — it has no direct relationship with a ${other}.`;
+    }
 
     if (a === 'ConfigMap' || b === 'ConfigMap') {
         const other = a === 'ConfigMap' ? b : a;
@@ -308,4 +353,103 @@ export function linkConfigMapToWorkload(
 
 function clone<T>(value: T): T {
     return structuredClone(value);
+}
+
+/**
+ * Write a PersistentVolumeClaim reference into a standalone Pod:
+ * `spec.volumes[].persistentVolumeClaim.claimName` under a unique volume name
+ * (de-dupes existing volumes by volume name and by claim name).
+ */
+export function linkPvcToPod(
+    resources: K8sResource[],
+    pvcIdx: number,
+    podIdx: number,
+    volumeName: string
+): { resources: K8sResource[]; description: string } {
+    const next = [...resources];
+    const pvc = resources[pvcIdx];
+    const pod = resources[podIdx];
+    const claimName = pvc.metadata.name;
+    const volume = volumeName.trim() || claimName;
+
+    const patched = clone(pod);
+    const spec = (patched.spec ?? {}) as Record<string, any>;
+    spec.volumes = Array.isArray(spec.volumes) ? spec.volumes : [];
+    const alreadyMounted = spec.volumes.some(
+        (v: any) => v?.persistentVolumeClaim?.claimName === claimName
+    );
+    if (!alreadyMounted) {
+        if (!spec.volumes.some((v: any) => v?.name === volume)) {
+            spec.volumes.push({ name: volume, persistentVolumeClaim: { claimName } });
+        } else {
+            // Volume name is taken — fall back to a unique name derived from the claim
+            let suffix = 2;
+            while (spec.volumes.some((v: any) => v?.name === `${volume}-${suffix}`)) suffix++;
+            spec.volumes.push({
+                name: `${volume}-${suffix}`,
+                persistentVolumeClaim: { claimName },
+            });
+        }
+    }
+    patched.spec = spec;
+    next[podIdx] = patched;
+
+    return {
+        resources: next,
+        description: `Pod ${pod.metadata.name} now mounts PVC ${claimName} as volume "${volume}"`,
+    };
+}
+
+/**
+ * Bind a PVC to a PersistentVolume by writing `spec.volumeName`. A PVC binds to
+ * exactly one of PV or StorageClass, so any existing `spec.storageClassName` is
+ * cleared to keep the model valid.
+ */
+export function linkPvcToPv(
+    resources: K8sResource[],
+    pvcIdx: number,
+    pvIdx: number
+): { resources: K8sResource[]; description: string } {
+    const next = [...resources];
+    const pv = resources[pvIdx];
+    const pvc = clone(resources[pvcIdx]);
+    const spec = (pvc.spec ?? {}) as Record<string, any>;
+    spec.volumeName = pv.metadata.name;
+    if ('storageClassName' in spec) {
+        delete spec.storageClassName;
+    }
+    pvc.spec = spec;
+    next[pvcIdx] = pvc;
+
+    return {
+        resources: next,
+        description: `PVC ${pvc.metadata.name} now binds to PV ${pv.metadata.name} (volumeName set, storageClassName cleared)`,
+    };
+}
+
+/**
+ * Point a PVC at a StorageClass by writing `spec.storageClassName`. A PVC binds to
+ * exactly one of PV or StorageClass, so any existing `spec.volumeName` is cleared
+ * to keep the model valid.
+ */
+export function linkPvcToStorageClass(
+    resources: K8sResource[],
+    pvcIdx: number,
+    scIdx: number
+): { resources: K8sResource[]; description: string } {
+    const next = [...resources];
+    const sc = resources[scIdx];
+    const pvc = clone(resources[pvcIdx]);
+    const spec = (pvc.spec ?? {}) as Record<string, any>;
+    spec.storageClassName = sc.metadata.name;
+    if ('volumeName' in spec) {
+        delete spec.volumeName;
+    }
+    pvc.spec = spec;
+    next[pvcIdx] = pvc;
+
+    return {
+        resources: next,
+        description: `PVC ${pvc.metadata.name} now provisions via StorageClass ${sc.metadata.name} (storageClassName set, volumeName cleared)`,
+    };
 }

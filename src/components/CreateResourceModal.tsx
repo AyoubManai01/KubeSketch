@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { K8sResource, SupportedKind } from '../types/types';
 import { getWorkloadPodLabels } from '../utils/buildGraph';
 import type { ConfigMapMechanism } from '../utils/linkResources';
-import { useVeltraStore, type ConfigMapLinkPayload } from '../store/store';
+import { useVeltraStore, type ConfigMapLinkPayload, type PvcLinkPayload } from '../store/store';
 import ConfigMapDataEditor from './ConfigMapDataEditor';
 
 interface Props {
@@ -18,6 +18,9 @@ const KIND_COLORS: Record<string, string> = {
     Ingress: '#8b5cf6',
     HPA: '#f59e0b',
     ConfigMap: '#06b6d4',
+    PersistentVolumeClaim: '#ec4899',
+    PersistentVolume: '#84cc16',
+    StorageClass: '#6366f1',
 };
 
 const KIND_ICONS: Record<string, React.ReactNode> = {
@@ -68,6 +71,26 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M4 6h16v12H4z" />
             <path d="M8 10h8M8 14h5" />
+        </svg>
+    ),
+    PersistentVolumeClaim: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <ellipse cx="12" cy="5" rx="8" ry="3" />
+            <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
+            <path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6" />
+        </svg>
+    ),
+    PersistentVolume: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
+            <path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" />
+        </svg>
+    ),
+    StorageClass: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="4" width="18" height="6" rx="2" />
+            <rect x="3" y="14" width="18" height="6" rx="2" />
+            <path d="M7 10v4M17 10v4" strokeDasharray="2 2" />
         </svg>
     ),
 };
@@ -123,6 +146,19 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     const [cmTarget, setCmTarget] = useState('');
     const [cmMechanism, setCmMechanism] = useState<ConfigMapMechanism>('envFrom');
     const [cmKey, setCmKey] = useState('');
+    // PVC: claim + binding fields
+    const [pvcAccessModes, setPvcAccessModes] = useState('ReadWriteOnce');
+    const [pvcSize, setPvcSize] = useState('1Gi');
+    const [pvcPodTarget, setPvcPodTarget] = useState('');
+    const [pvcVolumeName, setPvcVolumeName] = useState('');
+    const [pvcBindTarget, setPvcBindTarget] = useState('');
+    // PV fields
+    const [pvCapacity, setPvCapacity] = useState('10Gi');
+    const [pvAccessModes, setPvAccessModes] = useState('ReadWriteOnce');
+    const [pvReclaimPolicy, setPvReclaimPolicy] = useState('Retain');
+    // StorageClass fields
+    const [scProvisioner, setScProvisioner] = useState('kubernetes.io/no-provisioner');
+    const [scReclaimPolicy, setScReclaimPolicy] = useState('Delete');
 
     const firstInputRef = useRef<HTMLInputElement>(null);
 
@@ -203,6 +239,34 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     }, [nodes]);
 
     const cmDataKeys = useMemo(() => Object.keys(cmData ?? {}), [cmData]);
+
+    // PVC mount targets: real standalone Pods only (strict — PVCs never mount into
+    // Deployments/ReplicaSets; synthetic Pods belong to workloads so they're excluded).
+    const pvcPodOptions = useMemo(
+        () =>
+            nodes
+                .filter((n) => n.data.kind === 'Pod' && !n.data.synthetic)
+                .map((n) => n.data.name as string)
+                .sort((a, b) => a.localeCompare(b)),
+        [nodes]
+    );
+
+    const pvOptions = useMemo(
+        () =>
+            nodes
+                .filter((n) => n.data.kind === 'PersistentVolume')
+                .map((n) => ({ name: n.data.name as string, bound: (n.data.resource.spec as any)?.claimRef?.name as string | undefined })),
+        [nodes]
+    );
+
+    const storageClassOptions = useMemo(
+        () =>
+            nodes
+                .filter((n) => n.data.kind === 'StorageClass')
+                .map((n) => n.data.name as string)
+                .sort((a, b) => a.localeCompare(b)),
+        [nodes]
+    );
 
     useEffect(() => {
         firstInputRef.current?.focus();
@@ -353,13 +417,46 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                     ...(cmData ? { data: cmData } : {}),
                 };
             }
+            case 'PersistentVolumeClaim': {
+                return {
+                    apiVersion: 'v1',
+                    kind,
+                    metadata: { name: meta.name, namespace: meta.namespace },
+                    spec: {
+                        accessModes: [pvcAccessModes],
+                        resources: { requests: { storage: pvcSize.trim() || '1Gi' } },
+                    },
+                };
+            }
+            case 'PersistentVolume':
+                return {
+                    apiVersion: 'v1',
+                    kind,
+                    metadata: { name: meta.name, namespace: meta.namespace },
+                    spec: {
+                        capacity: { storage: pvCapacity.trim() || '10Gi' },
+                        accessModes: [pvAccessModes],
+                        persistentVolumeReclaimPolicy: pvReclaimPolicy,
+                    },
+                };
+            case 'StorageClass':
+                return {
+                    apiVersion: 'storage.k8s.io/v1',
+                    kind,
+                    metadata: { name: meta.name, namespace: meta.namespace },
+                    spec: {
+                        provisioner: scProvisioner.trim() || 'kubernetes.io/no-provisioner',
+                        ...(scReclaimPolicy ? { reclaimPolicy: scReclaimPolicy } : {}),
+                    },
+                };
         }
     }
 
     function handleCreate() {
         if (nameError) return;
         if (cmTarget && cmMechanism === 'envKey' && !cmKey) return;
-        let link: ConfigMapLinkPayload | undefined;
+        if (pvcPodTarget && !pvcVolumeName.trim()) return;
+        let link: ConfigMapLinkPayload | PvcLinkPayload | undefined;
         if (cmTarget) {
             const [targetKind, targetName] = cmTarget.split('|');
             link = {
@@ -369,7 +466,29 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                 ...(cmMechanism === 'envKey' && cmKey ? { key: cmKey } : {}),
             };
         }
-        addConfiguredNode(kind, buildResource(), link);
+        if (kind === 'PersistentVolumeClaim') {
+            let podTarget: PvcLinkPayload['podTarget'];
+            if (pvcPodTarget) {
+                podTarget = { name: pvcPodTarget, volumeName: pvcVolumeName.trim() };
+            }
+            let bindTarget: PvcLinkPayload['bindTarget'];
+            if (pvcBindTarget) {
+                const [bindKind, bindName] = pvcBindTarget.split('|');
+                bindTarget = {
+                    kind: bindKind as 'PersistentVolume' | 'StorageClass',
+                    name: bindName,
+                };
+            }
+            if (podTarget || bindTarget) {
+                link = { ...(podTarget ? { podTarget } : {}), ...(bindTarget ? { bindTarget } : {}) };
+            }
+        }
+        const resource = buildResource();
+        if (link) {
+            addConfiguredNode(kind, resource, link);
+        } else {
+            addConfiguredNode(kind, resource);
+        }
         onClose();
     }
 
@@ -805,6 +924,186 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                             )}
                         </>
                     )}
+
+                    {/* PVC: access modes + size + optional mount/bind links */}
+                    {kind === 'PersistentVolumeClaim' && (
+                        <>
+                            <div className="modal-row">
+                                <div className="modal-field">
+                                    <label className="modal-field__label">Access Mode</label>
+                                    <select
+                                        className="modal-field__input modal-field__input--select"
+                                        value={pvcAccessModes}
+                                        onChange={(e) => setPvcAccessModes(e.target.value)}
+                                    >
+                                        <option>ReadWriteOnce</option>
+                                        <option>ReadOnlyMany</option>
+                                        <option>ReadWriteMany</option>
+                                        <option>ReadWriteOncePod</option>
+                                    </select>
+                                </div>
+                                <div className="modal-field">
+                                    <label className="modal-field__label">Size Request</label>
+                                    <input
+                                        className="modal-field__input"
+                                        value={pvcSize}
+                                        onChange={(e) => setPvcSize(e.target.value)}
+                                        placeholder="1Gi"
+                                    />
+                                </div>
+                            </div>
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    Mount into Pod (optional)
+                                    <span className="modal-field__hint">
+                                        Writes spec.volumes[].persistentVolumeClaim into a
+                                        standalone Pod. Requires a volume name.
+                                    </span>
+                                </label>
+                                <select
+                                    className="modal-field__input modal-field__input--select"
+                                    value={pvcPodTarget}
+                                    onChange={(e) => {
+                                        setPvcPodTarget(e.target.value);
+                                        if (e.target.value && !pvcVolumeName) {
+                                            setPvcVolumeName(name.trim() || suggestedName);
+                                        }
+                                    }}
+                                >
+                                    <option value="">(no Pod — just create the claim)</option>
+                                    {pvcPodOptions.map((podName) => (
+                                        <option key={podName} value={podName}>
+                                            Pod {podName}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            {pvcPodTarget && (
+                                <div className="modal-field">
+                                    <label className="modal-field__label">Volume name</label>
+                                    <input
+                                        className="modal-field__input"
+                                        value={pvcVolumeName}
+                                        onChange={(e) => setPvcVolumeName(e.target.value)}
+                                        placeholder={name.trim() || suggestedName}
+                                    />
+                                </div>
+                            )}
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    Bind to (optional)
+                                    <span className="modal-field__hint">
+                                        A PVC binds to exactly one target — a PV sets
+                                        spec.volumeName, a StorageClass sets
+                                        spec.storageClassName.
+                                    </span>
+                                </label>
+                                <select
+                                    className="modal-field__input modal-field__input--select"
+                                    value={pvcBindTarget}
+                                    onChange={(e) => setPvcBindTarget(e.target.value)}
+                                >
+                                    <option value="">(unbound — no storageClassName, no volumeName)</option>
+                                    {pvOptions.map((pv) => (
+                                        <option
+                                            key={`PersistentVolume|${pv.name}`}
+                                            value={`PersistentVolume|${pv.name}`}
+                                        >
+                                            PV {pv.name}
+                                            {pv.bound ? ` (claimed by ${pv.bound})` : ''}
+                                        </option>
+                                    ))}
+                                    {storageClassOptions.map((sc) => (
+                                        <option key={`StorageClass|${sc}`} value={`StorageClass|${sc}`}>
+                                            StorageClass {sc}
+                                        </option>
+                                    ))}
+                                </select>
+                                {pvcBindTarget && (
+                                    <span className="modal-field__hint">
+                                        {pvcBindTarget.startsWith('PersistentVolume')
+                                            ? 'Writes spec.volumeName — the claim binds to that PV directly.'
+                                            : 'Writes spec.storageClassName — the claim provisions storage through that class.'}
+                                    </span>
+                                )}
+                            </div>
+                        </>
+                    )}
+
+                    {/* PV: capacity + access modes + reclaim policy */}
+                    {kind === 'PersistentVolume' && (
+                        <>
+                            <div className="modal-row">
+                                <div className="modal-field">
+                                    <label className="modal-field__label">Capacity</label>
+                                    <input
+                                        className="modal-field__input"
+                                        value={pvCapacity}
+                                        onChange={(e) => setPvCapacity(e.target.value)}
+                                        placeholder="10Gi"
+                                    />
+                                </div>
+                                <div className="modal-field">
+                                    <label className="modal-field__label">Access Mode</label>
+                                    <select
+                                        className="modal-field__input modal-field__input--select"
+                                        value={pvAccessModes}
+                                        onChange={(e) => setPvAccessModes(e.target.value)}
+                                    >
+                                        <option>ReadWriteOnce</option>
+                                        <option>ReadOnlyMany</option>
+                                        <option>ReadWriteMany</option>
+                                        <option>ReadWriteOncePod</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div className="modal-field">
+                                <label className="modal-field__label">Reclaim Policy</label>
+                                <select
+                                    className="modal-field__input modal-field__input--select"
+                                    value={pvReclaimPolicy}
+                                    onChange={(e) => setPvReclaimPolicy(e.target.value)}
+                                >
+                                    <option>Retain</option>
+                                    <option>Recycle</option>
+                                    <option>Delete</option>
+                                </select>
+                            </div>
+                        </>
+                    )}
+
+                    {/* StorageClass: provisioner + reclaim policy */}
+                    {kind === 'StorageClass' && (
+                        <>
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    Provisioner
+                                    <span className="modal-field__hint">
+                                        The storage provisioner that creates volumes for
+                                        claims using this class.
+                                    </span>
+                                </label>
+                                <input
+                                    className="modal-field__input"
+                                    value={scProvisioner}
+                                    onChange={(e) => setScProvisioner(e.target.value)}
+                                    placeholder="kubernetes.io/no-provisioner"
+                                />
+                            </div>
+                            <div className="modal-field">
+                                <label className="modal-field__label">Reclaim Policy</label>
+                                <select
+                                    className="modal-field__input modal-field__input--select"
+                                    value={scReclaimPolicy}
+                                    onChange={(e) => setScReclaimPolicy(e.target.value)}
+                                >
+                                    <option>Delete</option>
+                                    <option>Retain</option>
+                                    <option>Recycle</option>
+                                </select>
+                            </div>
+                        </>
+                    )}
                 </div>
 
                 {/* Footer */}
@@ -819,12 +1118,15 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                         onClick={handleCreate}
                         disabled={
                             !!nameError ||
-                            (kind === 'ConfigMap' && !!cmTarget && cmMechanism === 'envKey' && !cmKey)
+                            (kind === 'ConfigMap' && !!cmTarget && cmMechanism === 'envKey' && !cmKey) ||
+                            (kind === 'PersistentVolumeClaim' && !!pvcPodTarget && !pvcVolumeName.trim())
                         }
                         title={
                             nameError ||
                             (kind === 'ConfigMap' && cmTarget && cmMechanism === 'envKey' && !cmKey
                                 ? 'Select a data key first'
+                                : kind === 'PersistentVolumeClaim' && pvcPodTarget && !pvcVolumeName.trim()
+                                ? 'Volume name is required to mount the claim'
                                 : `Create ${kind}`)
                         }
                     >

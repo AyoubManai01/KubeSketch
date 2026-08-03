@@ -35,12 +35,19 @@ import {
   getHpaTarget,
   getConfigMapRefs,
   getConfigMapRefDetails,
+  getPvcRefs,
+  getPvcRefDetails,
+  getPvForPvc,
+  getStorageClassForPvc,
+  getPvcsBoundToPv,
+  getPvcsBoundToStorageClass,
   type K8sNodeData,
 } from "../utils/buildGraph";
 import { resourcesToYaml } from "../utils/serializeYaml";
 import CreateResourceModal from "./CreateResourceModal";
 import ConfigMapDataEditor from "./ConfigMapDataEditor";
 import ConfigMapLinkModal from "./ConfigMapLinkModal";
+import PvcLinkModal from "./PvcLinkModal";
 
 /** Register our custom node type so React Flow can render it */
 const nodeTypes: NodeTypes = {
@@ -59,6 +66,9 @@ const KIND_COLORS: Record<string, string> = {
   Ingress: "#8b5cf6",
   HPA: "#f59e0b",
   ConfigMap: "#06b6d4",
+  PersistentVolumeClaim: "#ec4899",
+  PersistentVolume: "#84cc16",
+  StorageClass: "#6366f1",
 };
 
 const KIND_ICONS: Record<string, React.ReactNode> = {
@@ -158,6 +168,47 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
     >
       <path d="M4 6h16v12H4z" />
       <path d="M8 10h8M8 14h5" />
+    </svg>
+  ),
+  PersistentVolumeClaim: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <ellipse cx="12" cy="5" rx="8" ry="3" />
+      <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
+      <path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6" />
+    </svg>
+  ),
+  PersistentVolume: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
+      <path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" />
+    </svg>
+  ),
+  StorageClass: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="3" y="4" width="18" height="6" rx="2" />
+      <rect x="3" y="14" width="18" height="6" rx="2" />
+      <path d="M7 10v4M17 10v4" strokeDasharray="2 2" />
     </svg>
   ),
 };
@@ -352,6 +403,104 @@ export default function Canvas() {
       )
       .map((n) => ({ kind: n.data.kind, name: n.data.name }));
   }, [nodes, selectedNode]);
+
+  // PVCs referenced by the selected workload/Pod (spec.volumes[].persistentVolumeClaim) —
+  // read-only projection of the YAML model.
+  const selectedNodePvcs = useMemo(() => {
+    if (!selectedNode) return [];
+    const kind = selectedNode.data.kind;
+    if (kind !== "Pod" && kind !== "Deployment" && kind !== "ReplicaSet") {
+      return [];
+    }
+    return getPvcRefDetails(selectedNode.data.resource);
+  }, [selectedNode]);
+
+  // Real workloads/Pods that claim the selected PVC by claimName.
+  const pvcUsedBy = useMemo(() => {
+    if (!selectedNode || selectedNode.data.kind !== "PersistentVolumeClaim") {
+      return [];
+    }
+    return nodes
+      .filter(
+        (n) =>
+          !n.data.synthetic &&
+          (n.data.kind === "Deployment" ||
+            n.data.kind === "ReplicaSet" ||
+            n.data.kind === "Pod") &&
+          getPvcRefs(n.data.resource).includes(selectedNode.data.name),
+      )
+      .map((n) => ({ kind: n.data.kind, name: n.data.name }));
+  }, [nodes, selectedNode]);
+
+  // The single bind target of the selected PVC: PV via volumeName or StorageClass via
+  // storageClassName (a PVC binds to exactly one — volumeName wins over storageClassName).
+  const pvcBoundTo = useMemo(() => {
+    if (!selectedNode || selectedNode.data.kind !== "PersistentVolumeClaim") {
+      return null;
+    }
+    const pvName = getPvForPvc(selectedNode.data.resource);
+    if (pvName) {
+      return {
+        kind: "PersistentVolume" as const,
+        name: pvName,
+        exists: nodes.some(
+          (n) => n.data.kind === "PersistentVolume" && n.data.name === pvName,
+        ),
+      };
+    }
+    const scName = getStorageClassForPvc(selectedNode.data.resource);
+    if (scName) {
+      return {
+        kind: "StorageClass" as const,
+        name: scName,
+        exists: nodes.some(
+          (n) => n.data.kind === "StorageClass" && n.data.name === scName,
+        ),
+      };
+    }
+    return null;
+  }, [nodes, selectedNode]);
+
+  // PVCs bound to the selected PV (their spec.volumeName points at it).
+  const pvBoundBy = useMemo(() => {
+    if (!selectedNode || selectedNode.data.kind !== "PersistentVolume") return [];
+    const resources = nodes
+      .filter((n) => !n.data.synthetic)
+      .map((n) => n.data.resource);
+    return getPvcsBoundToPv(resources, selectedNode.data.name).map(
+      (r) => r.metadata.name,
+    );
+  }, [nodes, selectedNode]);
+
+  // PVCs referencing the selected StorageClass (their spec.storageClassName).
+  const storageClassBoundBy = useMemo(() => {
+    if (!selectedNode || selectedNode.data.kind !== "StorageClass") return [];
+    const resources = nodes
+      .filter((n) => !n.data.synthetic)
+      .map((n) => n.data.resource);
+    return getPvcsBoundToStorageClass(resources, selectedNode.data.name).map(
+      (r) => r.metadata.name,
+    );
+  }, [nodes, selectedNode]);
+
+  // PV/StorageClass name lists for the PVC inspector's binding dropdowns.
+  const pvOptions = useMemo(
+    () =>
+      nodes
+        .filter((n) => n.data.kind === "PersistentVolume")
+        .map((n) => n.data.name as string)
+        .sort((a, b) => a.localeCompare(b)),
+    [nodes],
+  );
+
+  const storageClassOptions = useMemo(
+    () =>
+      nodes
+        .filter((n) => n.data.kind === "StorageClass")
+        .map((n) => n.data.name as string)
+        .sort((a, b) => a.localeCompare(b)),
+    [nodes],
+  );
 
   // Edge relationships + containment (nesting) for the selected node
   const relationships = useMemo(() => {
@@ -600,6 +749,15 @@ export default function Canvas() {
                   </span>
                   <span className="canvas-legend__item canvas-legend__item--cm">
                     ConfigMap use
+                  </span>
+                  <span className="canvas-legend__item canvas-legend__item--pvc">
+                    PVC mount
+                  </span>
+                  <span className="canvas-legend__item canvas-legend__item--pv">
+                    PV bind
+                  </span>
+                  <span className="canvas-legend__item canvas-legend__item--sc">
+                    StorageClass bind
                   </span>
                   <span className="canvas-legend__item canvas-legend__item--auto">
                     auto = managed by controller
@@ -1392,6 +1550,89 @@ export default function Canvas() {
                       </div>
                     </div>
                   )}
+                {/* ── Section: Persistent Volume Claims (workloads/Pods) ── */}
+                {!isManaged &&
+                  (inspectorData.kind === "Pod" ||
+                    inspectorData.kind === "Deployment" ||
+                    inspectorData.kind === "ReplicaSet") &&
+                  selectedNodePvcs.length > 0 && (
+                    <div className="inspector-section">
+                      <div className="inspector-section__header">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <ellipse cx="12" cy="5" rx="8" ry="3" />
+                          <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
+                          <path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6" />
+                        </svg>
+                        Persistent Volume Claims
+                        <span className="inspector-section__count">
+                          {selectedNodePvcs.length}
+                        </span>
+                      </div>
+                      <div className="inspector-section__body">
+                        <div className="inspector-rel-list">
+                          {selectedNodePvcs.map((ref) => {
+                            const exists = nodes.some(
+                              (n) =>
+                                n.data.kind === "PersistentVolumeClaim" &&
+                                n.data.name === ref.name,
+                            );
+                            return (
+                              <button
+                                key={`${ref.name}:${ref.volumeName}`}
+                                type="button"
+                                className="inspector-rel-item inspector-rel-item--link"
+                                title={
+                                  exists
+                                    ? `Select PVC ${ref.name}`
+                                    : `PVC ${ref.name} is referenced but not on the canvas`
+                                }
+                                onClick={() =>
+                                  setSelectedResource({
+                                    kind: "PersistentVolumeClaim",
+                                    name: ref.name,
+                                  })
+                                }
+                              >
+                                <span
+                                  className="inspector-rel-arrow inspector-rel-arrow--outgoing"
+                                  title="claimed"
+                                >
+                                  ▤
+                                </span>
+                                <div className="inspector-rel-info">
+                                  <span className="inspector-rel-kind">
+                                    PersistentVolumeClaim
+                                  </span>
+                                  <span className="inspector-rel-name">
+                                    {ref.name}
+                                  </span>
+                                </div>
+                                <span className="inspector-rel-badge">
+                                  vol: {ref.volumeName}
+                                </span>
+                                {!exists && (
+                                  <span className="inspector-rel-badge">
+                                    missing
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <span className="inspector-field__hint">
+                          Claimed via spec.volumes[].persistentVolumeClaim in
+                          this Pod spec. Editable in the YAML.
+                        </span>
+                      </div>
+                    </div>
+                  )}
 
                 {/* ── Section: Data (ConfigMap) ─────────────── */}
                 {!isManaged && inspectorData.kind === "ConfigMap" && (
@@ -1479,6 +1720,270 @@ export default function Canvas() {
                         <span className="inspector-field__hint">
                           Resources referencing this ConfigMap via envFrom /
                           env.valueFrom / volumes in their Pod spec.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                {/* ── Section: Storage (PersistentVolumeClaim) ── */}
+                {!isManaged && inspectorData.kind === "PersistentVolumeClaim" && (
+                  <div className="inspector-section">
+                    <div className="inspector-section__header">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <ellipse cx="12" cy="5" rx="8" ry="3" />
+                        <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
+                        <path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6" />
+                      </svg>
+                      Storage
+                    </div>
+                    <div className="inspector-section__body">
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Access Modes
+                        </label>
+                        <select
+                          className="inspector-field__input inspector-field__input--select"
+                          value={String(
+                            (selectedNode.data.resource.spec as any)
+                              ?.accessModes?.[0] ?? "ReadWriteOnce",
+                          )}
+                          onChange={(e) =>
+                            updateResourceField(
+                              selectedNode.id,
+                              selectedNode.data.resource,
+                              updateNodeResourceFromCanvas,
+                              {
+                                spec: {
+                                  ...(selectedNode.data.resource.spec as any),
+                                  accessModes: [e.target.value],
+                                },
+                              },
+                            )
+                          }
+                        >
+                          <option>ReadWriteOnce</option>
+                          <option>ReadOnlyMany</option>
+                          <option>ReadWriteMany</option>
+                          <option>ReadWriteOncePod</option>
+                        </select>
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Size Request
+                        </label>
+                        <input
+                          className="inspector-field__input"
+                          value={String(
+                            (selectedNode.data.resource.spec as any)
+                              ?.resources?.requests?.storage ?? "",
+                          )}
+                          onChange={(e) =>
+                            updateResourceField(
+                              selectedNode.id,
+                              selectedNode.data.resource,
+                              updateNodeResourceFromCanvas,
+                              {
+                                spec: {
+                                  ...(selectedNode.data.resource.spec as any),
+                                  resources: {
+                                    requests: {
+                                      storage: e.target.value,
+                                    },
+                                  },
+                                },
+                              },
+                            )
+                          }
+                          placeholder="1Gi"
+                        />
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Bind to StorageClass
+                        </label>
+                        {(() => {
+                          const current = String(
+                            (selectedNode.data.resource.spec as any)
+                              ?.storageClassName ?? "",
+                          );
+                          const known = storageClassOptions.includes(current);
+                          return (
+                            <select
+                              className="inspector-field__input inspector-field__input--select"
+                              value={current}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                const spec = {
+                                  ...(selectedNode.data.resource.spec as any),
+                                };
+                                if (value) {
+                                  spec.storageClassName = value;
+                                  delete spec.volumeName;
+                                } else {
+                                  delete spec.storageClassName;
+                                  delete spec.volumeName;
+                                }
+                                updateResourceField(
+                                  selectedNode.id,
+                                  selectedNode.data.resource,
+                                  updateNodeResourceFromCanvas,
+                                  { spec },
+                                );
+                              }}
+                            >
+                              <option value="">
+                                (unbound — no storageClassName)
+                              </option>
+                              {storageClassOptions.map((sc) => (
+                                <option key={sc} value={sc}>
+                                  {sc}
+                                </option>
+                              ))}
+                              {current && !known && (
+                                <option value={current}>
+                                  {current} (missing)
+                                </option>
+                              )}
+                            </select>
+                          );
+                        })()}
+                        <span className="inspector-field__hint">
+                          Setting this clears spec.volumeName — a PVC binds to
+                          exactly one of PV or StorageClass.
+                        </span>
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Bind to PV
+                        </label>
+                        {(() => {
+                          const current = String(
+                            (selectedNode.data.resource.spec as any)
+                              ?.volumeName ?? "",
+                          );
+                          const known = pvOptions.includes(current);
+                          return (
+                            <select
+                              className="inspector-field__input inspector-field__input--select"
+                              value={current}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                const spec = {
+                                  ...(selectedNode.data.resource.spec as any),
+                                };
+                                if (value) {
+                                  spec.volumeName = value;
+                                  delete spec.storageClassName;
+                                } else {
+                                  delete spec.volumeName;
+                                  delete spec.storageClassName;
+                                }
+                                updateResourceField(
+                                  selectedNode.id,
+                                  selectedNode.data.resource,
+                                  updateNodeResourceFromCanvas,
+                                  { spec },
+                                );
+                              }}
+                            >
+                              <option value="">
+                                (no volumeName — unbound or via StorageClass)
+                              </option>
+                              {pvOptions.map((pv) => (
+                                <option key={pv} value={pv}>
+                                  {pv}
+                                </option>
+                              ))}
+                              {current && !known && (
+                                <option value={current}>
+                                  {current} (missing)
+                                </option>
+                              )}
+                            </select>
+                          );
+                        })()}
+                        <span className="inspector-field__hint">
+                          Setting this clears spec.storageClassName.
+                        </span>
+                      </div>
+                      {pvcBoundTo && (
+                        <div className="inspector-static-row">
+                          <span className="inspector-static-row__key">
+                            Bound to
+                          </span>
+                          <span
+                            className="inspector-static-row__val"
+                            title={pvcBoundTo.name}
+                          >
+                            {pvcBoundTo.kind === "PersistentVolume" ? "PV" : "StorageClass"}{" "}
+                            {pvcBoundTo.name}
+                            {!pvcBoundTo.exists ? " (missing)" : ""}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Section: Mounted by (PersistentVolumeClaim) ── */}
+                {inspectorData.kind === "PersistentVolumeClaim" &&
+                  pvcUsedBy.length > 0 && (
+                    <div className="inspector-section">
+                      <div className="inspector-section__header">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                        >
+                          <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                          <polyline points="15 3 21 3 21 9" />
+                          <line x1="10" y1="14" x2="21" y2="3" />
+                        </svg>
+                        Mounted by
+                        <span className="inspector-section__count">
+                          {pvcUsedBy.length}
+                        </span>
+                      </div>
+                      <div className="inspector-section__body">
+                        <div className="inspector-rel-list">
+                          {pvcUsedBy.map((ref) => (
+                            <button
+                              key={`${ref.kind}:${ref.name}`}
+                              type="button"
+                              className="inspector-rel-item inspector-rel-item--link"
+                              title={`Select ${ref.kind} ${ref.name}`}
+                              onClick={() =>
+                                setSelectedResource({
+                                  kind: ref.kind,
+                                  name: ref.name,
+                                })
+                              }
+                            >
+                              <span className="inspector-rel-arrow inspector-rel-arrow--incoming">
+                                ↑
+                              </span>
+                              <div className="inspector-rel-info">
+                                <span className="inspector-rel-kind">
+                                  {ref.kind}
+                                </span>
+                                <span className="inspector-rel-name">
+                                  {ref.name}
+                                </span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                        <span className="inspector-field__hint">
+                          Resources claiming this PVC via spec.volumes[].
+                          persistentVolumeClaim.
                         </span>
                       </div>
                     </div>
@@ -2017,6 +2522,303 @@ export default function Canvas() {
                   </div>
                 )}
 
+                {/* ── Section: Capacity (PersistentVolume) ── */}
+                {!isManaged && inspectorData.kind === "PersistentVolume" && (
+                  <div className="inspector-section">
+                    <div className="inspector-section__header">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
+                        <path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" />
+                      </svg>
+                      Capacity
+                    </div>
+                    <div className="inspector-section__body">
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">Capacity</label>
+                        <input
+                          className="inspector-field__input"
+                          value={String(
+                            (selectedNode.data.resource.spec as any)?.capacity
+                              ?.storage ?? "",
+                          )}
+                          onChange={(e) =>
+                            updateResourceField(
+                              selectedNode.id,
+                              selectedNode.data.resource,
+                              updateNodeResourceFromCanvas,
+                              {
+                                spec: {
+                                  ...(selectedNode.data.resource.spec as any),
+                                  capacity: { storage: e.target.value },
+                                },
+                              },
+                            )
+                          }
+                          placeholder="10Gi"
+                        />
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Access Modes
+                        </label>
+                        <select
+                          className="inspector-field__input inspector-field__input--select"
+                          value={String(
+                            (selectedNode.data.resource.spec as any)
+                              ?.accessModes?.[0] ?? "ReadWriteOnce",
+                          )}
+                          onChange={(e) =>
+                            updateResourceField(
+                              selectedNode.id,
+                              selectedNode.data.resource,
+                              updateNodeResourceFromCanvas,
+                              {
+                                spec: {
+                                  ...(selectedNode.data.resource.spec as any),
+                                  accessModes: [e.target.value],
+                                },
+                              },
+                            )
+                          }
+                        >
+                          <option>ReadWriteOnce</option>
+                          <option>ReadOnlyMany</option>
+                          <option>ReadWriteMany</option>
+                          <option>ReadWriteOncePod</option>
+                        </select>
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Reclaim Policy
+                        </label>
+                        <select
+                          className="inspector-field__input inspector-field__input--select"
+                          value={String(
+                            (selectedNode.data.resource.spec as any)
+                              ?.persistentVolumeReclaimPolicy ?? "Retain",
+                          )}
+                          onChange={(e) =>
+                            updateResourceField(
+                              selectedNode.id,
+                              selectedNode.data.resource,
+                              updateNodeResourceFromCanvas,
+                              {
+                                spec: {
+                                  ...(selectedNode.data.resource.spec as any),
+                                  persistentVolumeReclaimPolicy: e.target.value,
+                                },
+                              },
+                            )
+                          }
+                        >
+                          <option>Retain</option>
+                          <option>Recycle</option>
+                          <option>Delete</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Section: Bound to PVC (PersistentVolume) ── */}
+                {inspectorData.kind === "PersistentVolume" &&
+                  pvBoundBy.length > 0 && (
+                    <div className="inspector-section">
+                      <div className="inspector-section__header">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                        >
+                          <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                          <polyline points="15 3 21 3 21 9" />
+                          <line x1="10" y1="14" x2="21" y2="3" />
+                        </svg>
+                        Bound to PVC
+                        <span className="inspector-section__count">
+                          {pvBoundBy.length}
+                        </span>
+                      </div>
+                      <div className="inspector-section__body">
+                        <div className="inspector-rel-list">
+                          {pvBoundBy.map((pvcName) => (
+                            <button
+                              key={pvcName}
+                              type="button"
+                              className="inspector-rel-item inspector-rel-item--link"
+                              title={`Select PVC ${pvcName}`}
+                              onClick={() =>
+                                setSelectedResource({
+                                  kind: "PersistentVolumeClaim",
+                                  name: pvcName,
+                                })
+                              }
+                            >
+                              <span className="inspector-rel-arrow inspector-rel-arrow--incoming">
+                                ↑
+                              </span>
+                              <div className="inspector-rel-info">
+                                <span className="inspector-rel-kind">
+                                  PersistentVolumeClaim
+                                </span>
+                                <span className="inspector-rel-name">
+                                  {pvcName}
+                                </span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                        <span className="inspector-field__hint">
+                          Claims whose spec.volumeName points at this PV.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                {/* ── Section: Provisioning (StorageClass) ── */}
+                {!isManaged && inspectorData.kind === "StorageClass" && (
+                  <div className="inspector-section">
+                    <div className="inspector-section__header">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <rect x="3" y="4" width="18" height="6" rx="2" />
+                        <rect x="3" y="14" width="18" height="6" rx="2" />
+                        <path d="M7 10v4M17 10v4" strokeDasharray="2 2" />
+                      </svg>
+                      Provisioning
+                    </div>
+                    <div className="inspector-section__body">
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Provisioner
+                        </label>
+                        <input
+                          className="inspector-field__input"
+                          value={String(
+                            (selectedNode.data.resource.spec as any)
+                              ?.provisioner ?? "",
+                          )}
+                          onChange={(e) =>
+                            updateResourceField(
+                              selectedNode.id,
+                              selectedNode.data.resource,
+                              updateNodeResourceFromCanvas,
+                              {
+                                spec: {
+                                  ...(selectedNode.data.resource.spec as any),
+                                  provisioner: e.target.value,
+                                },
+                              },
+                            )
+                          }
+                          placeholder="kubernetes.io/no-provisioner"
+                        />
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Reclaim Policy
+                        </label>
+                        <select
+                          className="inspector-field__input inspector-field__input--select"
+                          value={String(
+                            (selectedNode.data.resource.spec as any)
+                              ?.reclaimPolicy ?? "",
+                          )}
+                          onChange={(e) =>
+                            updateResourceField(
+                              selectedNode.id,
+                              selectedNode.data.resource,
+                              updateNodeResourceFromCanvas,
+                              {
+                                spec: {
+                                  ...(selectedNode.data.resource.spec as any),
+                                  reclaimPolicy: e.target.value || undefined,
+                                },
+                              },
+                            )
+                          }
+                        >
+                          <option value="">(default: Delete)</option>
+                          <option>Delete</option>
+                          <option>Retain</option>
+                          <option>Recycle</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Section: Bound PVCs (StorageClass) ── */}
+                {inspectorData.kind === "StorageClass" &&
+                  storageClassBoundBy.length > 0 && (
+                    <div className="inspector-section">
+                      <div className="inspector-section__header">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                        >
+                          <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                          <polyline points="15 3 21 3 21 9" />
+                          <line x1="10" y1="14" x2="21" y2="3" />
+                        </svg>
+                        Bound PVCs
+                        <span className="inspector-section__count">
+                          {storageClassBoundBy.length}
+                        </span>
+                      </div>
+                      <div className="inspector-section__body">
+                        <div className="inspector-rel-list">
+                          {storageClassBoundBy.map((pvcName) => (
+                            <button
+                              key={pvcName}
+                              type="button"
+                              className="inspector-rel-item inspector-rel-item--link"
+                              title={`Select PVC ${pvcName}`}
+                              onClick={() =>
+                                setSelectedResource({
+                                  kind: "PersistentVolumeClaim",
+                                  name: pvcName,
+                                })
+                              }
+                            >
+                              <span className="inspector-rel-arrow inspector-rel-arrow--incoming">
+                                ↑
+                              </span>
+                              <div className="inspector-rel-info">
+                                <span className="inspector-rel-kind">
+                                  PersistentVolumeClaim
+                                </span>
+                                <span className="inspector-rel-name">
+                                  {pvcName}
+                                </span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                        <span className="inspector-field__hint">
+                          Claims whose spec.storageClassName references this
+                          class.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
                 {/* ── Section: Relationships ───────────────── */}
                 {relationships.length > 0 && (
                   <div className="inspector-section">
@@ -2183,6 +2985,9 @@ export default function Canvas() {
 
       {/* Post-drag mechanism prompt for ConfigMap → workload connections */}
       <ConfigMapLinkModal />
+
+      {/* Post-drag volume-name prompt for PVC → Pod connections */}
+      <PvcLinkModal />
     </div>
   );
 }

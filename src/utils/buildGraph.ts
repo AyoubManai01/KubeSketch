@@ -24,6 +24,12 @@ const HPA_WIDTH = 175;
 const HPA_HEIGHT = 104; // fits header + target/min/max rows without overflowing
 const CONFIGMAP_WIDTH = 180;
 const CONFIGMAP_HEIGHT = 104; // fits header + data rows without overflowing the leaf box
+const PVC_WIDTH = 175;
+const PVC_HEIGHT = 124; // fits header + accessModes/storage/binding rows without overflowing the leaf box
+const PV_WIDTH = 175;
+const PV_HEIGHT = 124;
+const STORAGECLASS_WIDTH = 185;
+const STORAGECLASS_HEIGHT = 124;
 const RS_HEADER_HEIGHT = 45;
 const DEP_HEADER_HEIGHT = 45;
 
@@ -237,7 +243,13 @@ function getSavedPosition(kind: string, name: string): { x: number; y: number } 
  * 5. HPAs are placed in a lane below workloads (Y = 520). Auto-align horizontally above the workload they scale.
  * 6. ConfigMaps are placed in a lane below HPAs (Y = 680). They receive inferred
  *    "uses" edges from every workload whose Pod spec references them.
- * 7. Manual layout adjustments are preserved for all top-level elements.
+ * 7. PVCs are placed in a lane below ConfigMaps (Y = 840). They receive inferred
+ *    "mounts" edges from every workload whose Pod spec claims them, plus a "binds"
+ *    edge to the single PV (spec.volumeName) or StorageClass (spec.storageClassName)
+ *    they reference — storage is explicit-only, no controller simulation.
+ * 8. PVs are placed in a lane below PVCs (Y = 1000) and StorageClasses below PVs
+ *    (Y = 1160).
+ * 9. Manual layout adjustments are preserved for all top-level elements.
  *
  * Invariants:
  * - Every Pod belongs to at most one ReplicaSet, every ReplicaSet to at most one Deployment
@@ -267,6 +279,9 @@ export function buildGraph(
     const pods = resources.filter((r) => r.kind === 'Pod');
     const hpas = resources.filter((r) => r.kind === 'HPA');
     const configmaps = resources.filter((r) => r.kind === 'ConfigMap');
+    const pvcs = resources.filter((r) => r.kind === 'PersistentVolumeClaim');
+    const pvs = resources.filter((r) => r.kind === 'PersistentVolume');
+    const storageClasses = resources.filter((r) => r.kind === 'StorageClass');
 
     // Ownership assignment: each ReplicaSet is claimed by at most ONE Deployment,
     // each Pod by at most ONE ReplicaSet (first match wins). This prevents a resource
@@ -911,7 +926,201 @@ export function buildGraph(
         });
     });
 
-    // 6. GENERATE EDGES (Traffic Flow)
+    // 6. LAY OUT PVCs (PersistentVolumeClaims) — claim lane below ConfigMaps.
+    //    PVCs are claimed by Pods (spec.volumes[].persistentVolumeClaim) and bind
+    //    to exactly one PV (spec.volumeName) or StorageClass (spec.storageClassName).
+    const pvcLayoutInfo: Array<{ id: string; x: number; width: number; node: K8sResource }> = [];
+    let pvcXCursor = 50;
+
+    pvcs.forEach((pvc) => {
+        const pvcId = allocateId(pvc);
+        const key = `PersistentVolumeClaim:${pvc.metadata.name}`;
+        const savedPos = getSavedPosition('PersistentVolumeClaim', pvc.metadata.name);
+        const prevPos = prevCoords.get(key);
+
+        let preferredX = 0;
+        if (prevPos) {
+            preferredX = prevPos.x;
+        } else if (savedPos) {
+            preferredX = savedPos.x;
+        } else {
+            preferredX = pvcXCursor;
+            pvcXCursor += 205;
+        }
+
+        pvcLayoutInfo.push({
+            id: pvcId,
+            x: preferredX,
+            width: PVC_WIDTH,
+            node: pvc,
+        });
+    });
+
+    const draggedPvcIds = new Set(
+        pvcLayoutInfo
+            .filter(
+                ({ node }) =>
+                    prevCoords.has(`PersistentVolumeClaim:${node.metadata.name}`) ||
+                    getSavedPosition('PersistentVolumeClaim', node.metadata.name)
+            )
+            .map(({ id }) => id)
+    );
+
+    resolveCollisions(pvcLayoutInfo, draggedPvcIds, 24);
+
+    pvcLayoutInfo.forEach((pvcInfo) => {
+        const key = `PersistentVolumeClaim:${pvcInfo.node.metadata.name}`;
+        const prevPos = prevCoords.get(key);
+        const savedPos = getSavedPosition('PersistentVolumeClaim', pvcInfo.node.metadata.name);
+        const yCoord = prevPos?.y ?? savedPos?.y ?? 840;
+
+        const pos = { x: pvcInfo.x, y: yCoord };
+        absCoords.set(pvcInfo.id, pos);
+
+        nodes.push({
+            id: pvcInfo.id,
+            type: 'k8sNode',
+            position: pos,
+            style: { width: PVC_WIDTH, height: PVC_HEIGHT },
+            data: {
+                kind: 'PersistentVolumeClaim',
+                name: pvcInfo.node.metadata.name,
+                namespace: pvcInfo.node.metadata.namespace,
+                resource: pvcInfo.node,
+            },
+            draggable: true,
+        });
+    });
+
+    // 7. LAY OUT PVs (PersistentVolumes) — bind lane below PVCs.
+    const pvLayoutInfo: Array<{ id: string; x: number; width: number; node: K8sResource }> = [];
+    let pvXCursor = 50;
+
+    pvs.forEach((pv) => {
+        const pvId = allocateId(pv);
+        const key = `PersistentVolume:${pv.metadata.name}`;
+        const savedPos = getSavedPosition('PersistentVolume', pv.metadata.name);
+        const prevPos = prevCoords.get(key);
+
+        let preferredX = 0;
+        if (prevPos) {
+            preferredX = prevPos.x;
+        } else if (savedPos) {
+            preferredX = savedPos.x;
+        } else {
+            preferredX = pvXCursor;
+            pvXCursor += 205;
+        }
+
+        pvLayoutInfo.push({
+            id: pvId,
+            x: preferredX,
+            width: PV_WIDTH,
+            node: pv,
+        });
+    });
+
+    const draggedPvIds = new Set(
+        pvLayoutInfo
+            .filter(
+                ({ node }) =>
+                    prevCoords.has(`PersistentVolume:${node.metadata.name}`) ||
+                    getSavedPosition('PersistentVolume', node.metadata.name)
+            )
+            .map(({ id }) => id)
+    );
+
+    resolveCollisions(pvLayoutInfo, draggedPvIds, 24);
+
+    pvLayoutInfo.forEach((pvInfo) => {
+        const key = `PersistentVolume:${pvInfo.node.metadata.name}`;
+        const prevPos = prevCoords.get(key);
+        const savedPos = getSavedPosition('PersistentVolume', pvInfo.node.metadata.name);
+        const yCoord = prevPos?.y ?? savedPos?.y ?? 1000;
+
+        const pos = { x: pvInfo.x, y: yCoord };
+        absCoords.set(pvInfo.id, pos);
+
+        nodes.push({
+            id: pvInfo.id,
+            type: 'k8sNode',
+            position: pos,
+            style: { width: PV_WIDTH, height: PV_HEIGHT },
+            data: {
+                kind: 'PersistentVolume',
+                name: pvInfo.node.metadata.name,
+                namespace: pvInfo.node.metadata.namespace,
+                resource: pvInfo.node,
+            },
+            draggable: true,
+        });
+    });
+
+    // 8. LAY OUT STORAGECLASSES — provisioning lane below PVs.
+    const storageClassLayoutInfo: Array<{ id: string; x: number; width: number; node: K8sResource }> = [];
+    let storageClassXCursor = 50;
+
+    storageClasses.forEach((sc) => {
+        const scId = allocateId(sc);
+        const key = `StorageClass:${sc.metadata.name}`;
+        const savedPos = getSavedPosition('StorageClass', sc.metadata.name);
+        const prevPos = prevCoords.get(key);
+
+        let preferredX = 0;
+        if (prevPos) {
+            preferredX = prevPos.x;
+        } else if (savedPos) {
+            preferredX = savedPos.x;
+        } else {
+            preferredX = storageClassXCursor;
+            storageClassXCursor += 215;
+        }
+
+        storageClassLayoutInfo.push({
+            id: scId,
+            x: preferredX,
+            width: STORAGECLASS_WIDTH,
+            node: sc,
+        });
+    });
+
+    const draggedStorageClassIds = new Set(
+        storageClassLayoutInfo
+            .filter(
+                ({ node }) =>
+                    prevCoords.has(`StorageClass:${node.metadata.name}`) ||
+                    getSavedPosition('StorageClass', node.metadata.name)
+            )
+            .map(({ id }) => id)
+    );
+
+    resolveCollisions(storageClassLayoutInfo, draggedStorageClassIds, 24);
+
+    storageClassLayoutInfo.forEach((scInfo) => {
+        const key = `StorageClass:${scInfo.node.metadata.name}`;
+        const prevPos = prevCoords.get(key);
+        const savedPos = getSavedPosition('StorageClass', scInfo.node.metadata.name);
+        const yCoord = prevPos?.y ?? savedPos?.y ?? 1160;
+
+        const pos = { x: scInfo.x, y: yCoord };
+        absCoords.set(scInfo.id, pos);
+
+        nodes.push({
+            id: scInfo.id,
+            type: 'k8sNode',
+            position: pos,
+            style: { width: STORAGECLASS_WIDTH, height: STORAGECLASS_HEIGHT },
+            data: {
+                kind: 'StorageClass',
+                name: scInfo.node.metadata.name,
+                namespace: scInfo.node.metadata.namespace,
+                resource: scInfo.node,
+            },
+            draggable: true,
+        });
+    });
+
+    // 9. GENERATE EDGES (Traffic Flow)
     const edges: Edge[] = [];
     const byId = new Map<string, Node<K8sNodeData>>();
     nodes.forEach((n) => byId.set(n.id, n));
@@ -941,7 +1150,7 @@ export function buildGraph(
             selectable: false,
             interactionWidth: 0,
             style: {
-                stroke: target.data.kind === 'ConfigMap' ? '#06b6d4' : edgeColorFor(source.data.kind),
+                stroke: edgeColorForPair(source.data.kind, target.data.kind),
                 strokeWidth: 2.2,
                 filter: 'drop-shadow(0 0 4px rgba(96, 165, 250, 0.4))'
             },
@@ -949,7 +1158,7 @@ export function buildGraph(
                 type: MarkerType.ArrowClosed,
                 width: 14,
                 height: 14,
-                color: target.data.kind === 'ConfigMap' ? '#06b6d4' : edgeColorFor(source.data.kind),
+                color: edgeColorForPair(source.data.kind, target.data.kind),
             }
         });
     };
@@ -1042,6 +1251,58 @@ export function buildGraph(
         });
     });
 
+    // PersistentVolumeClaim → "mounts": every workload (real Deployment/ReplicaSet/Pod)
+    // whose Pod spec declares spec.volumes[].persistentVolumeClaim draws an edge to the
+    // claim. A PVC binds to exactly one target — a PV via spec.volumeName, or a
+    // StorageClass via spec.storageClassName ("binds" edge). Missing targets draw
+    // nothing (no controller simulation).
+    const pvcIdByName = new Map<string, string>();
+    nodes.forEach((n) => {
+        if (n.data.kind === 'PersistentVolumeClaim' && !pvcIdByName.has(n.data.name)) {
+            pvcIdByName.set(n.data.name, n.id);
+        }
+    });
+
+    resources.forEach((workload) => {
+        if (workload.kind !== 'Deployment' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod') {
+            return;
+        }
+        const workloadId = idByResource.get(workload);
+        if (!workloadId) return;
+        getPvcRefs(workload).forEach((claimName) => {
+            const pvcId = pvcIdByName.get(claimName);
+            if (pvcId) addEdge(workloadId, pvcId, 'mounts');
+        });
+    });
+
+    const pvIdByName = new Map<string, string>();
+    nodes.forEach((n) => {
+        if (n.data.kind === 'PersistentVolume' && !pvIdByName.has(n.data.name)) {
+            pvIdByName.set(n.data.name, n.id);
+        }
+    });
+    const storageClassIdByName = new Map<string, string>();
+    nodes.forEach((n) => {
+        if (n.data.kind === 'StorageClass' && !storageClassIdByName.has(n.data.name)) {
+            storageClassIdByName.set(n.data.name, n.id);
+        }
+    });
+
+    pvcs.forEach((pvc) => {
+        const pvcId = idByResource.get(pvc);
+        if (!pvcId) return;
+        const pvName = getPvForPvc(pvc);
+        if (pvName) {
+            const pvId = pvIdByName.get(pvName);
+            if (pvId) addEdge(pvcId, pvId, 'binds');
+        }
+        const scName = getStorageClassForPvc(pvc);
+        if (scName && !pvName) {
+            const scId = storageClassIdByName.get(scName);
+            if (scId) addEdge(pvcId, scId, 'binds');
+        }
+    });
+
     return { nodes, edges };
 }
 
@@ -1050,6 +1311,20 @@ function edgeColorFor(kind: string): string {
     if (kind === 'HPA') return '#f59e0b';
     if (kind === 'Ingress') return '#a78bfa';
     return '#60a5fa';
+}
+
+/**
+ * Inferred edge stroke color for a source→target pair. Storage edges are colored by
+ * their TARGET kind (like ConfigMap "uses" edges): mounts into a PVC are pink, PVC→PV
+ * binds lime, PVC→StorageClass binds indigo. Everything else falls back to the source
+ * kind color.
+ */
+function edgeColorForPair(sourceKind: string, targetKind: string): string {
+    if (targetKind === 'PersistentVolumeClaim') return '#ec4899';
+    if (targetKind === 'PersistentVolume') return '#84cc16';
+    if (targetKind === 'StorageClass') return '#6366f1';
+    if (targetKind === 'ConfigMap') return '#06b6d4';
+    return edgeColorFor(sourceKind);
 }
 
 /**
@@ -1229,6 +1504,97 @@ export function getConfigMapRefs(resource: K8sResource): string[] {
     }
 
     return [...names];
+}
+
+/**
+ * The PersistentVolumeClaim names a resource references through its Pod spec:
+ * `volumes[].persistentVolumeClaim.claimName`. Workloads (Deployment/ReplicaSet)
+ * carry them under `spec.template.spec`; Pods use `spec` directly. Returns unique
+ * claim names in document order.
+ */
+export function getPvcRefs(resource: K8sResource): string[] {
+    const spec = resource.spec as
+        | { template?: { spec?: Record<string, unknown> }; [key: string]: unknown }
+        | undefined;
+    const podSpec =
+        resource.kind === 'Deployment' || resource.kind === 'ReplicaSet'
+            ? (spec?.template?.spec as Record<string, any> | undefined)
+            : (spec as Record<string, any> | undefined);
+    if (!podSpec || !Array.isArray(podSpec.volumes)) return [];
+
+    const names: string[] = [];
+    const seen = new Set<string>();
+    podSpec.volumes.forEach((volume: any) => {
+        const name = volume?.persistentVolumeClaim?.claimName;
+        if (typeof name === 'string' && !seen.has(name)) {
+            seen.add(name);
+            names.push(name);
+        }
+    });
+    return names;
+}
+
+/** All real workloads/Pods that reference the given PVC by claimName (via getPvcRefs). */
+export function getResourcesUsingPvc(resources: K8sResource[], claimName: string): K8sResource[] {
+    return resources.filter(
+        (r) =>
+            r.kind === 'Deployment' ||
+            r.kind === 'ReplicaSet' ||
+            r.kind === 'Pod'
+    ).filter((r) => getPvcRefs(r).includes(claimName));
+}
+
+/** How a resource claims each PVC it references: the volume name + claim name, for the inspector. */
+export function getPvcRefDetails(resource: K8sResource): Array<{ name: string; volumeName: string }> {
+    const spec = resource.spec as
+        | { template?: { spec?: Record<string, unknown> }; [key: string]: unknown }
+        | undefined;
+    const podSpec =
+        resource.kind === 'Deployment' || resource.kind === 'ReplicaSet'
+            ? (spec?.template?.spec as Record<string, any> | undefined)
+            : (spec as Record<string, any> | undefined);
+    if (!podSpec || !Array.isArray(podSpec.volumes)) return [];
+
+    const entries: Array<{ name: string; volumeName: string }> = [];
+    const seen = new Set<string>();
+    podSpec.volumes.forEach((volume: any) => {
+        const name = volume?.persistentVolumeClaim?.claimName;
+        if (typeof name !== 'string' || seen.has(name)) return;
+        seen.add(name);
+        entries.push({ name, volumeName: typeof volume?.name === 'string' ? volume.name : '' });
+    });
+    return entries;
+}
+
+/** The PV a PVC binds to by name (from spec.volumeName), or undefined when unbound. */
+export function getPvForPvc(pvc: K8sResource): string | undefined {
+    const spec = pvc.spec as { volumeName?: unknown } | undefined;
+    return typeof spec?.volumeName === 'string' && spec.volumeName ? spec.volumeName : undefined;
+}
+
+/** The StorageClass a PVC references (from spec.storageClassName), or undefined. */
+export function getStorageClassForPvc(pvc: K8sResource): string | undefined {
+    const spec = pvc.spec as { storageClassName?: unknown } | undefined;
+    return typeof spec?.storageClassName === 'string' && spec.storageClassName
+        ? spec.storageClassName
+        : undefined;
+}
+
+/** All PVCs bound to the given PV by name (spec.volumeName). */
+export function getPvcsBoundToPv(resources: K8sResource[], pvName: string): K8sResource[] {
+    return resources.filter(
+        (r) => r.kind === 'PersistentVolumeClaim' && getPvForPvc(r) === pvName
+    );
+}
+
+/** All PVCs referencing the given StorageClass by name (spec.storageClassName). */
+export function getPvcsBoundToStorageClass(
+    resources: K8sResource[],
+    scName: string
+): K8sResource[] {
+    return resources.filter(
+        (r) => r.kind === 'PersistentVolumeClaim' && getStorageClassForPvc(r) === scName
+    );
 }
 
 /** All resources that reference the given ConfigMap by name (via getConfigMapRefs). */

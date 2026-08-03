@@ -51,6 +51,26 @@ const ICONS: Record<string, React.ReactNode> = {
             <path d="M8 10h8M8 14h5" />
         </svg>
     ),
+    PersistentVolumeClaim: (
+        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <ellipse cx="12" cy="5" rx="8" ry="3" />
+            <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
+            <path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6" />
+        </svg>
+    ),
+    PersistentVolume: (
+        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
+            <path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" />
+        </svg>
+    ),
+    StorageClass: (
+        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="4" width="18" height="6" rx="2" />
+            <rect x="3" y="14" width="18" height="6" rx="2" />
+            <path d="M7 10v4M17 10v4" strokeDasharray="2 2" />
+        </svg>
+    ),
 };
 
 const KIND_COLORS: Record<string, string> = {
@@ -61,6 +81,9 @@ const KIND_COLORS: Record<string, string> = {
     Ingress: '#8b5cf6',    // Purple
     HPA: '#f59e0b',        // Amber
     ConfigMap: '#06b6d4',  // Cyan
+    PersistentVolumeClaim: '#ec4899', // Pink
+    PersistentVolume: '#84cc16',      // Lime
+    StorageClass: '#6366f1',          // Indigo
 };
 
 function K8sNodeComponent({ data }: NodeProps) {
@@ -119,6 +142,17 @@ function K8sNodeComponent({ data }: NodeProps) {
                 {kind === 'HPA' && typeof spec.maxReplicas === 'number' && (
                     <div className="k8s-node__badge" title="Max replicas">
                         ≤ {spec.maxReplicas}
+                    </div>
+                )}
+                {kind === 'PersistentVolumeClaim' &&
+                    typeof spec.resources?.requests?.storage === 'string' && (
+                        <div className="k8s-node__badge" title="Requested storage">
+                            {spec.resources.requests.storage}
+                        </div>
+                    )}
+                {kind === 'PersistentVolume' && typeof spec.capacity?.storage === 'string' && (
+                    <div className="k8s-node__badge" title="Capacity">
+                        {spec.capacity.storage}
                     </div>
                 )}
             </div>
@@ -218,6 +252,46 @@ function buildResourceDetails(nodeData: K8sNodeData): DetailPair[] {
         details.push({ key: 'keys', val: String(keys.length) });
         if (keys.length > 0) {
             details.push({ key: 'first', val: keys[0] });
+        }
+    }
+    if (nodeData.kind === 'PersistentVolumeClaim') {
+        const modes = Array.isArray(spec.accessModes) ? spec.accessModes.join(', ') : '';
+        if (modes) {
+            details.push({ key: 'access', val: modes });
+        }
+        if (spec.resources?.requests?.storage) {
+            details.push({ key: 'size', val: String(spec.resources.requests.storage) });
+        }
+        if (spec.storageClassName) {
+            details.push({ key: 'storageClass', val: String(spec.storageClassName) });
+        }
+        if (spec.volumeName) {
+            details.push({ key: 'bound to', val: `PV ${spec.volumeName}` });
+        } else if (!spec.storageClassName) {
+            details.push({ key: 'state', val: 'unbound' });
+        }
+    }
+    if (nodeData.kind === 'PersistentVolume') {
+        if (spec.capacity?.storage) {
+            details.push({ key: 'capacity', val: String(spec.capacity.storage) });
+        }
+        const modes = Array.isArray(spec.accessModes) ? spec.accessModes.join(', ') : '';
+        if (modes) {
+            details.push({ key: 'access', val: modes });
+        }
+        if (spec.persistentVolumeReclaimPolicy) {
+            details.push({ key: 'reclaim', val: String(spec.persistentVolumeReclaimPolicy) });
+        }
+        if (spec.claimRef?.name) {
+            details.push({ key: 'bound to', val: `PVC ${spec.claimRef.name}` });
+        }
+    }
+    if (nodeData.kind === 'StorageClass') {
+        if (spec.provisioner) {
+            details.push({ key: 'provisioner', val: String(spec.provisioner) });
+        }
+        if (spec.reclaimPolicy) {
+            details.push({ key: 'reclaim', val: String(spec.reclaimPolicy) });
         }
     }
     return details;

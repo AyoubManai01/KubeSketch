@@ -946,7 +946,7 @@ function toResources(nodes: Node<K8sNodeData>[]): K8sResource[] {
     });
 }
 
-function apiVersionForKind(kind: SupportedKind): string {
+export function apiVersionForKind(kind: SupportedKind): string {
     if (kind === 'Deployment' || kind === 'ReplicaSet') return 'apps/v1';
     if (kind === 'Ingress') return 'networking.k8s.io/v1';
     if (kind === 'HPA') return 'autoscaling/v2';

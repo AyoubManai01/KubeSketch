@@ -23,7 +23,7 @@ import {
 } from "react";
 import "@xyflow/react/dist/style.css";
 
-import { useVeltraStore } from "../store/store";
+import { useVeltraStore, apiVersionForKind } from "../store/store";
 import K8sNode from "./K8sNode";
 import {
   SUPPORTED_KINDS,
@@ -41,6 +41,7 @@ import {
   getStorageClassForPvc,
   getPvcsBoundToPv,
   getPvcsBoundToStorageClass,
+  nodeIdFor,
   type K8sNodeData,
 } from "../utils/buildGraph";
 import { resourcesToYaml } from "../utils/serializeYaml";
@@ -588,8 +589,32 @@ export default function Canvas() {
   const isManaged = !!selectedNode?.data.synthetic;
   const managedOwner = selectedNode?.data.managedBy ?? null;
 
+  // ── Inspector edit buffer ───────────────────────────────────────────────
+  // All inspector fields edit a local draft instead of the store; the draft is
+  // committed to the model (and YAML) only when the user presses "Validate".
+  // This lets labels/annotations accept partial input while typing instead of
+  // round-tripping every keystroke through a lossy parser.
+  const [draftResource, setDraftResource] = useState<K8sResource | null>(null);
+  const [labelsDraft, setLabelsDraft] = useState("");
+  const [annotationsDraft, setAnnotationsDraft] = useState("");
+  const [nameDraft, setNameDraft] = useState("");
+  const [draftErrors, setDraftErrors] = useState<{
+    labels?: string;
+    annotations?: string;
+  }>({});
+  const [lastDraftSig, setLastDraftSig] = useState<{
+    selectionKey: string;
+    sig: string;
+  }>({ selectionKey: "", sig: "" });
+
+  const committedResource = selectedNode?.data.resource ?? null;
+  const draft = draftResource ?? committedResource;
+  const draftKind = (draft?.kind ?? inspectorData?.kind) as SupportedKind;
+  const draftSpec = (draft?.spec ?? {}) as Record<string, any>;
+  const draftMetadata = (draft?.metadata ?? {}) as Record<string, any>;
+
   /** Empty string = valid; otherwise the validation error to show. */
-  const validateName = useCallback(
+  const validateDraftName = useCallback(
     (kind: SupportedKind, candidate: string): string => {
       const trimmed = candidate.trim();
       if (!trimmed) return "Name is required.";
@@ -604,6 +629,164 @@ export default function Canvas() {
     },
     [nodes, selectedNode],
   );
+
+  const nameError = draftResource
+    ? validateDraftName(draftKind, nameDraft)
+    : "";
+
+  // True when the draft holds anything the model doesn't — gates the
+  // Validate Changes button.
+  const dirty = useMemo(() => {
+    if (!selectedNode || !draftResource || isManaged) return false;
+    const committed = selectedNode.data.resource;
+    const structuredChanged =
+      JSON.stringify(draftResource) !== JSON.stringify(committed);
+    const labelsChanged =
+      labelsDraft !== toKeyValueString(committed.metadata?.labels);
+    const annotationsChanged =
+      annotationsDraft !==
+      toKeyValueString(
+        committed.metadata?.annotations as Record<string, string> | undefined,
+      );
+    const nameChanged = nameDraft.trim() !== (committed.metadata?.name ?? "");
+    return (
+      structuredChanged || labelsChanged || annotationsChanged || nameChanged
+    );
+  }, [
+    selectedNode,
+    draftResource,
+    labelsDraft,
+    annotationsDraft,
+    nameDraft,
+    isManaged,
+  ]);
+
+  // Re-initialize the draft when a different resource is selected or when the
+  // committed resource changed without pending edits (external sync, e.g. YAML
+  // edits or HPA replica clamps). Never clobber in-progress typing.
+  if (selectedNode && !isManaged) {
+    const sig = JSON.stringify(selectedNode.data.resource);
+    const needsInit =
+      draftResource === null ||
+      lastDraftSig.selectionKey !== selectionKey ||
+      (lastDraftSig.sig !== sig && !dirty);
+    if (needsInit) {
+      setLastDraftSig({ selectionKey, sig });
+      setDraftResource(selectedNode.data.resource);
+      setLabelsDraft(
+        toKeyValueString(selectedNode.data.resource.metadata?.labels),
+      );
+      setAnnotationsDraft(
+        toKeyValueString(
+          selectedNode.data.resource.metadata?.annotations as
+            | Record<string, string>
+            | undefined,
+        ),
+      );
+      setNameDraft(selectedNode.data.resource.metadata?.name ?? "");
+      setDraftErrors({});
+    }
+  }
+
+  /** Merge a partial patch into the draft (metadata/spec merge like the old helper). */
+  const patchDraft = useCallback(
+    (patch: {
+      kind?: SupportedKind;
+      apiVersion?: string;
+      metadata?: Record<string, unknown>;
+      spec?: Record<string, unknown>;
+      data?: Record<string, string> | undefined;
+    }) => {
+      setDraftResource((prev) => {
+        const base = prev ?? selectedNode?.data.resource ?? null;
+        if (!base) return null;
+        return {
+          ...base,
+          ...patch,
+          metadata: {
+            ...(base.metadata ?? {}),
+            ...(patch.metadata ?? {}),
+          },
+          spec: {
+            ...(base.spec as Record<string, unknown> | undefined),
+            ...(patch.spec ?? {}),
+          },
+        };
+      });
+    },
+    // `prev` is the authoritative base once the draft exists; the selected
+    // node is only the fallback for the first (pre-init) frame.
+    [selectedNode],
+  );
+
+  /** Adopt the freshly-committed node back into the draft after Validate. */
+  const syncDraftFromStore = useCallback((nodeId: string) => {
+    const state = useVeltraStore.getState();
+    const fresh = state.nodes.find((n) => n.id === nodeId) ?? null;
+    const resource = fresh?.data.resource ?? null;
+    if (!resource) return;
+    const sel = state.selectedResource;
+    const freshKey = sel ? `${sel.kind}:${sel.name}` : "";
+    setDraftResource(resource);
+    setLabelsDraft(toKeyValueString(resource.metadata?.labels));
+    setAnnotationsDraft(
+      toKeyValueString(
+        resource.metadata?.annotations as Record<string, string> | undefined,
+      ),
+    );
+    setNameDraft(resource.metadata?.name ?? "");
+    setDraftErrors({});
+    setLastDraftSig({ selectionKey: freshKey, sig: JSON.stringify(resource) });
+  }, []);
+
+  /** Validate the draft and commit it to the model through the store. */
+  const handleValidate = useCallback(() => {
+    if (!selectedNode || !draftResource || isManaged) return;
+    const committed = selectedNode.data.resource;
+
+    const errors: { labels?: string; annotations?: string } = {};
+    const labelsError = keyValueError(labelsDraft);
+    if (labelsError) errors.labels = labelsError;
+    const annotationsError = keyValueError(annotationsDraft);
+    if (annotationsError) errors.annotations = annotationsError;
+    if (Object.keys(errors).length > 0) {
+      setDraftErrors(errors);
+      return;
+    }
+    setDraftErrors({});
+
+    const kind = draftResource.kind as SupportedKind;
+    const name = nameDraft.trim();
+
+    // Empty/duplicate names are surfaced inline on the Name field — block the
+    // commit so the model is never left invalid (invariant 8).
+    if (validateDraftName(kind, name)) return;
+
+    // The final resource: raw string drafts parsed into the structured model.
+    const finalResource: K8sResource = {
+      ...draftResource,
+      kind,
+      apiVersion: apiVersionForKind(kind),
+      metadata: {
+        ...(draftResource.metadata ?? {}),
+        name,
+        labels: parseKeyValueString(labelsDraft),
+        annotations: parseKeyValueString(annotationsDraft),
+      },
+    };
+
+    // Renames go through the identity path so reference cascades run
+    // (Ingress backends, HPA scaleTargetRefs, ConfigMap/PVC/PV/SC refs) and
+    // manual edges + stored positions are remapped.
+    let nodeId = selectedNode.id;
+    if (name !== committed.metadata?.name) {
+      updateNodeFromCanvas(nodeId, { name });
+      nodeId = nodeIdFor(kind, name);
+    }
+    updateNodeResourceFromCanvas(nodeId, finalResource);
+    syncDraftFromStore(nodeId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNode, draftResource, labelsDraft, annotationsDraft, nameDraft, isManaged]);
 
   // Skip YAML serialization for position/select/dimension-only changes (perf optimization)
   const onNodesChange = (changes: NodeChange[]) => {
@@ -1115,12 +1298,19 @@ export default function Canvas() {
                         </label>
                         <select
                           className="inspector-field__input inspector-field__input--select"
-                          value={inspectorData.kind}
-                          onChange={(e) =>
-                            updateNodeFromCanvas(selectedNode.id, {
-                              kind: e.target.value as SupportedKind,
-                            })
-                          }
+                          value={draftKind}
+                          onChange={(e) => {
+                            const next = e.target.value as SupportedKind;
+                            setDraftResource((prev) => {
+                              const base =
+                                prev ?? selectedNode.data.resource;
+                              return {
+                                ...base,
+                                kind: next,
+                                apiVersion: apiVersionForKind(next),
+                              };
+                            });
+                          }}
                         >
                           {SUPPORTED_KINDS.map((k) => (
                             <option key={k} value={k}>
@@ -1130,17 +1320,9 @@ export default function Canvas() {
                         </select>
                       </div>
                       <NameField
-                        value={inspectorData.name}
-                        resetToken={selectionKey}
-                        validate={(candidate) =>
-                          validateName(
-                            selectedNode.data.kind as SupportedKind,
-                            candidate,
-                          )
-                        }
-                        onCommit={(name) =>
-                          updateNodeFromCanvas(selectedNode.id, { name })
-                        }
+                        value={nameDraft}
+                        error={nameError}
+                        onChange={setNameDraft}
                       />
                       <div className="inspector-field">
                         <label className="inspector-field__label">
@@ -1148,11 +1330,13 @@ export default function Canvas() {
                         </label>
                         <input
                           className="inspector-field__input"
-                          value={inspectorData.namespace ?? ""}
+                          value={(draftMetadata.namespace as string) ?? ""}
                           list={namespaceListId}
                           onChange={(e) =>
-                            updateNodeFromCanvas(selectedNode.id, {
-                              namespace: e.target.value,
+                            patchDraft({
+                              metadata: {
+                                namespace: e.target.value || undefined,
+                              },
                             })
                           }
                           placeholder="default"
@@ -1181,68 +1365,64 @@ export default function Canvas() {
                       <div className="inspector-field">
                         <label className="inspector-field__label">Labels</label>
                         <input
-                          className="inspector-field__input"
-                          value={toKeyValueString(
-                            selectedNode.data.resource.metadata?.labels,
-                          )}
-                          onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                metadata: {
-                                  ...selectedNode.data.resource.metadata,
-                                  labels: parseKeyValueString(e.target.value),
-                                },
-                              },
-                            )
-                          }
+                          className={`inspector-field__input ${
+                            draftErrors.labels
+                              ? "inspector-field__input--invalid"
+                              : ""
+                          }`}
+                          value={labelsDraft}
+                          onChange={(e) => {
+                            setLabelsDraft(e.target.value);
+                            setDraftErrors((prev) => ({
+                              ...prev,
+                              labels: undefined,
+                            }));
+                          }}
                           placeholder="app=my-app,tier=frontend"
                         />
-                        {selectedNode.data.resource.metadata?.labels &&
-                          Object.keys(
-                            selectedNode.data.resource.metadata.labels,
-                          ).length > 0 && (
+                        {draftErrors.labels && (
+                          <span className="inspector-field__error">
+                            {draftErrors.labels}
+                          </span>
+                        )}
+                        {(() => {
+                          const parsed = parseKeyValueString(labelsDraft);
+                          return parsed && Object.keys(parsed).length > 0 ? (
                             <div className="inspector-label-chips">
-                              {Object.entries(
-                                selectedNode.data.resource.metadata.labels,
-                              ).map(([k, v]) => (
+                              {Object.entries(parsed).map(([k, v]) => (
                                 <span key={k} className="inspector-label-chip">
                                   {k}={v}
                                 </span>
                               ))}
                             </div>
-                          )}
+                          ) : null;
+                        })()}
                       </div>
                       <div className="inspector-field">
                         <label className="inspector-field__label">
                           Annotations
                         </label>
                         <input
-                          className="inspector-field__input"
-                          value={toKeyValueString(
-                            selectedNode.data.resource.metadata?.annotations as
-                              | Record<string, string>
-                              | undefined,
-                          )}
-                          onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                metadata: {
-                                  ...selectedNode.data.resource.metadata,
-                                  annotations: parseKeyValueString(
-                                    e.target.value,
-                                  ),
-                                },
-                              },
-                            )
-                          }
+                          className={`inspector-field__input ${
+                            draftErrors.annotations
+                              ? "inspector-field__input--invalid"
+                              : ""
+                          }`}
+                          value={annotationsDraft}
+                          onChange={(e) => {
+                            setAnnotationsDraft(e.target.value);
+                            setDraftErrors((prev) => ({
+                              ...prev,
+                              annotations: undefined,
+                            }));
+                          }}
                           placeholder="owner=team-a"
                         />
+                        {draftErrors.annotations && (
+                          <span className="inspector-field__error">
+                            {draftErrors.annotations}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1250,8 +1430,8 @@ export default function Canvas() {
 
                 {/* ── Section: Scaling (Deployment / ReplicaSet) ── */}
                 {!isManaged &&
-                  (inspectorData.kind === "Deployment" ||
-                    inspectorData.kind === "ReplicaSet") && (
+                  (draftKind === "Deployment" ||
+                    draftKind === "ReplicaSet") && (
                     <div className="inspector-section">
                       <div className="inspector-section__header">
                         <svg
@@ -1275,22 +1455,14 @@ export default function Canvas() {
                             className="inspector-field__input"
                             type="number"
                             min={0}
-                            value={String(
-                              (selectedNode.data.resource.spec as any)
-                                ?.replicas ?? "",
-                            )}
+                            value={String(draftSpec?.replicas ?? "")}
                             onChange={(e) =>
-                              updateResourceField(
-                                selectedNode.id,
-                                selectedNode.data.resource,
-                                updateNodeResourceFromCanvas,
-                                {
-                                  spec: {
-                                    ...(selectedNode.data.resource.spec as any),
-                                    replicas: toOptionalNumber(e.target.value),
-                                  },
+                              patchDraft({
+                                spec: {
+                                  ...draftSpec,
+                                  replicas: toOptionalNumber(e.target.value),
                                 },
-                              )
+                              })
                             }
                             placeholder="3"
                           />
@@ -1313,11 +1485,11 @@ export default function Canvas() {
                           </label>
                           {(() => {
                             const current =
-                              ((selectedNode.data.resource.spec as any)
-                                ?.selector?.matchLabels?.app as
+                              (draftSpec?.selector?.matchLabels?.app as
                                 | string
                                 | undefined) ?? "";
-                            const ownName = selectedNode.data.name as string;
+                            const ownName =
+                              nameDraft.trim() || (selectedNode.data.name as string);
                             const known = selectorOptions.some(
                               (o) => o.value === current,
                             );
@@ -1326,28 +1498,19 @@ export default function Canvas() {
                                 className="inspector-field__input inspector-field__input--select"
                                 value={current}
                                 onChange={(e) =>
-                                  updateResourceField(
-                                    selectedNode.id,
-                                    selectedNode.data.resource,
-                                    updateNodeResourceFromCanvas,
-                                    {
-                                      spec: {
-                                        ...(selectedNode.data.resource
-                                          .spec as any),
-                                        selector: e.target.value
-                                          ? {
-                                              ...((
-                                                selectedNode.data.resource
-                                                  .spec as any
-                                              )?.selector ?? {}),
-                                              matchLabels: {
-                                                app: e.target.value,
-                                              },
-                                            }
-                                          : undefined,
-                                      },
+                                  patchDraft({
+                                    spec: {
+                                      ...draftSpec,
+                                      selector: e.target.value
+                                        ? {
+                                            ...(draftSpec?.selector ?? {}),
+                                            matchLabels: {
+                                              app: e.target.value,
+                                            },
+                                          }
+                                        : undefined,
                                     },
-                                  )
+                                  })
                                 }
                               >
                                 <option value="">(no selector)</option>
@@ -1382,7 +1545,7 @@ export default function Canvas() {
                   )}
 
                 {/* ── Section: Containers (Pod) ───────────── */}
-                {!isManaged && inspectorData.kind === "Pod" && (
+                {!isManaged && draftKind === "Pod" && (
                   <div className="inspector-section">
                     <div className="inspector-section__header">
                       <svg
@@ -1403,29 +1566,21 @@ export default function Canvas() {
                         </label>
                         <input
                           className="inspector-field__input"
-                          value={
-                            (selectedNode.data.resource.spec as any)
-                              ?.containers?.[0]?.name ?? ""
-                          }
+                          value={String(
+                            draftSpec?.containers?.[0]?.name ?? "",
+                          )}
                           onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                spec: {
-                                  ...(selectedNode.data.resource.spec as any),
-                                  containers: [
-                                    {
-                                      ...((
-                                        selectedNode.data.resource.spec as any
-                                      )?.containers?.[0] ?? {}),
-                                      name: e.target.value,
-                                    },
-                                  ],
-                                },
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                containers: [
+                                  {
+                                    ...(draftSpec?.containers?.[0] ?? {}),
+                                    name: e.target.value,
+                                  },
+                                ],
                               },
-                            )
+                            })
                           }
                           placeholder="app"
                         />
@@ -1434,29 +1589,21 @@ export default function Canvas() {
                         <label className="inspector-field__label">Image</label>
                         <input
                           className="inspector-field__input"
-                          value={
-                            (selectedNode.data.resource.spec as any)
-                              ?.containers?.[0]?.image ?? ""
-                          }
+                          value={String(
+                            draftSpec?.containers?.[0]?.image ?? "",
+                          )}
                           onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                spec: {
-                                  ...(selectedNode.data.resource.spec as any),
-                                  containers: [
-                                    {
-                                      ...((
-                                        selectedNode.data.resource.spec as any
-                                      )?.containers?.[0] ?? {}),
-                                      image: e.target.value,
-                                    },
-                                  ],
-                                },
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                containers: [
+                                  {
+                                    ...(draftSpec?.containers?.[0] ?? {}),
+                                    image: e.target.value,
+                                  },
+                                ],
                               },
-                            )
+                            })
                           }
                           placeholder="nginx:latest"
                         />
@@ -1635,7 +1782,7 @@ export default function Canvas() {
                   )}
 
                 {/* ── Section: Data (ConfigMap) ─────────────── */}
-                {!isManaged && inspectorData.kind === "ConfigMap" && (
+                {!isManaged && draftKind === "ConfigMap" && (
                   <div className="inspector-section">
                     <div className="inspector-section__header">
                       <svg
@@ -1653,15 +1800,13 @@ export default function Canvas() {
                     </div>
                     <div className="inspector-section__body">
                       <ConfigMapDataEditor
-                        resource={selectedNode.data.resource}
+                        resource={draft ?? selectedNode.data.resource}
                         resetToken={selectionKey}
                         onCommit={(data) =>
-                          updateResourceField(
-                            selectedNode.id,
-                            selectedNode.data.resource,
-                            updateNodeResourceFromCanvas,
-                            { data },
-                          )
+                          setDraftResource((prev) => ({
+                            ...(prev ?? selectedNode.data.resource),
+                            data,
+                          }))
                         }
                       />
                     </div>
@@ -1726,7 +1871,7 @@ export default function Canvas() {
                   )}
 
                 {/* ── Section: Storage (PersistentVolumeClaim) ── */}
-                {!isManaged && inspectorData.kind === "PersistentVolumeClaim" && (
+                {!isManaged && draftKind === "PersistentVolumeClaim" && (
                   <div className="inspector-section">
                     <div className="inspector-section__header">
                       <svg
@@ -1751,21 +1896,15 @@ export default function Canvas() {
                         <select
                           className="inspector-field__input inspector-field__input--select"
                           value={String(
-                            (selectedNode.data.resource.spec as any)
-                              ?.accessModes?.[0] ?? "ReadWriteOnce",
+                            draftSpec?.accessModes?.[0] ?? "ReadWriteOnce",
                           )}
                           onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                spec: {
-                                  ...(selectedNode.data.resource.spec as any),
-                                  accessModes: [e.target.value],
-                                },
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                accessModes: [e.target.value],
                               },
-                            )
+                            })
                           }
                         >
                           <option>ReadWriteOnce</option>
@@ -1781,25 +1920,19 @@ export default function Canvas() {
                         <input
                           className="inspector-field__input"
                           value={String(
-                            (selectedNode.data.resource.spec as any)
-                              ?.resources?.requests?.storage ?? "",
+                            draftSpec?.resources?.requests?.storage ?? "",
                           )}
                           onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                spec: {
-                                  ...(selectedNode.data.resource.spec as any),
-                                  resources: {
-                                    requests: {
-                                      storage: e.target.value,
-                                    },
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                resources: {
+                                  requests: {
+                                    storage: e.target.value,
                                   },
                                 },
                               },
-                            )
+                            })
                           }
                           placeholder="1Gi"
                         />
@@ -1810,8 +1943,7 @@ export default function Canvas() {
                         </label>
                         {(() => {
                           const current = String(
-                            (selectedNode.data.resource.spec as any)
-                              ?.storageClassName ?? "",
+                            draftSpec?.storageClassName ?? "",
                           );
                           const known = storageClassOptions.includes(current);
                           return (
@@ -1820,9 +1952,7 @@ export default function Canvas() {
                               value={current}
                               onChange={(e) => {
                                 const value = e.target.value;
-                                const spec = {
-                                  ...(selectedNode.data.resource.spec as any),
-                                };
+                                const spec = { ...draftSpec };
                                 if (value) {
                                   spec.storageClassName = value;
                                   delete spec.volumeName;
@@ -1830,12 +1960,7 @@ export default function Canvas() {
                                   delete spec.storageClassName;
                                   delete spec.volumeName;
                                 }
-                                updateResourceField(
-                                  selectedNode.id,
-                                  selectedNode.data.resource,
-                                  updateNodeResourceFromCanvas,
-                                  { spec },
-                                );
+                                patchDraft({ spec });
                               }}
                             >
                               <option value="">
@@ -1865,8 +1990,7 @@ export default function Canvas() {
                         </label>
                         {(() => {
                           const current = String(
-                            (selectedNode.data.resource.spec as any)
-                              ?.volumeName ?? "",
+                            draftSpec?.volumeName ?? "",
                           );
                           const known = pvOptions.includes(current);
                           return (
@@ -1875,9 +1999,7 @@ export default function Canvas() {
                               value={current}
                               onChange={(e) => {
                                 const value = e.target.value;
-                                const spec = {
-                                  ...(selectedNode.data.resource.spec as any),
-                                };
+                                const spec = { ...draftSpec };
                                 if (value) {
                                   spec.volumeName = value;
                                   delete spec.storageClassName;
@@ -1885,12 +2007,7 @@ export default function Canvas() {
                                   delete spec.volumeName;
                                   delete spec.storageClassName;
                                 }
-                                updateResourceField(
-                                  selectedNode.id,
-                                  selectedNode.data.resource,
-                                  updateNodeResourceFromCanvas,
-                                  { spec },
-                                );
+                                patchDraft({ spec });
                               }}
                             >
                               <option value="">
@@ -1990,7 +2107,7 @@ export default function Canvas() {
                   )}
 
                 {/* ── Section: Networking (Service) ───────── */}
-                {inspectorData.kind === "Service" && (
+                {draftKind === "Service" && (
                   <div className="inspector-section">
                     <div className="inspector-section__header">
                       <svg
@@ -2010,21 +2127,14 @@ export default function Canvas() {
                         </label>
                         <select
                           className="inspector-field__input inspector-field__input--select"
-                          value={
-                            (selectedNode.data.resource.spec as any)?.type ?? ""
-                          }
+                          value={draftSpec?.type ?? ""}
                           onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                spec: {
-                                  ...(selectedNode.data.resource.spec as any),
-                                  type: e.target.value || undefined,
-                                },
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                type: e.target.value || undefined,
                               },
-                            )
+                            })
                           }
                         >
                           <option value="">(default: ClusterIP)</option>
@@ -2041,8 +2151,8 @@ export default function Canvas() {
                         </label>
                         {(() => {
                           const current =
-                            ((selectedNode.data.resource.spec as any)?.selector
-                              ?.app as string | undefined) ?? "";
+                            (draftSpec?.selector?.app as string | undefined) ??
+                            "";
                           const known = selectorOptions.some(
                             (o) => o.value === current,
                           );
@@ -2051,20 +2161,14 @@ export default function Canvas() {
                               className="inspector-field__input inspector-field__input--select"
                               value={current}
                               onChange={(e) =>
-                                updateResourceField(
-                                  selectedNode.id,
-                                  selectedNode.data.resource,
-                                  updateNodeResourceFromCanvas,
-                                  {
-                                    spec: {
-                                      ...(selectedNode.data.resource
-                                        .spec as any),
-                                      selector: e.target.value
-                                        ? { app: e.target.value }
-                                        : undefined,
-                                    },
+                                patchDraft({
+                                  spec: {
+                                    ...draftSpec,
+                                    selector: e.target.value
+                                      ? { app: e.target.value }
+                                      : undefined,
                                   },
-                                )
+                                })
                               }
                             >
                               <option value="">(no selector)</option>
@@ -2091,29 +2195,19 @@ export default function Canvas() {
                         <input
                           className="inspector-field__input"
                           type="number"
-                          value={String(
-                            (selectedNode.data.resource.spec as any)?.ports?.[0]
-                              ?.port ?? "",
-                          )}
+                          value={String(draftSpec?.ports?.[0]?.port ?? "")}
                           onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                spec: {
-                                  ...(selectedNode.data.resource.spec as any),
-                                  ports: [
-                                    {
-                                      ...((
-                                        selectedNode.data.resource.spec as any
-                                      )?.ports?.[0] ?? {}),
-                                      port: toOptionalNumber(e.target.value),
-                                    },
-                                  ],
-                                },
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                ports: [
+                                  {
+                                    ...(draftSpec?.ports?.[0] ?? {}),
+                                    port: toOptionalNumber(e.target.value),
+                                  },
+                                ],
                               },
-                            )
+                            })
                           }
                           placeholder="80"
                         />
@@ -2125,30 +2219,22 @@ export default function Canvas() {
                         <input
                           className="inspector-field__input"
                           value={String(
-                            (selectedNode.data.resource.spec as any)?.ports?.[0]
-                              ?.targetPort ?? "",
+                            draftSpec?.ports?.[0]?.targetPort ?? "",
                           )}
                           onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                spec: {
-                                  ...(selectedNode.data.resource.spec as any),
-                                  ports: [
-                                    {
-                                      ...((
-                                        selectedNode.data.resource.spec as any
-                                      )?.ports?.[0] ?? {}),
-                                      targetPort:
-                                        toOptionalNumber(e.target.value) ??
-                                        (e.target.value || undefined),
-                                    },
-                                  ],
-                                },
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                ports: [
+                                  {
+                                    ...(draftSpec?.ports?.[0] ?? {}),
+                                    targetPort:
+                                      toOptionalNumber(e.target.value) ??
+                                      (e.target.value || undefined),
+                                  },
+                                ],
                               },
-                            )
+                            })
                           }
                           placeholder="8080"
                         />
@@ -2158,7 +2244,7 @@ export default function Canvas() {
                 )}
 
                 {/* ── Section: Routing (Ingress) ──────────── */}
-                {inspectorData.kind === "Ingress" && (
+                {draftKind === "Ingress" && (
                   <div className="inspector-section">
                     <div className="inspector-section__header">
                       <svg
@@ -2176,29 +2262,19 @@ export default function Canvas() {
                         <label className="inspector-field__label">Host</label>
                         <input
                           className="inspector-field__input"
-                          value={
-                            (selectedNode.data.resource.spec as any)?.rules?.[0]
-                              ?.host ?? ""
-                          }
+                          value={String(draftSpec?.rules?.[0]?.host ?? "")}
                           onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                spec: {
-                                  ...(selectedNode.data.resource.spec as any),
-                                  rules: [
-                                    {
-                                      ...((
-                                        selectedNode.data.resource.spec as any
-                                      )?.rules?.[0] ?? {}),
-                                      host: e.target.value,
-                                    },
-                                  ],
-                                },
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                rules: [
+                                  {
+                                    ...(draftSpec?.rules?.[0] ?? {}),
+                                    host: e.target.value,
+                                  },
+                                ],
                               },
-                            )
+                            })
                           }
                           placeholder="my-app.example.com"
                         />
@@ -2207,43 +2283,30 @@ export default function Canvas() {
                         <label className="inspector-field__label">Path</label>
                         <input
                           className="inspector-field__input"
-                          value={
-                            (selectedNode.data.resource.spec as any)?.rules?.[0]
-                              ?.http?.paths?.[0]?.path ?? ""
-                          }
+                          value={String(
+                            draftSpec?.rules?.[0]?.http?.paths?.[0]?.path ?? "",
+                          )}
                           onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                spec: {
-                                  ...(selectedNode.data.resource.spec as any),
-                                  rules: [
-                                    {
-                                      ...((
-                                        selectedNode.data.resource.spec as any
-                                      )?.rules?.[0] ?? {}),
-                                      http: {
-                                        ...((
-                                          selectedNode.data.resource.spec as any
-                                        )?.rules?.[0]?.http ?? {}),
-                                        paths: [
-                                          {
-                                            ...((
-                                              selectedNode.data.resource
-                                                .spec as any
-                                            )?.rules?.[0]?.http?.paths?.[0] ??
-                                              {}),
-                                            path: e.target.value,
-                                          },
-                                        ],
-                                      },
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                rules: [
+                                  {
+                                    ...(draftSpec?.rules?.[0] ?? {}),
+                                    http: {
+                                      ...(draftSpec?.rules?.[0]?.http ?? {}),
+                                      paths: [
+                                        {
+                                          ...(draftSpec?.rules?.[0]?.http
+                                            ?.paths?.[0] ?? {}),
+                                          path: e.target.value,
+                                        },
+                                      ],
                                     },
-                                  ],
-                                },
+                                  },
+                                ],
                               },
-                            )
+                            })
                           }
                           placeholder="/"
                         />
@@ -2255,61 +2318,44 @@ export default function Canvas() {
                         <select
                           className="inspector-field__input inspector-field__input--select"
                           value={
-                            ((selectedNode.data.resource.spec as any)
-                              ?.rules?.[0]?.http?.paths?.[0]?.backend?.service
-                              ?.name as string | undefined) ?? ""
+                            (draftSpec?.rules?.[0]?.http?.paths?.[0]?.backend
+                              ?.service?.name as string | undefined) ?? ""
                           }
                           onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                spec: {
-                                  ...(selectedNode.data.resource.spec as any),
-                                  rules: [
-                                    {
-                                      ...((
-                                        selectedNode.data.resource.spec as any
-                                      )?.rules?.[0] ?? {}),
-                                      http: {
-                                        ...((
-                                          selectedNode.data.resource.spec as any
-                                        )?.rules?.[0]?.http ?? {}),
-                                        paths: [
-                                          {
-                                            ...((
-                                              selectedNode.data.resource
-                                                .spec as any
-                                            )?.rules?.[0]?.http?.paths?.[0] ??
-                                              {}),
-                                            backend: e.target.value
-                                              ? {
-                                                  service: {
-                                                    name: e.target.value,
-                                                    port: {
-                                                      number: Number(
-                                                        (
-                                                          selectedNode.data
-                                                            .resource
-                                                            .spec as any
-                                                        )?.rules?.[0]?.http
-                                                          ?.paths?.[0]?.backend
-                                                          ?.service?.port
-                                                          ?.number ?? 80,
-                                                      ),
-                                                    },
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                rules: [
+                                  {
+                                    ...(draftSpec?.rules?.[0] ?? {}),
+                                    http: {
+                                      ...(draftSpec?.rules?.[0]?.http ?? {}),
+                                      paths: [
+                                        {
+                                          ...(draftSpec?.rules?.[0]?.http
+                                            ?.paths?.[0] ?? {}),
+                                          backend: e.target.value
+                                            ? {
+                                                service: {
+                                                  name: e.target.value,
+                                                  port: {
+                                                    number: Number(
+                                                      draftSpec?.rules?.[0]
+                                                        ?.http?.paths?.[0]
+                                                        ?.backend?.service?.port
+                                                        ?.number ?? 80,
+                                                    ),
                                                   },
-                                                }
-                                              : undefined,
-                                          },
-                                        ],
-                                      },
+                                                },
+                                              }
+                                            : undefined,
+                                        },
+                                      ],
                                     },
-                                  ],
-                                },
+                                  },
+                                ],
                               },
-                            )
+                            })
                           }
                         >
                           <option value="">(no backend)</option>
@@ -2340,7 +2386,7 @@ export default function Canvas() {
                 )}
 
                 {/* ── Section: Autoscaling (HPA) ─────────── */}
-                {!isManaged && inspectorData.kind === "HPA" && (
+                {!isManaged && draftKind === "HPA" && (
                   <div className="inspector-section">
                     <div className="inspector-section__header">
                       <svg
@@ -2361,8 +2407,7 @@ export default function Canvas() {
                           Scale Target
                         </label>
                         {(() => {
-                          const ref = (selectedNode.data.resource.spec as any)
-                            ?.scaleTargetRef as
+                          const ref = draftSpec?.scaleTargetRef as
                             | { kind?: string; name?: string }
                             | undefined;
                           const current =
@@ -2377,24 +2422,18 @@ export default function Canvas() {
                               className="inspector-field__input inspector-field__input--select"
                               value={current}
                               onChange={(e) =>
-                                updateResourceField(
-                                  selectedNode.id,
-                                  selectedNode.data.resource,
-                                  updateNodeResourceFromCanvas,
-                                  {
-                                    spec: {
-                                      ...(selectedNode.data.resource
-                                        .spec as any),
-                                      scaleTargetRef: e.target.value
-                                        ? {
-                                            apiVersion: "apps/v1",
-                                            kind: e.target.value.split("|")[0],
-                                            name: e.target.value.split("|")[1],
-                                          }
-                                        : undefined,
-                                    },
+                                patchDraft({
+                                  spec: {
+                                    ...draftSpec,
+                                    scaleTargetRef: e.target.value
+                                      ? {
+                                          apiVersion: "apps/v1",
+                                          kind: e.target.value.split("|")[0],
+                                          name: e.target.value.split("|")[1],
+                                        }
+                                      : undefined,
                                   },
-                                )
+                                })
                               }
                             >
                               <option value="">(no target)</option>
@@ -2427,22 +2466,14 @@ export default function Canvas() {
                           className="inspector-field__input"
                           type="number"
                           min={1}
-                          value={String(
-                            (selectedNode.data.resource.spec as any)
-                              ?.minReplicas ?? "",
-                          )}
+                          value={String(draftSpec?.minReplicas ?? "")}
                           onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                spec: {
-                                  ...(selectedNode.data.resource.spec as any),
-                                  minReplicas: toOptionalNumber(e.target.value),
-                                },
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                minReplicas: toOptionalNumber(e.target.value),
                               },
-                            )
+                            })
                           }
                           placeholder="1"
                         />
@@ -2455,22 +2486,14 @@ export default function Canvas() {
                           className="inspector-field__input"
                           type="number"
                           min={1}
-                          value={String(
-                            (selectedNode.data.resource.spec as any)
-                              ?.maxReplicas ?? "",
-                          )}
+                          value={String(draftSpec?.maxReplicas ?? "")}
                           onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                spec: {
-                                  ...(selectedNode.data.resource.spec as any),
-                                  maxReplicas: toOptionalNumber(e.target.value),
-                                },
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                maxReplicas: toOptionalNumber(e.target.value),
                               },
-                            )
+                            })
                           }
                           placeholder="10"
                         />
@@ -2485,35 +2508,29 @@ export default function Canvas() {
                           min={1}
                           max={100}
                           value={String(
-                            (selectedNode.data.resource.spec as any)
-                              ?.metrics?.[0]?.resource?.target
+                            draftSpec?.metrics?.[0]?.resource?.target
                               ?.averageUtilization ?? "",
                           )}
                           onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                spec: {
-                                  ...(selectedNode.data.resource.spec as any),
-                                  metrics: [
-                                    {
-                                      type: "Resource",
-                                      resource: {
-                                        name: "cpu",
-                                        target: {
-                                          type: "Utilization",
-                                          averageUtilization: toOptionalNumber(
-                                            e.target.value,
-                                          ),
-                                        },
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                metrics: [
+                                  {
+                                    type: "Resource",
+                                    resource: {
+                                      name: "cpu",
+                                      target: {
+                                        type: "Utilization",
+                                        averageUtilization: toOptionalNumber(
+                                          e.target.value,
+                                        ),
                                       },
                                     },
-                                  ],
-                                },
+                                  },
+                                ],
                               },
-                            )
+                            })
                           }
                           placeholder="70"
                         />
@@ -2523,7 +2540,7 @@ export default function Canvas() {
                 )}
 
                 {/* ── Section: Capacity (PersistentVolume) ── */}
-                {!isManaged && inspectorData.kind === "PersistentVolume" && (
+                {!isManaged && draftKind === "PersistentVolume" && (
                   <div className="inspector-section">
                     <div className="inspector-section__header">
                       <svg
@@ -2544,22 +2561,14 @@ export default function Canvas() {
                         <label className="inspector-field__label">Capacity</label>
                         <input
                           className="inspector-field__input"
-                          value={String(
-                            (selectedNode.data.resource.spec as any)?.capacity
-                              ?.storage ?? "",
-                          )}
+                          value={String(draftSpec?.capacity?.storage ?? "")}
                           onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                spec: {
-                                  ...(selectedNode.data.resource.spec as any),
-                                  capacity: { storage: e.target.value },
-                                },
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                capacity: { storage: e.target.value },
                               },
-                            )
+                            })
                           }
                           placeholder="10Gi"
                         />
@@ -2571,21 +2580,15 @@ export default function Canvas() {
                         <select
                           className="inspector-field__input inspector-field__input--select"
                           value={String(
-                            (selectedNode.data.resource.spec as any)
-                              ?.accessModes?.[0] ?? "ReadWriteOnce",
+                            draftSpec?.accessModes?.[0] ?? "ReadWriteOnce",
                           )}
                           onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                spec: {
-                                  ...(selectedNode.data.resource.spec as any),
-                                  accessModes: [e.target.value],
-                                },
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                accessModes: [e.target.value],
                               },
-                            )
+                            })
                           }
                         >
                           <option>ReadWriteOnce</option>
@@ -2601,21 +2604,15 @@ export default function Canvas() {
                         <select
                           className="inspector-field__input inspector-field__input--select"
                           value={String(
-                            (selectedNode.data.resource.spec as any)
-                              ?.persistentVolumeReclaimPolicy ?? "Retain",
+                            draftSpec?.persistentVolumeReclaimPolicy ?? "Retain",
                           )}
                           onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                spec: {
-                                  ...(selectedNode.data.resource.spec as any),
-                                  persistentVolumeReclaimPolicy: e.target.value,
-                                },
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                persistentVolumeReclaimPolicy: e.target.value,
                               },
-                            )
+                            })
                           }
                         >
                           <option>Retain</option>
@@ -2684,7 +2681,7 @@ export default function Canvas() {
                   )}
 
                 {/* ── Section: Provisioning (StorageClass) ── */}
-                {!isManaged && inspectorData.kind === "StorageClass" && (
+                {!isManaged && draftKind === "StorageClass" && (
                   <div className="inspector-section">
                     <div className="inspector-section__header">
                       <svg
@@ -2708,22 +2705,14 @@ export default function Canvas() {
                         </label>
                         <input
                           className="inspector-field__input"
-                          value={String(
-                            (selectedNode.data.resource.spec as any)
-                              ?.provisioner ?? "",
-                          )}
+                          value={String(draftSpec?.provisioner ?? "")}
                           onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                spec: {
-                                  ...(selectedNode.data.resource.spec as any),
-                                  provisioner: e.target.value,
-                                },
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                provisioner: e.target.value,
                               },
-                            )
+                            })
                           }
                           placeholder="kubernetes.io/no-provisioner"
                         />
@@ -2734,22 +2723,14 @@ export default function Canvas() {
                         </label>
                         <select
                           className="inspector-field__input inspector-field__input--select"
-                          value={String(
-                            (selectedNode.data.resource.spec as any)
-                              ?.reclaimPolicy ?? "",
-                          )}
+                          value={String(draftSpec?.reclaimPolicy ?? "")}
                           onChange={(e) =>
-                            updateResourceField(
-                              selectedNode.id,
-                              selectedNode.data.resource,
-                              updateNodeResourceFromCanvas,
-                              {
-                                spec: {
-                                  ...(selectedNode.data.resource.spec as any),
-                                  reclaimPolicy: e.target.value || undefined,
-                                },
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                reclaimPolicy: e.target.value || undefined,
                               },
-                            )
+                            })
                           }
                         >
                           <option value="">(default: Delete)</option>
@@ -2926,7 +2907,7 @@ export default function Canvas() {
                   )}
                 </div>
 
-                {/* ── Footer: Delete ───────────────────────── */}
+                {/* ── Footer: Validate + Delete ───────────── */}
                 {isManaged ? (
                   <div className="inspector-footer">
                     <span className="inspector-footer__hint">
@@ -2937,22 +2918,53 @@ export default function Canvas() {
                   </div>
                 ) : (
                   <div className="inspector-footer">
-                    <button
-                      type="button"
-                      className="inspector-delete-btn"
-                      onClick={() => deleteNodeFromCanvas(selectedNode.id)}
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
+                    <div className="inspector-footer__actions">
+                      <button
+                        type="button"
+                        className="inspector-validate-btn"
+                        disabled={!dirty}
+                        onClick={handleValidate}
+                        title={
+                          dirty
+                            ? "Apply the pending inspector changes to the resource"
+                            : "No pending changes"
+                        }
                       >
-                        <polyline points="3 6 5 6 21 6" />
-                        <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                      </svg>
-                      Delete Resource
-                    </button>
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                        Validate Changes
+                      </button>
+                      <button
+                        type="button"
+                        className="inspector-delete-btn"
+                        onClick={() => deleteNodeFromCanvas(selectedNode.id)}
+                      >
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                        >
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                        </svg>
+                        Delete Resource
+                      </button>
+                    </div>
+                    {dirty && (
+                      <span className="inspector-footer__hint">
+                        Changes are applied to the resource (and YAML) when you
+                        press Validate Changes.
+                      </span>
+                    )}
                     {nodes.some((n) => n.parentId === selectedNode.id) && (
                       <span className="inspector-footer__hint">
                         Owned resources are deleted with it (K8s cascade).
@@ -2995,56 +3007,26 @@ export default function Canvas() {
 // ─── Name field with validation ─────────────────────────────────────────────
 
 /**
- * Controlled name editor with a local draft: invalid values (empty/duplicate)
- * show an inline error and are never committed to the model, while valid
- * keystrokes commit immediately so the canvas/YAML stay live.
+ * Controlled name editor for the inspector. The value is a local draft owned by
+ * the inspector; nothing is committed until "Validate Changes" is pressed, so
+ * partial input is never round-tripped through the model.
  */
 function NameField({
   value,
-  resetToken,
-  validate,
-  onCommit,
+  error,
+  onChange,
 }: {
   value: string;
-  /** Changes whenever a different resource is selected — resets the draft. */
-  resetToken: string;
-  validate: (candidate: string) => string;
-  onCommit: (name: string) => void;
+  error: string;
+  onChange: (name: string) => void;
 }) {
-  const [draft, setDraft] = useState(value);
-  const [error, setError] = useState("");
-  const [lastToken, setLastToken] = useState(resetToken);
-
-  // Selection switched to another resource — adopt its name (render-time
-  // adjustment; no remount, so typing focus is preserved during renames).
-  if (lastToken !== resetToken) {
-    setLastToken(resetToken);
-    setDraft(value);
-    setError("");
-  }
-
   return (
     <div className="inspector-field">
       <label className="inspector-field__label">Name</label>
       <input
         className={`inspector-field__input ${error ? "inspector-field__input--invalid" : ""}`}
-        value={draft}
-        onChange={(e) => {
-          const next = e.target.value;
-          setDraft(next);
-          const validationError = validate(next);
-          setError(validationError);
-          if (!validationError && next.trim() !== value) {
-            onCommit(next.trim());
-          }
-        }}
-        onBlur={() => {
-          // Revert to the last committed name if the draft is invalid
-          if (error) {
-            setDraft(value);
-            setError("");
-          }
-        }}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
         placeholder="resource-name"
       />
       {error && <span className="inspector-field__error">{error}</span>}
@@ -3132,29 +3114,27 @@ function parseKeyValueString(
   return Object.keys(obj).length ? obj : undefined;
 }
 
+/** Empty string = valid; otherwise the first malformed key=value entry. */
+function keyValueError(value: string): string {
+  const tokens = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  for (const token of tokens) {
+    const eq = token.indexOf("=");
+    if (eq <= 0) {
+      return `Invalid entry “${token}” — use key=value pairs separated by commas.`;
+    }
+    if (!token.slice(0, eq).trim()) {
+      return `Invalid entry “${token}” — the key can't be empty.`;
+    }
+  }
+  return "";
+}
+
 function toKeyValueString(value: Record<string, string> | undefined): string {
   if (!value) return "";
   return Object.entries(value)
     .map(([k, v]) => `${k}=${v}`)
     .join(",");
-}
-
-function updateResourceField(
-  nodeId: string,
-  resource: K8sResource,
-  updateFn: (nodeId: string, resource: K8sResource) => void,
-  patch: Partial<K8sResource>,
-) {
-  updateFn(nodeId, {
-    ...resource,
-    ...patch,
-    metadata: {
-      ...(resource.metadata ?? {}),
-      ...(patch.metadata ?? {}),
-    },
-    spec: {
-      ...(resource.spec as Record<string, unknown> | undefined),
-      ...(patch.spec as Record<string, unknown> | undefined),
-    },
-  });
 }

@@ -1369,8 +1369,51 @@ body,
   background: var(--bg-secondary);
 }
 
+.inspector-footer__actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.inspector-validate-btn {
+  flex: 1;
+  background: rgba(16, 185, 129, 0.05);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.18);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-family: 'Inter', sans-serif;
+}
+
+.inspector-validate-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.inspector-validate-btn:hover:not(:disabled) {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.35);
+  color: #10b981;
+}
+
+.inspector-validate-btn:disabled {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-muted);
+  border-color: var(--border-muted);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .inspector-delete-btn {
-  width: 100%;
+  flex: 1;
   background: rgba(239, 68, 68, 0.05);
   color: #f87171;
   border: 1px solid rgba(239, 68, 68, 0.18);

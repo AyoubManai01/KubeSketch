@@ -30,6 +30,8 @@ const PV_WIDTH = 175;
 const PV_HEIGHT = 124;
 const STORAGECLASS_WIDTH = 185;
 const STORAGECLASS_HEIGHT = 124;
+const SECRET_WIDTH = 180;
+const SECRET_HEIGHT = 104; // fits header + data rows without overflowing the leaf box
 const RS_HEADER_HEIGHT = 45;
 const DEP_HEADER_HEIGHT = 45;
 
@@ -249,7 +251,11 @@ function getSavedPosition(kind: string, name: string): { x: number; y: number } 
  *    they reference — storage is explicit-only, no controller simulation.
  * 8. PVs are placed in a lane below PVCs (Y = 1000) and StorageClasses below PVs
  *    (Y = 1160).
- * 9. Manual layout adjustments are preserved for all top-level elements.
+ * 9. Secrets are placed in a lane below StorageClasses (Y = 1320). They receive
+ *    inferred "uses" edges from every workload whose Pod spec references them
+ *    (envFrom/secretKeyRef/volumes) and a "tls" edge from every Ingress whose
+ *    spec.tls[].secretName points at them.
+ * 10. Manual layout adjustments are preserved for all top-level elements.
  *
  * Invariants:
  * - Every Pod belongs to at most one ReplicaSet, every ReplicaSet to at most one Deployment
@@ -282,6 +288,7 @@ export function buildGraph(
     const pvcs = resources.filter((r) => r.kind === 'PersistentVolumeClaim');
     const pvs = resources.filter((r) => r.kind === 'PersistentVolume');
     const storageClasses = resources.filter((r) => r.kind === 'StorageClass');
+    const secrets = resources.filter((r) => r.kind === 'Secret');
 
     // Ownership assignment: each ReplicaSet is claimed by at most ONE Deployment,
     // each Pod by at most ONE ReplicaSet (first match wins). This prevents a resource
@@ -1120,7 +1127,71 @@ export function buildGraph(
         });
     });
 
-    // 9. GENERATE EDGES (Traffic Flow)
+    // 9. LAY OUT SECRETS — secret lane below StorageClasses.
+    const secretLayoutInfo: Array<{ id: string; x: number; width: number; node: K8sResource }> = [];
+    let secretXCursor = 50;
+
+    secrets.forEach((secret) => {
+        const secretId = allocateId(secret);
+        const key = `Secret:${secret.metadata.name}`;
+        const savedPos = getSavedPosition('Secret', secret.metadata.name);
+        const prevPos = prevCoords.get(key);
+
+        let preferredX = 0;
+        if (prevPos) {
+            preferredX = prevPos.x;
+        } else if (savedPos) {
+            preferredX = savedPos.x;
+        } else {
+            preferredX = secretXCursor;
+            secretXCursor += 210;
+        }
+
+        secretLayoutInfo.push({
+            id: secretId,
+            x: preferredX,
+            width: SECRET_WIDTH,
+            node: secret,
+        });
+    });
+
+    const draggedSecretIds = new Set(
+        secretLayoutInfo
+            .filter(
+                ({ node }) =>
+                    prevCoords.has(`Secret:${node.metadata.name}`) ||
+                    getSavedPosition('Secret', node.metadata.name)
+            )
+            .map(({ id }) => id)
+    );
+
+    resolveCollisions(secretLayoutInfo, draggedSecretIds, 24);
+
+    secretLayoutInfo.forEach((secretInfo) => {
+        const key = `Secret:${secretInfo.node.metadata.name}`;
+        const prevPos = prevCoords.get(key);
+        const savedPos = getSavedPosition('Secret', secretInfo.node.metadata.name);
+        const yCoord = prevPos?.y ?? savedPos?.y ?? 1320;
+
+        const pos = { x: secretInfo.x, y: yCoord };
+        absCoords.set(secretInfo.id, pos);
+
+        nodes.push({
+            id: secretInfo.id,
+            type: 'k8sNode',
+            position: pos,
+            style: { width: SECRET_WIDTH, height: SECRET_HEIGHT },
+            data: {
+                kind: 'Secret',
+                name: secretInfo.node.metadata.name,
+                namespace: secretInfo.node.metadata.namespace,
+                resource: secretInfo.node,
+            },
+            draggable: true,
+        });
+    });
+
+    // 10. GENERATE EDGES (Traffic Flow)
     const edges: Edge[] = [];
     const byId = new Map<string, Node<K8sNodeData>>();
     nodes.forEach((n) => byId.set(n.id, n));
@@ -1251,6 +1322,39 @@ export function buildGraph(
         });
     });
 
+    // Secret → "uses": every workload (real Deployment/ReplicaSet/Pod) whose Pod
+    // spec references a Secret (envFrom[].secretRef, env[].valueFrom.secretKeyRef
+    // or volumes[].secret) draws an edge to it.
+    const secretIdByName = new Map<string, string>();
+    nodes.forEach((n) => {
+        if (n.data.kind === 'Secret' && !secretIdByName.has(n.data.name)) {
+            secretIdByName.set(n.data.name, n.id);
+        }
+    });
+
+    resources.forEach((workload) => {
+        if (workload.kind !== 'Deployment' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod') {
+            return;
+        }
+        const workloadId = idByResource.get(workload);
+        if (!workloadId) return;
+        getSecretRefs(workload).forEach((secretName) => {
+            const secretId = secretIdByName.get(secretName);
+            if (secretId) addEdge(workloadId, secretId, 'uses');
+        });
+    });
+
+    // Ingress → Secret "tls": every Ingress whose spec.tls[].secretName points at
+    // a Secret on the canvas draws a TLS termination edge to it.
+    ingresses.forEach((ing) => {
+        const ingId = idByResource.get(ing);
+        if (!ingId) return;
+        getIngressTlsSecretNames(ing).forEach((secretName) => {
+            const secretId = secretIdByName.get(secretName);
+            if (secretId) addEdge(ingId, secretId, 'tls');
+        });
+    });
+
     // PersistentVolumeClaim → "mounts": every workload (real Deployment/ReplicaSet/Pod)
     // whose Pod spec declares spec.volumes[].persistentVolumeClaim draws an edge to the
     // claim. A PVC binds to exactly one target — a PV via spec.volumeName, or a
@@ -1324,6 +1428,8 @@ function edgeColorForPair(sourceKind: string, targetKind: string): string {
     if (targetKind === 'PersistentVolume') return '#84cc16';
     if (targetKind === 'StorageClass') return '#6366f1';
     if (targetKind === 'ConfigMap') return '#06b6d4';
+    if (targetKind === 'Secret' && sourceKind === 'Ingress') return '#eab308';
+    if (targetKind === 'Secret') return '#dc2626';
     return edgeColorFor(sourceKind);
 }
 
@@ -1440,6 +1546,24 @@ export function getIngressServiceNames(resource: K8sResource): string[] {
             const name = path.backend?.service?.name;
             if (name) names.push(name);
         });
+    });
+    return names;
+}
+
+/** The Secret names an Ingress terminates TLS with (from spec.tls[].secretName). */
+export function getIngressTlsSecretNames(resource: K8sResource): string[] {
+    const spec = resource.spec as
+        | { tls?: Array<{ secretName?: string; hosts?: string[] }> }
+        | undefined;
+
+    const names: string[] = [];
+    const seen = new Set<string>();
+    spec?.tls?.forEach((tls) => {
+        const name = tls?.secretName;
+        if (typeof name === 'string' && name && !seen.has(name)) {
+            seen.add(name);
+            names.push(name);
+        }
     });
     return names;
 }
@@ -1661,4 +1785,118 @@ export function getConfigMapRefDetails(resource: K8sResource): Array<{
         });
     }
     return entries;
+}
+
+/**
+ * The Secret names a resource references through its Pod spec: `envFrom[].secretRef`,
+ * `env[].valueFrom.secretKeyRef` and `volumes[].secret.secretName`. Workloads
+ * (Deployment/ReplicaSet) carry these under `spec.template.spec`; Pods use `spec`
+ * directly. Returns unique names in document order.
+ */
+export function getSecretRefs(resource: K8sResource): string[] {
+    const spec = resource.spec as
+        | { template?: { spec?: Record<string, unknown> }; [key: string]: unknown }
+        | undefined;
+    const podSpec =
+        (resource.kind === 'Deployment' || resource.kind === 'ReplicaSet')
+            ? (spec?.template?.spec as Record<string, any> | undefined)
+            : (spec as Record<string, any> | undefined);
+    if (!podSpec) return [];
+
+    const names = new Set<string>();
+    const containers: any[] = [
+        ...(Array.isArray(podSpec.containers) ? podSpec.containers : []),
+        ...(Array.isArray(podSpec.initContainers) ? podSpec.initContainers : []),
+    ];
+
+    containers.forEach((container) => {
+        if (!container || typeof container !== 'object') return;
+        if (Array.isArray(container.envFrom)) {
+            container.envFrom.forEach((envFrom: any) => {
+                const name = envFrom?.secretRef?.name;
+                if (typeof name === 'string') names.add(name);
+            });
+        }
+        if (Array.isArray(container.env)) {
+            container.env.forEach((env: any) => {
+                const name = env?.valueFrom?.secretKeyRef?.name;
+                if (typeof name === 'string') names.add(name);
+            });
+        }
+    });
+
+    if (Array.isArray(podSpec.volumes)) {
+        podSpec.volumes.forEach((volume: any) => {
+            const name = volume?.secret?.secretName;
+            if (typeof name === 'string') names.add(name);
+        });
+    }
+
+    return [...names];
+}
+
+/**
+ * How a resource consumes each Secret it references, for inspector display:
+ * `envFrom` (inject all keys), `envKey` (single key via secretKeyRef, with the
+ * key), `volumes` (mounted as a volume). One entry per mechanism per Secret.
+ */
+export function getSecretRefDetails(resource: K8sResource): Array<{
+    name: string;
+    mechanism: 'envFrom' | 'envKey' | 'volumes';
+    key?: string;
+}> {
+    const spec = resource.spec as
+        | { template?: { spec?: Record<string, unknown> }; [key: string]: unknown }
+        | undefined;
+    const podSpec =
+        resource.kind === 'Deployment' || resource.kind === 'ReplicaSet'
+            ? (spec?.template?.spec as Record<string, any> | undefined)
+            : (spec as Record<string, any> | undefined);
+    if (!podSpec) return [];
+
+    const entries: Array<{ name: string; mechanism: 'envFrom' | 'envKey' | 'volumes'; key?: string }> = [];
+    const seen = new Set<string>();
+    const push = (name: string, mechanism: 'envFrom' | 'envKey' | 'volumes', key?: string) => {
+        const id = `${name}:${mechanism}:${key ?? ''}`;
+        if (seen.has(id)) return;
+        seen.add(id);
+        entries.push({ name, mechanism, ...(key ? { key } : {}) });
+    };
+
+    const containers: any[] = [
+        ...(Array.isArray(podSpec.containers) ? podSpec.containers : []),
+        ...(Array.isArray(podSpec.initContainers) ? podSpec.initContainers : []),
+    ];
+    containers.forEach((container) => {
+        if (!container || typeof container !== 'object') return;
+        if (Array.isArray(container.envFrom)) {
+            container.envFrom.forEach((envFrom: any) => {
+                const name = envFrom?.secretRef?.name;
+                if (typeof name === 'string') push(name, 'envFrom');
+            });
+        }
+        if (Array.isArray(container.env)) {
+            container.env.forEach((env: any) => {
+                const ref = env?.valueFrom?.secretKeyRef;
+                if (typeof ref?.name === 'string') push(ref.name, 'envKey', ref.key);
+            });
+        }
+    });
+    if (Array.isArray(podSpec.volumes)) {
+        podSpec.volumes.forEach((volume: any) => {
+            const name = volume?.secret?.secretName;
+            if (typeof name === 'string') push(name, 'volumes');
+        });
+    }
+    return entries;
+}
+
+/** All real workloads/Pods that reference the given Secret by name (via getSecretRefs). */
+export function getResourcesUsingSecret(resources: K8sResource[], secretName: string): K8sResource[] {
+    return resources.filter(
+        (r) =>
+            r.kind === 'Deployment' ||
+            r.kind === 'ReplicaSet' ||
+            r.kind === 'Pod'
+    ).filter((r) => getSecretRefs(r).includes(secretName));
 }

@@ -789,7 +789,9 @@ body,
 .canvas-legend__item--cm::before,
 .canvas-legend__item--pvc::before,
 .canvas-legend__item--pv::before,
-.canvas-legend__item--sc::before {
+.canvas-legend__item--sc::before,
+.canvas-legend__item--secret::before,
+.canvas-legend__item--tls::before {
   width: 14px;
   height: 2px;
   border-radius: 2px;
@@ -801,6 +803,8 @@ body,
 .canvas-legend__item--pvc::before { background: #ec4899; }
 .canvas-legend__item--pv::before { background: #84cc16; }
 .canvas-legend__item--sc::before { background: #6366f1; }
+.canvas-legend__item--secret::before { background: #dc2626; }
+.canvas-legend__item--tls::before { background: #eab308; }
 
 /* Managed (controller-created) resources: dashed box */
 .canvas-legend__item--auto::before {
@@ -1695,6 +1699,12 @@ body,
   background-position: right 9px center;
   padding-right: 26px;
   cursor: pointer;
+}
+
+.modal-field__textarea {
+  min-height: 64px;
+  resize: vertical;
+  line-height: 1.45;
 }
 
 .modal-footer {

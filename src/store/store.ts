@@ -14,7 +14,10 @@ import {
     explainInvalidLink,
     linkConfigMapToWorkload,
     linkPvcToPod,
+    linkSecretToWorkload,
+    linkIngressToSecret,
     type ConfigMapMechanism,
+    type SecretMechanism,
 } from '../utils/linkResources';
 import type { SupportedKind, K8sResource } from '../types/types';
 
@@ -25,7 +28,7 @@ const POSITIONS_KEY = 'veltra_node_positions';
 /** Default YAML shown when the app first loads */
 export const DEFAULT_YAML = `# Paste your Kubernetes YAML here (multi-document with ---)
 # Recognized resources: Deployment, Service, Ingress, ReplicaSet, Pod, HPA,
-# ConfigMap, PersistentVolumeClaim, PersistentVolume, StorageClass
+# ConfigMap, PersistentVolumeClaim, PersistentVolume, StorageClass, Secret
 #
 # Like a real cluster, Veltra materializes a Deployment's ReplicaSet and
 # Pods on the canvas automatically — you only declare the Deployment.
@@ -129,6 +132,40 @@ export interface ConfigMapLinkPayload {
 }
 
 /**
+ * A Secret → workload canvas drag waiting for the user to pick the consumption
+ * mechanism (envFrom / volumes / env-key) in the post-drag prompt. Both resources
+ * are REAL (synthetic targets are resolved to their owner before this is set).
+ */
+export interface PendingSecretLink {
+    secret: { name: string };
+    target: { kind: 'Pod' | 'Deployment' | 'ReplicaSet'; name: string };
+}
+
+/** Target + mechanism for writing a Secret reference (create-modal path). */
+export interface SecretLinkPayload {
+    targetKind: 'Pod' | 'Deployment' | 'ReplicaSet';
+    targetName: string;
+    mechanism: SecretMechanism;
+    key?: string;
+    volumeName?: string;
+}
+
+/**
+ * An Ingress → Secret canvas drag waiting for the user to confirm the TLS hosts
+ * in the post-drag prompt. Both resources are REAL.
+ */
+export interface PendingIngressTlsLink {
+    ingress: { name: string };
+    secret: { name: string };
+}
+
+/** TLS hosts + Secret for a newly created Ingress (create-modal path). */
+export interface IngressTlsPayload {
+    secretName: string;
+    hosts: string[];
+}
+
+/**
  * A PVC → Pod canvas drag waiting for the user to pick the volume name in the
  * post-drag prompt. Both resources are REAL (synthetic targets resolve to their
  * owner first — which for a PVC means the drag gets rejected as workload-only,
@@ -196,6 +233,12 @@ interface VeltraState {
     /** A PVC→Pod drag awaiting the volume name in the post-drag prompt. */
     pendingPvcLink: PendingPvcLink | null;
 
+    /** A Secret→workload drag awaiting the mechanism choice in the post-drag prompt. */
+    pendingSecretLink: PendingSecretLink | null;
+
+    /** An Ingress→Secret drag awaiting the TLS hosts in the post-drag prompt. */
+    pendingIngressTlsLink: PendingIngressTlsLink | null;
+
     setNotice: (notice: CanvasNotice | null) => void;
     setYaml: (value: string) => void;
     setBidirectionalSync: (enabled: boolean) => void;
@@ -218,7 +261,7 @@ interface VeltraState {
     addConfiguredNode: (
         kind: SupportedKind,
         resource: K8sResource,
-        link?: ConfigMapLinkPayload | PvcLinkPayload
+        link?: ConfigMapLinkPayload | PvcLinkPayload | SecretLinkPayload | IngressTlsPayload
     ) => void;
     /** Surface the mechanism prompt after a ConfigMap→workload drag (or dismiss it). */
     setPendingConfigMapLink: (link: PendingConfigMapLink | null) => void;
@@ -230,6 +273,16 @@ interface VeltraState {
     /** Commit the pending PVC→Pod link with the chosen volume name. */
     confirmPvcLink: (volumeName: string) => void;
     cancelPvcLink: () => void;
+    /** Surface the mechanism prompt after a Secret→workload drag (or dismiss it). */
+    setPendingSecretLink: (link: PendingSecretLink | null) => void;
+    /** Commit the pending Secret link with the chosen mechanism (and optional key/volume name). */
+    confirmSecretLink: (mechanism: SecretMechanism, key?: string, volumeName?: string) => void;
+    cancelSecretLink: () => void;
+    /** Surface the hosts prompt after an Ingress→Secret drag (or dismiss it). */
+    setPendingIngressTlsLink: (link: PendingIngressTlsLink | null) => void;
+    /** Commit the pending Ingress TLS link with the chosen hosts. */
+    confirmIngressTlsLink: (hosts: string[]) => void;
+    cancelIngressTlsLink: () => void;
     /** Discard manual positions and re-run automatic layout. */
     resetLayout: () => void;
     /** Clear the manifest, canvas, manual edges and saved layout. */
@@ -332,6 +385,8 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         hpaOverrides: initialHpaOverrides,
         pendingConfigMapLink: null,
         pendingPvcLink: null,
+        pendingSecretLink: null,
+        pendingIngressTlsLink: null,
 
         setNotice: (notice) => set({ notice }),
 
@@ -475,6 +530,9 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 }
                 if (node.data.kind === 'ConfigMap' && kind === 'ConfigMap' && name !== node.data.name) {
                     updatedNodes = renameConfigMapReferences(updatedNodes, node.data.name, name);
+                }
+                if (node.data.kind === 'Secret' && kind === 'Secret' && name !== node.data.name) {
+                    updatedNodes = renameSecretReferences(updatedNodes, node.data.name, name);
                 }
                 if (
                     node.data.kind === 'PersistentVolumeClaim' &&
@@ -693,6 +751,44 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     };
                 }
 
+                // Secret ↔ workload/Pod: a valid semantic link, but the user must pick
+                // the consumption mechanism (envFrom / volumes / env-key) first —
+                // surface the post-drag prompt instead of committing immediately.
+                const isSecretTarget = (kind: string) =>
+                    kind === 'Pod' || kind === 'Deployment' || kind === 'ReplicaSet';
+                if (
+                    (sourceNode.data.kind === 'Secret' && isSecretTarget(targetNode.data.kind)) ||
+                    (targetNode.data.kind === 'Secret' && isSecretTarget(sourceNode.data.kind))
+                ) {
+                    const secret = sourceNode.data.kind === 'Secret' ? sourceNode : targetNode;
+                    const workload = sourceNode.data.kind === 'Secret' ? targetNode : sourceNode;
+                    return {
+                        pendingSecretLink: {
+                            secret: { name: secret.data.name },
+                            target: {
+                                kind: workload.data.kind as 'Pod' | 'Deployment' | 'ReplicaSet',
+                                name: workload.data.name,
+                            },
+                        },
+                    };
+                }
+
+                // Ingress ↔ Secret: a valid TLS link, but the user picks the hosts in
+                // the post-drag prompt before committing.
+                if (
+                    (sourceNode.data.kind === 'Ingress' && targetNode.data.kind === 'Secret') ||
+                    (targetNode.data.kind === 'Ingress' && sourceNode.data.kind === 'Secret')
+                ) {
+                    const ingress = sourceNode.data.kind === 'Ingress' ? sourceNode : targetNode;
+                    const secret = sourceNode.data.kind === 'Secret' ? sourceNode : targetNode;
+                    return {
+                        pendingIngressTlsLink: {
+                            ingress: { name: ingress.data.name },
+                            secret: { name: secret.data.name },
+                        },
+                    };
+                }
+
                 // Express the link semantically in the K8s model (selector/labels/backend).
                 // toResources drops synthetic nodes, so indices align with realNodes.
                 const resources = toResources(state.nodes);
@@ -786,10 +882,70 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 };
             }),
 
+        setPendingSecretLink: (link) => set({ pendingSecretLink: link }),
+
+        cancelSecretLink: () => set({ pendingSecretLink: null }),
+
+        confirmSecretLink: (mechanism, key, volumeName) =>
+            set((state) => {
+                const pending = state.pendingSecretLink;
+                if (!pending) return {};
+                const resources = toResources(state.nodes);
+                const secretIdx = resources.findIndex(
+                    (r) => r.kind === 'Secret' && r.metadata.name === pending.secret.name
+                );
+                const targetIdx = resources.findIndex(
+                    (r) =>
+                        r.kind === pending.target.kind && r.metadata.name === pending.target.name
+                );
+                if (secretIdx < 0 || targetIdx < 0) {
+                    return { pendingSecretLink: null };
+                }
+                const linked = linkSecretToWorkload(
+                    resources,
+                    secretIdx,
+                    targetIdx,
+                    mechanism,
+                    key,
+                    volumeName
+                );
+                return {
+                    ...commitResources(state, linked.resources, state.nodes),
+                    pendingSecretLink: null,
+                    notice: makeNotice('success', linked.description),
+                };
+            }),
+
+        setPendingIngressTlsLink: (link) => set({ pendingIngressTlsLink: link }),
+
+        cancelIngressTlsLink: () => set({ pendingIngressTlsLink: null }),
+
+        confirmIngressTlsLink: (hosts) =>
+            set((state) => {
+                const pending = state.pendingIngressTlsLink;
+                if (!pending) return {};
+                const resources = toResources(state.nodes);
+                const ingressIdx = resources.findIndex(
+                    (r) => r.kind === 'Ingress' && r.metadata.name === pending.ingress.name
+                );
+                const secretIdx = resources.findIndex(
+                    (r) => r.kind === 'Secret' && r.metadata.name === pending.secret.name
+                );
+                if (ingressIdx < 0 || secretIdx < 0) {
+                    return { pendingIngressTlsLink: null };
+                }
+                const linked = linkIngressToSecret(resources, ingressIdx, secretIdx, hosts);
+                return {
+                    ...commitResources(state, linked.resources, state.nodes),
+                    pendingIngressTlsLink: null,
+                    notice: makeNotice('success', linked.description),
+                };
+            }),
+
         addConfiguredNode: (
             kind: SupportedKind,
             resource: K8sResource,
-            link?: ConfigMapLinkPayload | PvcLinkPayload
+            link?: ConfigMapLinkPayload | PvcLinkPayload | SecretLinkPayload | IngressTlsPayload
         ) =>
             set((state) => {
                 const name = resource.metadata?.name?.trim();
@@ -803,20 +959,46 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 // Create-modal ConfigMap link: also write the reference into the target
                 // resource's Pod spec in the same commit (synthetic targets are already
                 // resolved to their real owner by the modal).
-                if (link && 'targetKind' in link) {
-                    const cmIdx = newIdx;
-                    const targetIdx = resources.findIndex(
-                        (r) => r.kind === link.targetKind && r.metadata.name === link.targetName
-                    );
-                    if (targetIdx >= 0) {
-                        resources = linkConfigMapToWorkload(
-                            resources,
-                            cmIdx,
-                            targetIdx,
-                            link.mechanism,
-                            link.key
-                        ).resources;
+                if (link && 'targetKind' in link && 'mechanism' in link) {
+                    if (link.mechanism === 'envFrom' || link.mechanism === 'volumes' || link.mechanism === 'envKey') {
+                        if (kind === 'ConfigMap') {
+                            const cmIdx = newIdx;
+                            const targetIdx = resources.findIndex(
+                                (r) => r.kind === link.targetKind && r.metadata.name === link.targetName
+                            );
+                            if (targetIdx >= 0) {
+                                resources = linkConfigMapToWorkload(
+                                    resources,
+                                    cmIdx,
+                                    targetIdx,
+                                    link.mechanism,
+                                    link.key
+                                ).resources;
+                            }
+                        } else if (kind === 'Secret') {
+                            const secretIdx = newIdx;
+                            const targetIdx = resources.findIndex(
+                                (r) => r.kind === link.targetKind && r.metadata.name === link.targetName
+                            );
+                            if (targetIdx >= 0) {
+                                resources = linkSecretToWorkload(
+                                    resources,
+                                    secretIdx,
+                                    targetIdx,
+                                    link.mechanism,
+                                    link.key,
+                                    'volumeName' in link ? link.volumeName : undefined
+                                ).resources;
+                            }
+                        }
                     }
+                }
+                // Create-modal Ingress TLS: write spec.tls[] directly on the new Ingress.
+                if (link && 'secretName' in link) {
+                    const ingressSpec = (resources[newIdx].spec ?? {}) as Record<string, any>;
+                    const tls: any[] = Array.isArray(ingressSpec.tls) ? ingressSpec.tls : [];
+                    tls.push({ secretName: link.secretName, hosts: link.hosts });
+                    ingressSpec.tls = tls;
                 }
                 // Create-modal PVC links: mount the claim into a standalone Pod
                 // (volume name prompt) and bind it to exactly one PV or StorageClass.
@@ -885,6 +1067,8 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 hpaOverrides: [],
                 pendingConfigMapLink: null,
                 pendingPvcLink: null,
+                pendingSecretLink: null,
+                pendingIngressTlsLink: null,
                 canvasDirtyWhilePaused: false,
             });
         },
@@ -951,6 +1135,7 @@ export function apiVersionForKind(kind: SupportedKind): string {
     if (kind === 'Ingress') return 'networking.k8s.io/v1';
     if (kind === 'HPA') return 'autoscaling/v2';
     if (kind === 'StorageClass') return 'storage.k8s.io/v1';
+    if (kind === 'Secret') return 'v1';
     return 'v1';
 }
 
@@ -1075,6 +1260,93 @@ function rewriteConfigMapNames(podSpec: Record<string, any>, oldName: string, ne
     });
     (Array.isArray(podSpec.volumes) ? podSpec.volumes : []).forEach((volume: any) => {
         if (volume?.configMap?.name === oldName) volume.configMap.name = newName;
+    });
+}
+
+/**
+ * Rewrite Secret references when a Secret is renamed: Pod-spec references
+ * (envFrom[].secretRef, env[].valueFrom.secretKeyRef, volumes[].secret.secretName)
+ * and Ingress spec.tls[].secretName.
+ */
+function renameSecretReferences(
+    nodes: Node<K8sNodeData>[],
+    oldName: string,
+    newName: string
+): Node<K8sNodeData>[] {
+    return nodes.map((n) => {
+        if (n.data.kind === 'Ingress') {
+            const spec = n.data.resource.spec as
+                | { tls?: Array<{ secretName?: string }> }
+                | undefined;
+            if (!spec?.tls?.some((tls) => tls?.secretName === oldName)) return n;
+            const resource = structuredClone(n.data.resource);
+            const clonedSpec = resource.spec as { tls?: Array<{ secretName?: string }> };
+            (Array.isArray(clonedSpec.tls) ? clonedSpec.tls : []).forEach((tls) => {
+                if (tls?.secretName === oldName) tls.secretName = newName;
+            });
+            return { ...n, data: { ...n.data, resource } };
+        }
+        if (n.data.kind !== 'Deployment' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod') {
+            return n;
+        }
+        const spec = n.data.resource.spec as Record<string, any> | undefined;
+        const podSpec =
+            n.data.kind === 'Pod' ? spec : (spec?.template?.spec as Record<string, any> | undefined);
+        if (!podSpec || !referencesSecret(podSpec, oldName)) return n;
+
+        const resource = structuredClone(n.data.resource);
+        const clonedSpec = resource.spec as Record<string, any>;
+        const clonedPodSpec =
+            n.data.kind === 'Pod' ? clonedSpec : (clonedSpec.template?.spec as Record<string, any>);
+        rewriteSecretNames(clonedPodSpec, oldName, newName);
+        return { ...n, data: { ...n.data, resource } };
+    });
+}
+
+/** True when a Pod spec references the given Secret by name anywhere. */
+function referencesSecret(podSpec: Record<string, any>, name: string): boolean {
+    return secretRefNames(podSpec).includes(name);
+}
+
+/** All Secret names a Pod spec references (envFrom, env.valueFrom, volumes). */
+function secretRefNames(podSpec: Record<string, any>): string[] {
+    const names: string[] = [];
+    const containers: any[] = [
+        ...(Array.isArray(podSpec.containers) ? podSpec.containers : []),
+        ...(Array.isArray(podSpec.initContainers) ? podSpec.initContainers : []),
+    ];
+    containers.forEach((container) => {
+        (Array.isArray(container?.envFrom) ? container.envFrom : []).forEach((envFrom: any) => {
+            if (envFrom?.secretRef?.name) names.push(envFrom.secretRef.name);
+        });
+        (Array.isArray(container?.env) ? container.env : []).forEach((env: any) => {
+            if (env?.valueFrom?.secretKeyRef?.name) names.push(env.valueFrom.secretKeyRef.name);
+        });
+    });
+    (Array.isArray(podSpec.volumes) ? podSpec.volumes : []).forEach((volume: any) => {
+        if (volume?.secret?.secretName) names.push(volume.secret.secretName);
+    });
+    return names;
+}
+
+/** Rewrite every Secret reference inside a Pod spec from oldName to newName. */
+function rewriteSecretNames(podSpec: Record<string, any>, oldName: string, newName: string) {
+    const containers: any[] = [
+        ...(Array.isArray(podSpec.containers) ? podSpec.containers : []),
+        ...(Array.isArray(podSpec.initContainers) ? podSpec.initContainers : []),
+    ];
+    containers.forEach((container) => {
+        (Array.isArray(container.envFrom) ? container.envFrom : []).forEach((envFrom: any) => {
+            if (envFrom?.secretRef?.name === oldName) envFrom.secretRef.name = newName;
+        });
+        (Array.isArray(container.env) ? container.env : []).forEach((env: any) => {
+            if (env?.valueFrom?.secretKeyRef?.name === oldName) {
+                env.valueFrom.secretKeyRef.name = newName;
+            }
+        });
+    });
+    (Array.isArray(podSpec.volumes) ? podSpec.volumes : []).forEach((volume: any) => {
+        if (volume?.secret?.secretName === oldName) volume.secret.secretName = newName;
     });
 }
 

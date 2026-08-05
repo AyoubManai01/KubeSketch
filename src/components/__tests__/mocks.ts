@@ -153,6 +153,7 @@ export function storeMockFactory() {
     return {
         useVeltraStore: (selector: (s: MockStoreState) => unknown) => selector(mockState),
         DEFAULT_YAML: '',
+        apiVersionForKind: (kind: SupportedKind): string => apiVersionFor(kind),
     };
 }
 

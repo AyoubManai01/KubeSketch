@@ -71,6 +71,13 @@ const ICONS: Record<string, React.ReactNode> = {
             <path d="M7 10v4M17 10v4" strokeDasharray="2 2" />
         </svg>
     ),
+    Secret: (
+        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="5" y="11" width="14" height="9" rx="2" />
+            <path d="M8 11V7a4 4 0 018 0v4" />
+            <circle cx="12" cy="15.5" r="1.5" />
+        </svg>
+    ),
 };
 
 const KIND_COLORS: Record<string, string> = {
@@ -84,6 +91,7 @@ const KIND_COLORS: Record<string, string> = {
     PersistentVolumeClaim: '#ec4899', // Pink
     PersistentVolume: '#84cc16',      // Lime
     StorageClass: '#6366f1',          // Indigo
+    Secret: '#dc2626',                // Red
 };
 
 function K8sNodeComponent({ data }: NodeProps) {
@@ -252,6 +260,17 @@ function buildResourceDetails(nodeData: K8sNodeData): DetailPair[] {
         details.push({ key: 'keys', val: String(keys.length) });
         if (keys.length > 0) {
             details.push({ key: 'first', val: keys[0] });
+        }
+    }
+    if (nodeData.kind === 'Secret') {
+        const data = (nodeData.resource?.data ?? {}) as Record<string, unknown>;
+        const keys = Object.keys(data);
+        details.push({ key: 'keys', val: String(keys.length) });
+        if (keys.length > 0) {
+            details.push({ key: 'first', val: keys[0] });
+        }
+        if (nodeData.resource?.type) {
+            details.push({ key: 'type', val: String(nodeData.resource.type) });
         }
     }
     if (nodeData.kind === 'PersistentVolumeClaim') {

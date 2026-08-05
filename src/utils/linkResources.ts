@@ -71,6 +71,11 @@ export function connectResources(
     }
     // PVC ↔ Pod is intercepted by the store (pending volume-name prompt) and never
     // reaches connectResources.
+    // Secret ↔ Pod/Deployment/ReplicaSet is intercepted by the store (pending
+    // mechanism prompt) and never reaches connectResources.
+    if (pair('Ingress', 'Secret')) {
+        return linkIngressToSecret(resources, byKind('Ingress'), byKind('Secret'), []);
+    }
     return null;
 }
 
@@ -114,6 +119,19 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
     if (a === 'ConfigMap' || b === 'ConfigMap') {
         const other = a === 'ConfigMap' ? b : a;
         return `A ConfigMap is consumed by a Pod spec (envFrom, env.valueFrom or volumes), not linked to a ${other} directly.`;
+    }
+    if (a === 'Secret' || b === 'Secret') {
+        const other = a === 'Secret' ? b : a;
+        if (other === 'Service') {
+            return 'A Secret cannot be selected by a Service — Services select Pods by labels, Secrets are consumed by Pod specs or Ingress TLS.';
+        }
+        if (other === 'Ingress') {
+            return 'An Ingress consumes a Secret via spec.tls[].secretName — drag an Ingress onto a Secret to configure TLS.';
+        }
+        if (other === 'HPA') {
+            return 'An HPA scales Deployments/ReplicaSets, not Secrets.';
+        }
+        return `A Secret is consumed by a Pod spec (envFrom, env.valueFrom or volumes) or referenced by Ingress TLS, not linked to a ${other} directly.`;
     }
     if (pair('Ingress', 'Pod')) {
         return 'An Ingress cannot route to a Pod directly — route it to a Service that selects the Pod.';
@@ -348,6 +366,120 @@ export function linkConfigMapToWorkload(
     return {
         resources: next,
         description: `${patched.kind} ${patched.metadata.name} now consumes ${cmName} via ${mechanism}${mechanism === 'envKey' ? ` (key: ${key})` : ''}`,
+    };
+}
+
+/** How a Secret is consumed by a workload's Pod spec. */
+export type SecretMechanism = 'envFrom' | 'volumes' | 'envKey';
+
+/**
+ * Write a Secret reference into a workload (or standalone Pod) so it consumes
+ * the Secret. `envFrom` injects every data key as an env var via `secretRef`,
+ * `volumes` mounts the Secret as files via `volumes[].secret.secretName`
+ * (optionally under a custom volume name), `envKey` injects a single key via
+ * `secretKeyRef` (requires `key`). Workloads (Deployment/ReplicaSet) get the
+ * reference under `spec.template.spec`; Pods use `spec` directly. De-dupes
+ * existing references.
+ */
+export function linkSecretToWorkload(
+    resources: K8sResource[],
+    secretIdx: number,
+    workloadIdx: number,
+    mechanism: SecretMechanism,
+    key?: string,
+    volumeName?: string
+): { resources: K8sResource[]; description: string } {
+    const next = [...resources];
+    const secret = resources[secretIdx];
+    const workload = resources[workloadIdx];
+    const secretName = secret.metadata.name;
+
+    const patched = clone(workload);
+    const spec = (patched.spec ?? {}) as Record<string, any>;
+    let podSpec: Record<string, any>;
+    if (patched.kind === 'Deployment' || patched.kind === 'ReplicaSet') {
+        spec.template = spec.template ?? {};
+        spec.template.spec = spec.template.spec ?? {};
+        podSpec = spec.template.spec;
+    } else {
+        podSpec = spec;
+    }
+
+    podSpec.containers = Array.isArray(podSpec.containers) ? podSpec.containers : [{ name: 'app' }];
+    const container = podSpec.containers[0];
+
+    if (mechanism === 'envFrom') {
+        container.envFrom = Array.isArray(container.envFrom) ? container.envFrom : [];
+        if (!container.envFrom.some((ef: any) => ef?.secretRef?.name === secretName)) {
+            container.envFrom.push({ secretRef: { name: secretName } });
+        }
+    } else if (mechanism === 'volumes') {
+        const volume = volumeName?.trim() || secretName;
+        podSpec.volumes = Array.isArray(podSpec.volumes) ? podSpec.volumes : [];
+        if (!podSpec.volumes.some((v: any) => v?.secret?.secretName === secretName)) {
+            if (!podSpec.volumes.some((v: any) => v?.name === volume)) {
+                podSpec.volumes.push({ name: volume, secret: { secretName } });
+            } else {
+                // Volume name is taken — fall back to a unique name derived from the secret
+                let suffix = 2;
+                while (podSpec.volumes.some((v: any) => v?.name === `${volume}-${suffix}`)) suffix++;
+                podSpec.volumes.push({
+                    name: `${volume}-${suffix}`,
+                    secret: { secretName },
+                });
+            }
+        }
+    } else {
+        const envName = key?.trim() || secretName;
+        container.env = Array.isArray(container.env) ? container.env : [];
+        if (!container.env.some((e: any) => e?.valueFrom?.secretKeyRef?.name === secretName && e.valueFrom.secretKeyRef.key === key)) {
+            container.env.push({
+                name: envName,
+                valueFrom: { secretKeyRef: { name: secretName, key } },
+            });
+        }
+    }
+
+    patched.spec = spec;
+    next[workloadIdx] = patched;
+
+    return {
+        resources: next,
+        description: `${patched.kind} ${patched.metadata.name} now consumes ${secretName} via ${mechanism}${mechanism === 'envKey' ? ` (key: ${key})` : mechanism === 'volumes' && volumeName?.trim() ? ` (volume: ${volumeName.trim()})` : ''}`,
+    };
+}
+
+/**
+ * Terminate TLS on the Ingress with the given Secret: write/merge
+ * `spec.tls[].secretName` (de-duping by secret name and replacing the hosts of
+ * an existing entry). `hosts` is optional — an empty list matches all hosts.
+ */
+export function linkIngressToSecret(
+    resources: K8sResource[],
+    ingressIdx: number,
+    secretIdx: number,
+    hosts: string[]
+): { resources: K8sResource[]; description: string } {
+    const next = [...resources];
+    const secret = resources[secretIdx];
+    const ingress = clone(resources[ingressIdx]);
+    const spec = (ingress.spec ?? {}) as Record<string, any>;
+    const tls: any[] = Array.isArray(spec.tls) ? spec.tls : [];
+
+    const existing = tls.find((entry: any) => entry?.secretName === secret.metadata.name);
+    const cleanHosts = hosts.map((h) => h.trim()).filter(Boolean);
+    if (existing) {
+        existing.hosts = cleanHosts;
+    } else {
+        tls.push({ secretName: secret.metadata.name, hosts: cleanHosts });
+    }
+    spec.tls = tls;
+    ingress.spec = spec;
+    next[ingressIdx] = ingress;
+
+    return {
+        resources: next,
+        description: `Ingress ${ingress.metadata.name} now terminates TLS with Secret ${secret.metadata.name}${cleanHosts.length ? ` on hosts: ${cleanHosts.join(', ')}` : ''}`,
     };
 }
 

@@ -41,6 +41,8 @@ import {
   getStorageClassForPvc,
   getPvcsBoundToPv,
   getPvcsBoundToStorageClass,
+  getSecretRefs,
+  getSecretRefDetails,
   nodeIdFor,
   type K8sNodeData,
 } from "../utils/buildGraph";
@@ -49,6 +51,8 @@ import CreateResourceModal from "./CreateResourceModal";
 import ConfigMapDataEditor from "./ConfigMapDataEditor";
 import ConfigMapLinkModal from "./ConfigMapLinkModal";
 import PvcLinkModal from "./PvcLinkModal";
+import SecretLinkModal from "./SecretLinkModal";
+import IngressTlsLinkModal from "./IngressTlsLinkModal";
 
 /** Register our custom node type so React Flow can render it */
 const nodeTypes: NodeTypes = {
@@ -70,6 +74,7 @@ const KIND_COLORS: Record<string, string> = {
   PersistentVolumeClaim: "#ec4899",
   PersistentVolume: "#84cc16",
   StorageClass: "#6366f1",
+  Secret: "#dc2626",
 };
 
 const KIND_ICONS: Record<string, React.ReactNode> = {
@@ -210,6 +215,20 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
       <rect x="3" y="4" width="18" height="6" rx="2" />
       <rect x="3" y="14" width="18" height="6" rx="2" />
       <path d="M7 10v4M17 10v4" strokeDasharray="2 2" />
+    </svg>
+  ),
+  Secret: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="5" y="11" width="14" height="9" rx="2" />
+      <path d="M8 11V7a4 4 0 018 0v4" />
+      <circle cx="12" cy="15.5" r="1.5" />
     </svg>
   ),
 };
@@ -404,6 +423,42 @@ export default function Canvas() {
       )
       .map((n) => ({ kind: n.data.kind, name: n.data.name }));
   }, [nodes, selectedNode]);
+
+  // Secrets referenced by the selected workload/Pod (from its Pod spec:
+  // envFrom, env.valueFrom, volumes) — read-only projection of the YAML model.
+  const selectedNodeSecrets = useMemo(() => {
+    if (!selectedNode) return [];
+    const kind = selectedNode.data.kind;
+    if (kind !== "Pod" && kind !== "Deployment" && kind !== "ReplicaSet") {
+      return [];
+    }
+    return getSecretRefDetails(selectedNode.data.resource);
+  }, [selectedNode]);
+
+  // Real workloads/Pods that reference the selected Secret by name —
+  // read-only projection, no canvas edges (invariant 6).
+  const secretUsedBy = useMemo(() => {
+    if (!selectedNode || selectedNode.data.kind !== "Secret") return [];
+    return nodes
+      .filter(
+        (n) =>
+          !n.data.synthetic &&
+          (n.data.kind === "Deployment" ||
+            n.data.kind === "ReplicaSet" ||
+            n.data.kind === "Pod") &&
+          getSecretRefs(n.data.resource).includes(selectedNode.data.name),
+      )
+      .map((n) => ({ kind: n.data.kind, name: n.data.name }));
+  }, [nodes, selectedNode]);
+
+  // TLS entries of the selected Ingress (spec.tls[]): secret name + hosts.
+  const ingressTlsEntries = useMemo(() => {
+    if (!selectedNode || selectedNode.data.kind !== "Ingress") return [];
+    const spec = selectedNode.data.resource.spec as
+      | { tls?: Array<{ secretName?: string; hosts?: string[] }> }
+      | undefined;
+    return Array.isArray(spec?.tls) ? spec.tls : [];
+  }, [selectedNode]);
 
   // PVCs referenced by the selected workload/Pod (spec.volumes[].persistentVolumeClaim) —
   // read-only projection of the YAML model.
@@ -941,6 +996,12 @@ export default function Canvas() {
                   </span>
                   <span className="canvas-legend__item canvas-legend__item--sc">
                     StorageClass bind
+                  </span>
+                  <span className="canvas-legend__item canvas-legend__item--secret">
+                    Secret use
+                  </span>
+                  <span className="canvas-legend__item canvas-legend__item--tls">
+                    Ingress TLS
                   </span>
                   <span className="canvas-legend__item canvas-legend__item--auto">
                     auto = managed by controller
@@ -1697,6 +1758,92 @@ export default function Canvas() {
                       </div>
                     </div>
                   )}
+                {/* ── Section: Secrets (workloads/Pods) ── */}
+                {!isManaged &&
+                  (inspectorData.kind === "Pod" ||
+                    inspectorData.kind === "Deployment" ||
+                    inspectorData.kind === "ReplicaSet") &&
+                  selectedNodeSecrets.length > 0 && (
+                    <div className="inspector-section">
+                      <div className="inspector-section__header">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <rect x="5" y="11" width="14" height="9" rx="2" />
+                          <path d="M8 11V7a4 4 0 018 0v4" />
+                          <circle cx="12" cy="15.5" r="1.5" />
+                        </svg>
+                        Secrets
+                        <span className="inspector-section__count">
+                          {selectedNodeSecrets.length}
+                        </span>
+                      </div>
+                      <div className="inspector-section__body">
+                        <div className="inspector-rel-list">
+                          {selectedNodeSecrets.map((ref) => {
+                            const exists = nodes.some(
+                              (n) =>
+                                n.data.kind === "Secret" &&
+                                n.data.name === ref.name,
+                            );
+                            return (
+                              <button
+                                key={`${ref.name}:${ref.mechanism}:${ref.key ?? ""}`}
+                                type="button"
+                                className="inspector-rel-item inspector-rel-item--link"
+                                title={
+                                  exists
+                                    ? `Select Secret ${ref.name}`
+                                    : `Secret ${ref.name} is referenced but not on the canvas`
+                                }
+                                onClick={() =>
+                                  setSelectedResource({
+                                    kind: "Secret",
+                                    name: ref.name,
+                                  })
+                                }
+                              >
+                                <span
+                                  className="inspector-rel-arrow inspector-rel-arrow--outgoing"
+                                  title="referenced"
+                                >
+                                  ▤
+                                </span>
+                                <div className="inspector-rel-info">
+                                  <span className="inspector-rel-kind">
+                                    Secret
+                                  </span>
+                                  <span className="inspector-rel-name">
+                                    {ref.name}
+                                  </span>
+                                </div>
+                                <span className="inspector-rel-badge">
+                                  {ref.mechanism}
+                                  {ref.mechanism === "envKey" && ref.key
+                                    ? `:${ref.key}`
+                                    : ""}
+                                </span>
+                                {!exists && (
+                                  <span className="inspector-rel-badge">
+                                    missing
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <span className="inspector-field__hint">
+                          Referenced via envFrom / env.valueFrom / volumes in
+                          this Pod spec. Editable in the YAML.
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 {/* ── Section: Persistent Volume Claims (workloads/Pods) ── */}
                 {!isManaged &&
                   (inspectorData.kind === "Pod" ||
@@ -1864,6 +2011,101 @@ export default function Canvas() {
                         </div>
                         <span className="inspector-field__hint">
                           Resources referencing this ConfigMap via envFrom /
+                          env.valueFrom / volumes in their Pod spec.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                {/* ── Section: Data (Secret) ─────────────── */}
+                {!isManaged && draftKind === "Secret" && (
+                  <div className="inspector-section">
+                    <div className="inspector-section__header">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <rect x="5" y="11" width="14" height="9" rx="2" />
+                        <path d="M8 11V7a4 4 0 018 0v4" />
+                        <circle cx="12" cy="15.5" r="1.5" />
+                      </svg>
+                      Data
+                    </div>
+                    <div className="inspector-section__body">
+                      <ConfigMapDataEditor
+                        resource={draft ?? selectedNode.data.resource}
+                        resetToken={selectionKey}
+                        onCommit={(data) =>
+                          setDraftResource((prev) => ({
+                            ...(prev ?? selectedNode.data.resource),
+                            data,
+                          }))
+                        }
+                      />
+                      <span className="inspector-field__hint">
+                        Plaintext key/value pairs — Kubernetes expects
+                        base64-encoded values in spec.data. Values are stored
+                        as-is.
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Section: Used by (Secret) ─────────── */}
+                {inspectorData.kind === "Secret" &&
+                  secretUsedBy.length > 0 && (
+                    <div className="inspector-section">
+                      <div className="inspector-section__header">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                        >
+                          <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                          <polyline points="15 3 21 3 21 9" />
+                          <line x1="10" y1="14" x2="21" y2="3" />
+                        </svg>
+                        Used by
+                        <span className="inspector-section__count">
+                          {secretUsedBy.length}
+                        </span>
+                      </div>
+                      <div className="inspector-section__body">
+                        <div className="inspector-rel-list">
+                          {secretUsedBy.map((ref) => (
+                            <button
+                              key={`${ref.kind}:${ref.name}`}
+                              type="button"
+                              className="inspector-rel-item inspector-rel-item--link"
+                              title={`Select ${ref.kind} ${ref.name}`}
+                              onClick={() =>
+                                setSelectedResource({
+                                  kind: ref.kind,
+                                  name: ref.name,
+                                })
+                              }
+                            >
+                              <span className="inspector-rel-arrow inspector-rel-arrow--incoming">
+                                ↑
+                              </span>
+                              <div className="inspector-rel-info">
+                                <span className="inspector-rel-kind">
+                                  {ref.kind}
+                                </span>
+                                <span className="inspector-rel-name">
+                                  {ref.name}
+                                </span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                        <span className="inspector-field__hint">
+                          Resources referencing this Secret via envFrom /
                           env.valueFrom / volumes in their Pod spec.
                         </span>
                       </div>
@@ -2381,6 +2623,99 @@ export default function Canvas() {
                           Lists the Services that currently exist on the canvas.
                         </span>
                       </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Section: TLS (Ingress) ──────────────── */}
+                {!isManaged && draftKind === "Ingress" && (
+                  <div className="inspector-section">
+                    <div className="inspector-section__header">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <rect x="5" y="11" width="14" height="9" rx="2" />
+                        <path d="M8 11V7a4 4 0 018 0v4" />
+                        <circle cx="12" cy="15.5" r="1.5" />
+                      </svg>
+                      TLS
+                      {ingressTlsEntries.length > 0 && (
+                        <span className="inspector-section__count">
+                          {ingressTlsEntries.length}
+                        </span>
+                      )}
+                    </div>
+                    <div className="inspector-section__body">
+                      {ingressTlsEntries.length === 0 && (
+                        <span className="inspector-field__hint">
+                          No spec.tls[] entries. Drag an Ingress onto a Secret to
+                          terminate TLS, or edit the YAML.
+                        </span>
+                      )}
+                      {ingressTlsEntries.map((entry, idx) => {
+                        const exists = nodes.some(
+                          (n) =>
+                            n.data.kind === "Secret" &&
+                            n.data.name === entry.secretName,
+                        );
+                        return (
+                          <div
+                            key={`${entry.secretName ?? idx}:${idx}`}
+                            className="inspector-field"
+                          >
+                            <label className="inspector-field__label">
+                              TLS #{idx + 1} — Secret
+                            </label>
+                            <div className="inspector-rel-list">
+                              <button
+                                type="button"
+                                className="inspector-rel-item inspector-rel-item--link"
+                                title={
+                                  exists
+                                    ? `Select Secret ${entry.secretName}`
+                                    : `Secret ${entry.secretName} is referenced but not on the canvas`
+                                }
+                                onClick={() =>
+                                  entry.secretName &&
+                                  setSelectedResource({
+                                    kind: "Secret",
+                                    name: entry.secretName,
+                                  })
+                                }
+                              >
+                                <span className="inspector-rel-arrow inspector-rel-arrow--outgoing">
+                                  ▤
+                                </span>
+                                <div className="inspector-rel-info">
+                                  <span className="inspector-rel-kind">
+                                    Secret
+                                  </span>
+                                  <span className="inspector-rel-name">
+                                    {entry.secretName}
+                                  </span>
+                                </div>
+                                {!exists && (
+                                  <span className="inspector-rel-badge">
+                                    missing
+                                  </span>
+                                )}
+                              </button>
+                            </div>
+                            <label className="inspector-field__label">
+                              Hosts
+                            </label>
+                            <input
+                              className="inspector-field__input"
+                              value={(entry.hosts ?? []).join(", ")}
+                              readOnly
+                              placeholder="(all hosts)"
+                            />
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -3000,6 +3335,12 @@ export default function Canvas() {
 
       {/* Post-drag volume-name prompt for PVC → Pod connections */}
       <PvcLinkModal />
+
+      {/* Post-drag mechanism prompt for Secret → workload connections */}
+      <SecretLinkModal />
+
+      {/* Post-drag hosts prompt for Ingress → Secret TLS connections */}
+      <IngressTlsLinkModal />
     </div>
   );
 }

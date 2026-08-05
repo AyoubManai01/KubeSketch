@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { K8sResource, SupportedKind } from '../types/types';
 import { getWorkloadPodLabels } from '../utils/buildGraph';
-import type { ConfigMapMechanism } from '../utils/linkResources';
-import { useVeltraStore, type ConfigMapLinkPayload, type PvcLinkPayload } from '../store/store';
+import type { ConfigMapMechanism, SecretMechanism } from '../utils/linkResources';
+import {
+    useVeltraStore,
+    type ConfigMapLinkPayload,
+    type PvcLinkPayload,
+    type SecretLinkPayload,
+    type IngressTlsPayload,
+} from '../store/store';
 import ConfigMapDataEditor from './ConfigMapDataEditor';
 
 interface Props {
@@ -21,6 +27,7 @@ const KIND_COLORS: Record<string, string> = {
     PersistentVolumeClaim: '#ec4899',
     PersistentVolume: '#84cc16',
     StorageClass: '#6366f1',
+    Secret: '#dc2626',
 };
 
 const KIND_ICONS: Record<string, React.ReactNode> = {
@@ -93,6 +100,13 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
             <path d="M7 10v4M17 10v4" strokeDasharray="2 2" />
         </svg>
     ),
+    Secret: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="5" y="11" width="14" height="9" rx="2" />
+            <path d="M8 11V7a4 4 0 018 0v4" />
+            <circle cx="12" cy="15.5" r="1.5" />
+        </svg>
+    ),
 };
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -146,6 +160,17 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     const [cmTarget, setCmTarget] = useState('');
     const [cmMechanism, setCmMechanism] = useState<ConfigMapMechanism>('envFrom');
     const [cmKey, setCmKey] = useState('');
+    // Secret: labels/annotations/data + link fields
+    const [secretLabels, setSecretLabels] = useState('');
+    const [secretAnnotations, setSecretAnnotations] = useState('');
+    const [secretData, setSecretData] = useState<Record<string, string> | undefined>(undefined);
+    const [secretTarget, setSecretTarget] = useState('');
+    const [secretMechanism, setSecretMechanism] = useState<SecretMechanism>('envFrom');
+    const [secretKey, setSecretKey] = useState('');
+    const [secretVolumeName, setSecretVolumeName] = useState('');
+    // Ingress: TLS picker
+    const [ingressTlsSecret, setIngressTlsSecret] = useState('');
+    const [ingressTlsHosts, setIngressTlsHosts] = useState('');
     // PVC: claim + binding fields
     const [pvcAccessModes, setPvcAccessModes] = useState('ReadWriteOnce');
     const [pvcSize, setPvcSize] = useState('1Gi');
@@ -239,6 +264,42 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     }, [nodes]);
 
     const cmDataKeys = useMemo(() => Object.keys(cmData ?? {}), [cmData]);
+
+    // Link targets for a new Secret: same resolution as ConfigMap targets — real
+    // Deployments/ReplicaSets/standalone Pods, synthetic Pods resolve to their owner.
+    const secretTargetOptions = useMemo(() => {
+        const seen = new Set<string>();
+        const options: Array<{ label: string; value: string }> = [];
+        nodes.forEach((n) => {
+            const k = n.data.kind;
+            if (k !== 'Pod' && k !== 'Deployment' && k !== 'ReplicaSet') return;
+            let realKind: string = k;
+            let realName: string = n.data.name;
+            let label = `${k} ${n.data.name}`;
+            if (n.data.synthetic && n.data.managedBy) {
+                realKind = n.data.managedBy.kind;
+                realName = n.data.managedBy.name;
+                label = `${k} ${n.data.name} (via ${n.data.managedBy.kind} ${n.data.managedBy.name})`;
+            }
+            const value = `${realKind}|${realName}`;
+            if (seen.has(value)) return;
+            seen.add(value);
+            options.push({ label, value });
+        });
+        return options.sort((a, b) => a.label.localeCompare(b.label));
+    }, [nodes]);
+
+    const secretDataKeys = useMemo(() => Object.keys(secretData ?? {}), [secretData]);
+
+    // TLS secrets for a new Ingress: real Secrets on the canvas.
+    const ingressTlsSecretOptions = useMemo(
+        () =>
+            nodes
+                .filter((n) => n.data.kind === 'Secret')
+                .map((n) => n.data.name as string)
+                .sort((a, b) => a.localeCompare(b)),
+        [nodes]
+    );
 
     // PVC mount targets: real standalone Pods only (strict — PVCs never mount into
     // Deployments/ReplicaSets; synthetic Pods belong to workloads so they're excluded).
@@ -417,6 +478,21 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                     ...(cmData ? { data: cmData } : {}),
                 };
             }
+            case 'Secret': {
+                const labels = parseKeyValueString(secretLabels);
+                const annotations = parseKeyValueString(secretAnnotations);
+                return {
+                    apiVersion: 'v1',
+                    kind,
+                    metadata: {
+                        name: meta.name,
+                        namespace: meta.namespace,
+                        ...(labels ? { labels } : {}),
+                        ...(annotations ? { annotations } : {}),
+                    },
+                    ...(secretData ? { data: secretData } : {}),
+                };
+            }
             case 'PersistentVolumeClaim': {
                 return {
                     apiVersion: 'v1',
@@ -455,8 +531,9 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     function handleCreate() {
         if (nameError) return;
         if (cmTarget && cmMechanism === 'envKey' && !cmKey) return;
+        if (secretTarget && secretMechanism === 'envKey' && !secretKey) return;
         if (pvcPodTarget && !pvcVolumeName.trim()) return;
-        let link: ConfigMapLinkPayload | PvcLinkPayload | undefined;
+        let link: ConfigMapLinkPayload | PvcLinkPayload | SecretLinkPayload | IngressTlsPayload | undefined;
         if (cmTarget) {
             const [targetKind, targetName] = cmTarget.split('|');
             link = {
@@ -464,6 +541,27 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                 targetName,
                 mechanism: cmMechanism,
                 ...(cmMechanism === 'envKey' && cmKey ? { key: cmKey } : {}),
+            };
+        }
+        if (kind === 'Secret' && secretTarget) {
+            const [targetKind, targetName] = secretTarget.split('|');
+            link = {
+                targetKind: targetKind as 'Pod' | 'Deployment' | 'ReplicaSet',
+                targetName,
+                mechanism: secretMechanism,
+                ...(secretMechanism === 'envKey' && secretKey ? { key: secretKey } : {}),
+                ...(secretMechanism === 'volumes' && secretVolumeName.trim()
+                    ? { volumeName: secretVolumeName.trim() }
+                    : {}),
+            };
+        }
+        if (kind === 'Ingress' && ingressTlsSecret) {
+            link = {
+                secretName: ingressTlsSecret,
+                hosts: ingressTlsHosts
+                    .split(/[\s,]+/)
+                    .map((h) => h.trim())
+                    .filter(Boolean),
             };
         }
         if (kind === 'PersistentVolumeClaim') {
@@ -724,6 +822,43 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                                     ))}
                                 </select>
                             </div>
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    TLS Secret (optional)
+                                    <span className="modal-field__hint">
+                                        Writes spec.tls[].secretName — terminate HTTPS with
+                                        this Secret. Lists the Secrets that currently exist
+                                        on the canvas.
+                                    </span>
+                                </label>
+                                <select
+                                    className="modal-field__input modal-field__input--select"
+                                    value={ingressTlsSecret}
+                                    onChange={(e) => setIngressTlsSecret(e.target.value)}
+                                >
+                                    <option value="">(no TLS)</option>
+                                    {ingressTlsSecretOptions.map((s) => (
+                                        <option key={s} value={s}>{s}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            {ingressTlsSecret && (
+                                <div className="modal-field">
+                                    <label className="modal-field__label">
+                                        TLS hosts
+                                        <span className="modal-field__hint">
+                                            One per line or comma-separated. Leave empty to
+                                            terminate TLS for all hosts.
+                                        </span>
+                                    </label>
+                                    <input
+                                        className="modal-field__input"
+                                        value={ingressTlsHosts}
+                                        onChange={(e) => setIngressTlsHosts(e.target.value)}
+                                        placeholder="app.example.com"
+                                    />
+                                </div>
+                            )}
                         </>
                     )}
 
@@ -925,6 +1060,154 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                         </>
                     )}
 
+                    {/* Secret: labels + annotations + data + optional link */}
+                    {kind === 'Secret' && (
+                        <>
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    Labels
+                                    <span className="modal-field__hint">
+                                        Comma-separated key=value pairs (optional).
+                                    </span>
+                                </label>
+                                <input
+                                    className="modal-field__input"
+                                    value={secretLabels}
+                                    onChange={(e) => setSecretLabels(e.target.value)}
+                                    placeholder="app=my-app"
+                                />
+                            </div>
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    Annotations
+                                    <span className="modal-field__hint">
+                                        Comma-separated key=value pairs (optional).
+                                    </span>
+                                </label>
+                                <input
+                                    className="modal-field__input"
+                                    value={secretAnnotations}
+                                    onChange={(e) => setSecretAnnotations(e.target.value)}
+                                    placeholder="owner=team-a"
+                                />
+                            </div>
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    Data
+                                    <span className="modal-field__hint">
+                                        Optional key/value entries — injected into Pods via
+                                        envFrom, env.valueFrom or volumes. Values are stored
+                                        as-is (Kubernetes expects base64 in spec.data).
+                                    </span>
+                                </label>
+                                <ConfigMapDataEditor
+                                    resource={{
+                                        apiVersion: 'v1',
+                                        kind: 'Secret',
+                                        metadata: { name: name.trim() || suggestedName },
+                                        data: secretData,
+                                    }}
+                                    resetToken="create-secret"
+                                    onCommit={setSecretData}
+                                />
+                            </div>
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    Link to a resource (optional)
+                                    <span className="modal-field__hint">
+                                        Picks a Pod, ReplicaSet or Deployment that will consume
+                                        this Secret. Selecting a controller-created Pod writes
+                                        the reference to its owner&apos;s Pod template.
+                                    </span>
+                                </label>
+                                <select
+                                    className="modal-field__input modal-field__input--select"
+                                    value={secretTarget}
+                                    onChange={(e) => {
+                                        setSecretTarget(e.target.value);
+                                        setSecretKey('');
+                                    }}
+                                >
+                                    <option value="">(no target — just create the Secret)</option>
+                                    {secretTargetOptions.map((opt) => (
+                                        <option key={opt.value} value={opt.value}>
+                                            {opt.label}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            {secretTarget && (
+                                <>
+                                    <div className="modal-field">
+                                        <label className="modal-field__label">
+                                            Reference mechanism
+                                            <span className="modal-field__hint">
+                                                How the target consumes the Secret.
+                                            </span>
+                                        </label>
+                                        <select
+                                            className="modal-field__input modal-field__input--select"
+                                            value={secretMechanism}
+                                            onChange={(e) => {
+                                                setSecretMechanism(e.target.value as SecretMechanism);
+                                                setSecretKey('');
+                                            }}
+                                        >
+                                            <option value="envFrom">envFrom — inject all keys as env vars</option>
+                                            <option value="volumes">volumes — mount as files</option>
+                                            <option value="envKey">env — inject a single key</option>
+                                        </select>
+                                    </div>
+                                    {secretMechanism === 'envKey' && (
+                                        <div className="modal-field">
+                                            <label className="modal-field__label">
+                                                Data key
+                                                <span className="modal-field__hint">
+                                                    The Secret key injected as an env var.
+                                                </span>
+                                            </label>
+                                            <select
+                                                className="modal-field__input modal-field__input--select"
+                                                value={secretKey}
+                                                onChange={(e) => setSecretKey(e.target.value)}
+                                            >
+                                                <option value="">(select a key)</option>
+                                                {secretDataKeys.map((k) => (
+                                                    <option key={k} value={k}>
+                                                        {k}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            {secretDataKeys.length === 0 && (
+                                                <span className="modal-field__error">
+                                                    This Secret has no data keys — add some above or
+                                                    pick envFrom / volumes.
+                                                </span>
+                                            )}
+                                        </div>
+                                    )}
+                                    {secretMechanism === 'volumes' && (
+                                        <div className="modal-field">
+                                            <label className="modal-field__label">
+                                                Volume name
+                                                <span className="modal-field__hint">
+                                                    The volume name inside the Pod (defaults to the
+                                                    Secret name).
+                                                </span>
+                                            </label>
+                                            <input
+                                                className="modal-field__input"
+                                                value={secretVolumeName}
+                                                onChange={(e) => setSecretVolumeName(e.target.value)}
+                                                placeholder={name.trim() || suggestedName}
+                                            />
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </>
+                    )}
+
                     {/* PVC: access modes + size + optional mount/bind links */}
                     {kind === 'PersistentVolumeClaim' && (
                         <>
@@ -1119,11 +1402,14 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                         disabled={
                             !!nameError ||
                             (kind === 'ConfigMap' && !!cmTarget && cmMechanism === 'envKey' && !cmKey) ||
+                            (kind === 'Secret' && !!secretTarget && secretMechanism === 'envKey' && !secretKey) ||
                             (kind === 'PersistentVolumeClaim' && !!pvcPodTarget && !pvcVolumeName.trim())
                         }
                         title={
                             nameError ||
                             (kind === 'ConfigMap' && cmTarget && cmMechanism === 'envKey' && !cmKey
+                                ? 'Select a data key first'
+                                : kind === 'Secret' && secretTarget && secretMechanism === 'envKey' && !secretKey
                                 ? 'Select a data key first'
                                 : kind === 'PersistentVolumeClaim' && pvcPodTarget && !pvcVolumeName.trim()
                                 ? 'Volume name is required to mount the claim'

@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { buildGraph, getPvcRefs, getPvcRefDetails } from '../buildGraph';
+import { buildGraph, getPvcRefs, getPvcRefDetails, isSingleNodeAccessMode, replicasOf } from '../buildGraph';
 import {
     connectResources,
     explainInvalidLink,
-    linkPvcToPod,
+    linkPvcToWorkload,
     linkPvcToPv,
     linkPvcToStorageClass,
 } from '../linkResources';
@@ -20,6 +20,29 @@ function pod(name: string, claimName?: string): K8sResource {
                   volumes: [{ name: `vol-${claimName}`, persistentVolumeClaim: { claimName } }],
               }
             : { containers: [{ name: 'app', image: 'nginx:latest' }] },
+    };
+}
+
+function deployment(name: string, replicas: number, claimName?: string): K8sResource {
+    return {
+        apiVersion: 'apps/v1',
+        kind: 'Deployment',
+        metadata: { name },
+        spec: {
+            replicas,
+            selector: { matchLabels: { app: name } },
+            template: {
+                metadata: { labels: { app: name } },
+                spec: claimName
+                    ? {
+                          containers: [{ name: 'app', image: 'nginx:latest' }],
+                          volumes: [
+                              { name: `vol-${claimName}`, persistentVolumeClaim: { claimName } },
+                          ],
+                      }
+                    : { containers: [{ name: 'app', image: 'nginx:latest' }] },
+            },
+        },
     };
 }
 
@@ -137,19 +160,46 @@ describe('storage reference helpers', () => {
 });
 
 describe('storage link semantics', () => {
-    it('linkPvcToPod mounts the claim under a unique volume name', () => {
+    it('linkPvcToWorkload mounts the claim into a Pod under a unique volume name', () => {
         const resources = [pod('web'), pvc('data')];
-        const result = linkPvcToPod(resources, 1, 0, 'mydata');
+        const result = linkPvcToWorkload(resources, 1, 0, 'mydata');
         const podSpec = result.resources[0].spec as any;
         expect(podSpec.volumes).toEqual([
             { name: 'mydata', persistentVolumeClaim: { claimName: 'data' } },
         ]);
     });
 
-    it('linkPvcToPod de-dupes an already mounted claim', () => {
+    it('linkPvcToWorkload de-dupes an already mounted claim', () => {
         const resources = [pod('web', 'data'), pvc('data')];
-        const result = linkPvcToPod(resources, 1, 0, 'vol-data');
+        const result = linkPvcToWorkload(resources, 1, 0, 'vol-data');
         expect((result.resources[0].spec as any).volumes).toHaveLength(1);
+    });
+
+    it('linkPvcToWorkload mounts the claim into a Deployment pod template', () => {
+        const resources = [deployment('web', 3), pvc('data')];
+        const result = linkPvcToWorkload(resources, 1, 0, 'mydata');
+        const podSpec = (result.resources[0].spec as any).template.spec as any;
+        expect(podSpec.volumes).toEqual([
+            { name: 'mydata', persistentVolumeClaim: { claimName: 'data' } },
+        ]);
+    });
+
+    it('isSingleNodeAccessMode flags RWO/RWOP but not RWX/ROX', () => {
+        expect(isSingleNodeAccessMode(pvc('a', { accessModes: ['ReadWriteOnce'] }))).toBe(true);
+        expect(isSingleNodeAccessMode(pvc('b', { accessModes: ['ReadWriteOncePod'] }))).toBe(true);
+        expect(isSingleNodeAccessMode(pvc('c', { accessModes: ['ReadWriteMany'] }))).toBe(false);
+        expect(isSingleNodeAccessMode(pvc('d', { accessModes: ['ReadOnlyMany'] }))).toBe(false);
+        expect(isSingleNodeAccessMode(pvc('e', { accessModes: undefined }))).toBe(false);
+    });
+
+    it('isSingleNodeAccessMode reads the first access mode only', () => {
+        expect(isSingleNodeAccessMode(pvc('f', { accessModes: ['ReadWriteOnce', 'ReadOnlyMany'] }))).toBe(true);
+        expect(isSingleNodeAccessMode(pvc('g', { accessModes: ['ReadOnlyMany', 'ReadWriteOnce'] }))).toBe(false);
+    });
+
+    it('replicasOf counts workload replicas', () => {
+        expect(replicasOf(deployment('web', 3))).toBe(3);
+        expect(replicasOf(pod('standalone'))).toBe(1);
     });
 
     it('linkPvcToPv sets volumeName and clears storageClassName', () => {

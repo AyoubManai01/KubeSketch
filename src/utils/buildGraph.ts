@@ -68,6 +68,22 @@ export function replicasOf(resource: K8sResource): number {
     return 1;
 }
 
+/**
+ * Access modes that bind a claim to a single node (ReadWriteOnce / ReadWriteOncePod).
+ * Such a PVC cannot be mounted by every Pod of a multi-replica workload — identical
+ * Pods of a Deployment/ReplicaSet all claim the same volume, and only one node may
+ * attach it. ReadOnlyMany / ReadWriteMany are node-shareable and always allowed.
+ */
+const SINGLE_NODE_ACCESS_MODES = new Set(['ReadWriteOnce', 'ReadWriteOncePod']);
+
+/** True when the PVC's first access mode is single-node (RWO/RWOP). */
+export function isSingleNodeAccessMode(pvc: K8sResource): boolean {
+    const spec = pvc.spec as { accessModes?: unknown } | undefined;
+    const modes = spec?.accessModes;
+    const first = Array.isArray(modes) ? modes[0] : modes;
+    return typeof first === 'string' && SINGLE_NODE_ACCESS_MODES.has(first);
+}
+
 /** One HPA-enforced replica clamp on a workload (or on a ReplicaSet inherited from its Deployment). */
 export interface HpaReplicaOverride {
     kind: 'Deployment' | 'ReplicaSet';

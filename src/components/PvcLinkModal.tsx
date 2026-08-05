@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { useVeltraStore } from '../store/store';
 
 /**
- * Post-drag prompt: after drawing a PVC → Pod connection the user picks the volume
- * name (spec.volumes[].name) before the claim reference is written into the Pod.
+ * Post-drag prompt: after drawing a PVC → Pod/Deployment/ReplicaSet connection the
+ * user picks the volume name (spec.volumes[].name) before the claim reference is
+ * written into the target's Pod spec.
  */
 export default function PvcLinkModal() {
     const pending = useVeltraStore((s) => s.pendingPvcLink);
@@ -67,10 +68,13 @@ export default function PvcLinkModal() {
                 <div className="modal-body">
                     <div className="modal-field">
                         <label className="modal-field__label">
-                            {pending.pvc.name} → Pod {pending.target.name}
+                            {pending.pvc.name} → {pending.target.kind} {pending.target.name}
                             <span className="modal-field__hint">
                                 Writes spec.volumes[].persistentVolumeClaim.claimName into the
-                                Pod — it renders as a &quot;mounts&quot; edge on the canvas.
+                                {pending.target.kind === 'Pod'
+                                    ? ' Pod'
+                                    : ' Pod template of the ' + pending.target.kind}{' '}
+                                — it renders as a &quot;mounts&quot; edge on the canvas.
                             </span>
                         </label>
                     </div>

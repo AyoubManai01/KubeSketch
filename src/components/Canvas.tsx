@@ -43,7 +43,9 @@ import {
   getPvcsBoundToStorageClass,
   getSecretRefs,
   getSecretRefDetails,
+  isSingleNodeAccessMode,
   nodeIdFor,
+  replicasOf,
   type K8sNodeData,
 } from "../utils/buildGraph";
 import { resourcesToYaml } from "../utils/serializeYaml";
@@ -668,6 +670,32 @@ export default function Canvas() {
   const draftSpec = (draft?.spec ?? {}) as Record<string, any>;
   const draftMetadata = (draft?.metadata ?? {}) as Record<string, any>;
 
+  // Single-node access-mode guard: a PVC mounted by a multi-replica workload
+  // can't be RWO/RWOP — identical Pods would all claim the same volume, and only
+  // one node may attach it. Surfaced inline on the Access Modes field and blocks
+  // the commit (mirrors the create-modal and drag interceptor).
+  const pvcAccessModeViolation = useMemo(() => {
+    if (!selectedNode || selectedNode.data.kind !== "PersistentVolumeClaim") {
+      return null;
+    }
+    const current = draftResource ?? selectedNode.data.resource;
+    if (!current || !isSingleNodeAccessMode(current as K8sResource)) return null;
+    const draftMode = String(
+      (current.spec as Record<string, any> | undefined)?.accessModes?.[0] ??
+        "ReadWriteOnce",
+    );
+    const offender = pvcUsedBy.find((ref) => {
+      if (ref.kind !== "Deployment" && ref.kind !== "ReplicaSet") return false;
+      const node = nodes.find(
+        (n) =>
+          !n.data.synthetic && n.data.kind === ref.kind && n.data.name === ref.name,
+      );
+      return node ? replicasOf(node.data.resource) > 1 : false;
+    });
+    if (!offender) return null;
+    return `${draftMode} can only attach to one node, but ${offender.kind} ${offender.name} runs more than 1 replica. Scale it down or use ReadWriteMany/ReadOnlyMany.`;
+  }, [selectedNode, draftResource, pvcUsedBy, nodes]);
+
   /** Empty string = valid; otherwise the validation error to show. */
   const validateDraftName = useCallback(
     (kind: SupportedKind, candidate: string): string => {
@@ -817,6 +845,10 @@ export default function Canvas() {
     // commit so the model is never left invalid (invariant 8).
     if (validateDraftName(kind, name)) return;
 
+    // Single-node access-mode guard (invariant 14): a RWO/RWOP claim mounted by
+    // a multi-replica workload is impossible — the inline error explains why.
+    if (pvcAccessModeViolation) return;
+
     // The final resource: raw string drafts parsed into the structured model.
     const finalResource: K8sResource = {
       ...draftResource,
@@ -841,7 +873,7 @@ export default function Canvas() {
     updateNodeResourceFromCanvas(nodeId, finalResource);
     syncDraftFromStore(nodeId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedNode, draftResource, labelsDraft, annotationsDraft, nameDraft, isManaged]);
+  }, [selectedNode, draftResource, labelsDraft, annotationsDraft, nameDraft, isManaged, pvcAccessModeViolation]);
 
   // Skip YAML serialization for position/select/dimension-only changes (perf optimization)
   const onNodesChange = (changes: NodeChange[]) => {
@@ -2136,7 +2168,11 @@ export default function Canvas() {
                           Access Modes
                         </label>
                         <select
-                          className="inspector-field__input inspector-field__input--select"
+                          className={`inspector-field__input inspector-field__input--select ${
+                            pvcAccessModeViolation
+                              ? "inspector-field__input--invalid"
+                              : ""
+                          }`}
                           value={String(
                             draftSpec?.accessModes?.[0] ?? "ReadWriteOnce",
                           )}
@@ -2154,6 +2190,11 @@ export default function Canvas() {
                           <option>ReadWriteMany</option>
                           <option>ReadWriteOncePod</option>
                         </select>
+                        {pvcAccessModeViolation && (
+                          <span className="inspector-field__error">
+                            {pvcAccessModeViolation}
+                          </span>
+                        )}
                       </div>
                       <div className="inspector-field">
                         <label className="inspector-field__label">

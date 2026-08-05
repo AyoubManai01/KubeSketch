@@ -4,7 +4,9 @@ import { parseYaml } from '../utils/parseYaml';
 import {
     applyHpaReplicaOverrides,
     buildGraph,
+    isSingleNodeAccessMode,
     nodeIdFor,
+    replicasOf,
     type HpaReplicaOverride,
     type K8sNodeData,
 } from '../utils/buildGraph';
@@ -13,7 +15,7 @@ import {
     connectResources,
     explainInvalidLink,
     linkConfigMapToWorkload,
-    linkPvcToPod,
+    linkPvcToWorkload,
     linkSecretToWorkload,
     linkIngressToSecret,
     type ConfigMapMechanism,
@@ -166,23 +168,25 @@ export interface IngressTlsPayload {
 }
 
 /**
- * A PVC → Pod canvas drag waiting for the user to pick the volume name in the
- * post-drag prompt. Both resources are REAL (synthetic targets resolve to their
- * owner first — which for a PVC means the drag gets rejected as workload-only,
- * matching "PVCs mount into standalone Pods").
+ * A PVC → Pod/Deployment/ReplicaSet canvas drag waiting for the user to pick the
+ * volume name in the post-drag prompt. Both resources are REAL (synthetic targets
+ * resolve to their owner first). A single-node access mode (ReadWriteOnce /
+ * ReadWriteOncePod) is rejected before the prompt when the workload runs more
+ * than one replica — identical Pods cannot share a single-node claim.
  */
 export interface PendingPvcLink {
     pvc: { name: string };
-    target: { kind: 'Pod'; name: string };
+    target: { kind: 'Pod' | 'Deployment' | 'ReplicaSet'; name: string };
 }
 
 /**
- * Optional links for a newly created PVC (create-modal path): a Pod to mount the
- * claim into (with the volume name) and exactly one bind target — a PV or a
- * StorageClass. Setting one bind kind clears the other field on the PVC.
+ * Optional links for a newly created PVC (create-modal path): a mount target — a
+ * Pod, Deployment or ReplicaSet to claim it from (with the volume name; workloads
+ * get the reference in their Pod template) — and exactly one bind target, a PV or
+ * a StorageClass. Setting one bind kind clears the other field on the PVC.
  */
 export interface PvcLinkPayload {
-    podTarget?: { name: string; volumeName: string };
+    mountTarget?: { kind: 'Pod' | 'Deployment' | 'ReplicaSet'; name: string; volumeName: string };
     bindTarget?: { kind: 'PersistentVolume' | 'StorageClass'; name: string };
 }
 
@@ -734,19 +738,37 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     };
                 }
 
-                // PVC ↔ Pod: strictly standalone Pods (Deployment/ReplicaSet get rejected
-                // below, since synthetic Pods already resolved to their workload owner).
-                // The volume name is picked in the post-drag prompt before committing.
+                // PVC ↔ Pod/Deployment/ReplicaSet: a valid semantic link, but the
+                // volume name is picked in the post-drag prompt before committing.
+                // Single-node claims (ReadWriteOnce/ReadWriteOncePod) cannot serve a
+                // workload that runs more than one replica — reject those up front.
+                const isPvcMountTarget = (kind: string) =>
+                    kind === 'Pod' || kind === 'Deployment' || kind === 'ReplicaSet';
                 if (
-                    (sourceNode.data.kind === 'PersistentVolumeClaim' && targetNode.data.kind === 'Pod') ||
-                    (targetNode.data.kind === 'PersistentVolumeClaim' && sourceNode.data.kind === 'Pod')
+                    (sourceNode.data.kind === 'PersistentVolumeClaim' && isPvcMountTarget(targetNode.data.kind)) ||
+                    (targetNode.data.kind === 'PersistentVolumeClaim' && isPvcMountTarget(sourceNode.data.kind))
                 ) {
                     const pvc = sourceNode.data.kind === 'PersistentVolumeClaim' ? sourceNode : targetNode;
-                    const pod = sourceNode.data.kind === 'Pod' ? sourceNode : targetNode;
+                    const mountTarget = sourceNode.data.kind === 'PersistentVolumeClaim' ? targetNode : sourceNode;
+                    if (
+                        mountTarget.data.kind !== 'Pod' &&
+                        replicasOf(mountTarget.data.resource) > 1 &&
+                        isSingleNodeAccessMode(pvc.data.resource)
+                    ) {
+                        return {
+                            notice: makeNotice(
+                                'error',
+                                `${mountTarget.data.kind} ${mountTarget.data.name} runs ${replicasOf(mountTarget.data.resource)} replicas — a ReadWriteOnce/ReadWriteOncePod PVC can only attach to one node. Scale down to 1 or use ReadWriteMany/ReadOnlyMany.`
+                            ),
+                        };
+                    }
                     return {
                         pendingPvcLink: {
                             pvc: { name: pvc.data.name },
-                            target: { kind: 'Pod', name: pod.data.name },
+                            target: {
+                                kind: mountTarget.data.kind as 'Pod' | 'Deployment' | 'ReplicaSet',
+                                name: mountTarget.data.name,
+                            },
                         },
                     };
                 }
@@ -868,13 +890,14 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                         r.kind === 'PersistentVolumeClaim' &&
                         r.metadata.name === pending.pvc.name
                 );
-                const podIdx = resources.findIndex(
-                    (r) => r.kind === 'Pod' && r.metadata.name === pending.target.name
+                const targetIdx = resources.findIndex(
+                    (r) =>
+                        r.kind === pending.target.kind && r.metadata.name === pending.target.name
                 );
-                if (pvcIdx < 0 || podIdx < 0) {
+                if (pvcIdx < 0 || targetIdx < 0) {
                     return { pendingPvcLink: null };
                 }
-                const linked = linkPvcToPod(resources, pvcIdx, podIdx, volumeName);
+                const linked = linkPvcToWorkload(resources, pvcIdx, targetIdx, volumeName);
                 return {
                     ...commitResources(state, linked.resources, state.nodes),
                     pendingPvcLink: null,
@@ -1000,19 +1023,22 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     tls.push({ secretName: link.secretName, hosts: link.hosts });
                     ingressSpec.tls = tls;
                 }
-                // Create-modal PVC links: mount the claim into a standalone Pod
-                // (volume name prompt) and bind it to exactly one PV or StorageClass.
-                if (link && 'podTarget' in link) {
-                    if (link.podTarget) {
-                        const podIdx = resources.findIndex(
-                            (r) => r.kind === 'Pod' && r.metadata.name === link.podTarget!.name
+                // Create-modal PVC links: mount the claim into a Pod, Deployment or
+                // ReplicaSet (volume name prompt; workloads get the reference in their
+                // Pod template) and bind it to exactly one PV or StorageClass.
+                if (link && 'mountTarget' in link) {
+                    if (link.mountTarget) {
+                        const targetIdx = resources.findIndex(
+                            (r) =>
+                                r.kind === link.mountTarget!.kind &&
+                                r.metadata.name === link.mountTarget!.name
                         );
-                        if (podIdx >= 0) {
-                            resources = linkPvcToPod(
+                        if (targetIdx >= 0) {
+                            resources = linkPvcToWorkload(
                                 resources,
                                 newIdx,
-                                podIdx,
-                                link.podTarget.volumeName
+                                targetIdx,
+                                link.mountTarget.volumeName
                             ).resources;
                         }
                     }

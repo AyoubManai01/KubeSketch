@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { K8sResource, SupportedKind } from '../types/types';
-import { getWorkloadPodLabels } from '../utils/buildGraph';
+import { getWorkloadPodLabels, replicasOf } from '../utils/buildGraph';
 import type { ConfigMapMechanism, SecretMechanism } from '../utils/linkResources';
 import {
     useVeltraStore,
@@ -174,7 +174,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     // PVC: claim + binding fields
     const [pvcAccessModes, setPvcAccessModes] = useState('ReadWriteOnce');
     const [pvcSize, setPvcSize] = useState('1Gi');
-    const [pvcPodTarget, setPvcPodTarget] = useState('');
+    const [pvcMountTarget, setPvcMountTarget] = useState('');
     const [pvcVolumeName, setPvcVolumeName] = useState('');
     const [pvcBindTarget, setPvcBindTarget] = useState('');
     // PV fields
@@ -301,16 +301,50 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         [nodes]
     );
 
-    // PVC mount targets: real standalone Pods only (strict — PVCs never mount into
-    // Deployments/ReplicaSets; synthetic Pods belong to workloads so they're excluded).
-    const pvcPodOptions = useMemo(
-        () =>
-            nodes
-                .filter((n) => n.data.kind === 'Pod' && !n.data.synthetic)
-                .map((n) => n.data.name as string)
-                .sort((a, b) => a.localeCompare(b)),
-        [nodes]
-    );
+    // PVC mount targets: real Pods, Deployments and ReplicaSets (synthetic Pods
+    // resolve to their real workload owner — the claim goes into the owner's Pod
+    // template). De-duped by the resolved real owner, so several synthetic Pods
+    // of the same workload collapse into one option.
+    const pvcMountOptions = useMemo(() => {
+        const seen = new Set<string>();
+        const options: Array<{ label: string; value: string }> = [];
+        nodes.forEach((n) => {
+            const k = n.data.kind;
+            if (k !== 'Pod' && k !== 'Deployment' && k !== 'ReplicaSet') return;
+            let realKind: string = k;
+            let realName: string = n.data.name;
+            let label = `${k} ${n.data.name}`;
+            if (n.data.synthetic && n.data.managedBy) {
+                realKind = n.data.managedBy.kind;
+                realName = n.data.managedBy.name;
+                label = `${k} ${n.data.name} (via ${n.data.managedBy.kind} ${n.data.managedBy.name})`;
+            }
+            const value = `${realKind}|${realName}`;
+            if (seen.has(value)) return;
+            seen.add(value);
+            options.push({ label, value });
+        });
+        return options.sort((a, b) => a.label.localeCompare(b.label));
+    }, [nodes]);
+
+    // Single-node access-mode guard: a workload running more than one replica cannot
+    // mount a ReadWriteOnce/ReadWriteOncePod claim — identical Pods would all claim
+    // the same volume, and only one node may attach it.
+    const pvcMountReplicasError = useMemo(() => {
+        if (kind !== 'PersistentVolumeClaim' || !pvcMountTarget) return null;
+        if (pvcAccessModes !== 'ReadWriteOnce' && pvcAccessModes !== 'ReadWriteOncePod') {
+            return null;
+        }
+        const [targetKind, targetName] = pvcMountTarget.split('|');
+        if (targetKind === 'Pod') return null;
+        const target = nodes.find(
+            (n) => n.data.kind === targetKind && n.data.name === targetName
+        );
+        if (!target) return null;
+        const replicas = replicasOf(target.data.resource);
+        if (replicas <= 1) return null;
+        return `${targetKind} ${targetName} runs ${replicas} replicas — a ${pvcAccessModes} PVC can only attach to one node. Scale down to 1 or pick ReadOnlyMany/ReadWriteMany.`;
+    }, [kind, pvcMountTarget, pvcAccessModes, nodes]);
 
     const pvOptions = useMemo(
         () =>
@@ -532,7 +566,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         if (nameError) return;
         if (cmTarget && cmMechanism === 'envKey' && !cmKey) return;
         if (secretTarget && secretMechanism === 'envKey' && !secretKey) return;
-        if (pvcPodTarget && !pvcVolumeName.trim()) return;
+        if (pvcMountTarget && (!pvcVolumeName.trim() || !!pvcMountReplicasError)) return;
         let link: ConfigMapLinkPayload | PvcLinkPayload | SecretLinkPayload | IngressTlsPayload | undefined;
         if (cmTarget) {
             const [targetKind, targetName] = cmTarget.split('|');
@@ -565,9 +599,14 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
             };
         }
         if (kind === 'PersistentVolumeClaim') {
-            let podTarget: PvcLinkPayload['podTarget'];
-            if (pvcPodTarget) {
-                podTarget = { name: pvcPodTarget, volumeName: pvcVolumeName.trim() };
+            let mountTarget: PvcLinkPayload['mountTarget'];
+            if (pvcMountTarget) {
+                const [targetKind, targetName] = pvcMountTarget.split('|');
+                mountTarget = {
+                    kind: targetKind as 'Pod' | 'Deployment' | 'ReplicaSet',
+                    name: targetName,
+                    volumeName: pvcVolumeName.trim(),
+                };
             }
             let bindTarget: PvcLinkPayload['bindTarget'];
             if (pvcBindTarget) {
@@ -577,8 +616,8 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                     name: bindName,
                 };
             }
-            if (podTarget || bindTarget) {
-                link = { ...(podTarget ? { podTarget } : {}), ...(bindTarget ? { bindTarget } : {}) };
+            if (mountTarget || bindTarget) {
+                link = { ...(mountTarget ? { mountTarget } : {}), ...(bindTarget ? { bindTarget } : {}) };
             }
         }
         const resource = buildResource();
@@ -1237,31 +1276,35 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                             </div>
                             <div className="modal-field">
                                 <label className="modal-field__label">
-                                    Mount into Pod (optional)
+                                    Mount into (optional)
                                     <span className="modal-field__hint">
-                                        Writes spec.volumes[].persistentVolumeClaim into a
-                                        standalone Pod. Requires a volume name.
+                                        Writes spec.volumes[].persistentVolumeClaim into a Pod
+                                        or a workload&apos;s Pod template (Deployment/ReplicaSet).
+                                        Requires a volume name.
                                     </span>
                                 </label>
                                 <select
                                     className="modal-field__input modal-field__input--select"
-                                    value={pvcPodTarget}
+                                    value={pvcMountTarget}
                                     onChange={(e) => {
-                                        setPvcPodTarget(e.target.value);
+                                        setPvcMountTarget(e.target.value);
                                         if (e.target.value && !pvcVolumeName) {
                                             setPvcVolumeName(name.trim() || suggestedName);
                                         }
                                     }}
                                 >
-                                    <option value="">(no Pod — just create the claim)</option>
-                                    {pvcPodOptions.map((podName) => (
-                                        <option key={podName} value={podName}>
-                                            Pod {podName}
+                                    <option value="">(no mount — just create the claim)</option>
+                                    {pvcMountOptions.map((opt) => (
+                                        <option key={opt.value} value={opt.value}>
+                                            {opt.label}
                                         </option>
                                     ))}
                                 </select>
+                                {pvcMountReplicasError && (
+                                    <span className="modal-field__error">{pvcMountReplicasError}</span>
+                                )}
                             </div>
-                            {pvcPodTarget && (
+                            {pvcMountTarget && (
                                 <div className="modal-field">
                                     <label className="modal-field__label">Volume name</label>
                                     <input
@@ -1403,7 +1446,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                             !!nameError ||
                             (kind === 'ConfigMap' && !!cmTarget && cmMechanism === 'envKey' && !cmKey) ||
                             (kind === 'Secret' && !!secretTarget && secretMechanism === 'envKey' && !secretKey) ||
-                            (kind === 'PersistentVolumeClaim' && !!pvcPodTarget && !pvcVolumeName.trim())
+                            (kind === 'PersistentVolumeClaim' && !!pvcMountTarget && (!pvcVolumeName.trim() || !!pvcMountReplicasError))
                         }
                         title={
                             nameError ||
@@ -1411,8 +1454,10 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                                 ? 'Select a data key first'
                                 : kind === 'Secret' && secretTarget && secretMechanism === 'envKey' && !secretKey
                                 ? 'Select a data key first'
-                                : kind === 'PersistentVolumeClaim' && pvcPodTarget && !pvcVolumeName.trim()
+                                : kind === 'PersistentVolumeClaim' && pvcMountTarget && !pvcVolumeName.trim()
                                 ? 'Volume name is required to mount the claim'
+                                : kind === 'PersistentVolumeClaim' && pvcMountReplicasError
+                                ? pvcMountReplicasError
                                 : `Create ${kind}`)
                         }
                     >

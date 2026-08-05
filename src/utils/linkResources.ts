@@ -69,8 +69,9 @@ export function connectResources(
             byKind('StorageClass')
         );
     }
-    // PVC ↔ Pod is intercepted by the store (pending volume-name prompt) and never
-    // reaches connectResources.
+    // PVC ↔ Pod/Deployment/ReplicaSet is intercepted by the store (pending
+    // volume-name prompt, single-node access-mode guard) and never reaches
+    // connectResources.
     // Secret ↔ Pod/Deployment/ReplicaSet is intercepted by the store (pending
     // mechanism prompt) and never reaches connectResources.
     if (pair('Ingress', 'Secret')) {
@@ -97,7 +98,7 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
             return 'A PVC already references this StorageClass (spec.storageClassName).';
         }
         if (other === 'Deployment' || other === 'ReplicaSet') {
-            return `A PVC is claimed by a Pod only, not by a ${other} — mount it into a Pod's spec.volumes instead.`;
+            return `A PVC mounts into a ${other}'s Pod template — a single-node access mode (ReadWriteOnce/ReadWriteOncePod) cannot serve every replica when the ${other} runs more than one.`;
         }
         return `A PVC is claimed by a Pod and binds to a PV or StorageClass — it has no direct relationship with a ${other}.`;
     }
@@ -488,47 +489,58 @@ function clone<T>(value: T): T {
 }
 
 /**
- * Write a PersistentVolumeClaim reference into a standalone Pod:
+ * Write a PersistentVolumeClaim reference into a workload's Pod spec:
  * `spec.volumes[].persistentVolumeClaim.claimName` under a unique volume name
- * (de-dupes existing volumes by volume name and by claim name).
+ * (de-dupes existing volumes by volume name and by claim name). Deployments and
+ * ReplicaSets receive the reference in `spec.template.spec` so every replica
+ * mounts the claim; standalone Pods use `spec` directly.
  */
-export function linkPvcToPod(
+export function linkPvcToWorkload(
     resources: K8sResource[],
     pvcIdx: number,
-    podIdx: number,
+    workloadIdx: number,
     volumeName: string
 ): { resources: K8sResource[]; description: string } {
     const next = [...resources];
     const pvc = resources[pvcIdx];
-    const pod = resources[podIdx];
+    const workload = resources[workloadIdx];
     const claimName = pvc.metadata.name;
     const volume = volumeName.trim() || claimName;
 
-    const patched = clone(pod);
+    const patched = clone(workload);
     const spec = (patched.spec ?? {}) as Record<string, any>;
-    spec.volumes = Array.isArray(spec.volumes) ? spec.volumes : [];
-    const alreadyMounted = spec.volumes.some(
+    let podSpec: Record<string, any>;
+    if (patched.kind === 'Deployment' || patched.kind === 'ReplicaSet') {
+        spec.template = spec.template ?? {};
+        spec.template.spec = spec.template.spec ?? {};
+        podSpec = spec.template.spec;
+    } else {
+        podSpec = spec;
+    }
+
+    podSpec.volumes = Array.isArray(podSpec.volumes) ? podSpec.volumes : [];
+    const alreadyMounted = podSpec.volumes.some(
         (v: any) => v?.persistentVolumeClaim?.claimName === claimName
     );
     if (!alreadyMounted) {
-        if (!spec.volumes.some((v: any) => v?.name === volume)) {
-            spec.volumes.push({ name: volume, persistentVolumeClaim: { claimName } });
+        if (!podSpec.volumes.some((v: any) => v?.name === volume)) {
+            podSpec.volumes.push({ name: volume, persistentVolumeClaim: { claimName } });
         } else {
             // Volume name is taken — fall back to a unique name derived from the claim
             let suffix = 2;
-            while (spec.volumes.some((v: any) => v?.name === `${volume}-${suffix}`)) suffix++;
-            spec.volumes.push({
+            while (podSpec.volumes.some((v: any) => v?.name === `${volume}-${suffix}`)) suffix++;
+            podSpec.volumes.push({
                 name: `${volume}-${suffix}`,
                 persistentVolumeClaim: { claimName },
             });
         }
     }
     patched.spec = spec;
-    next[podIdx] = patched;
+    next[workloadIdx] = patched;
 
     return {
         resources: next,
-        description: `Pod ${pod.metadata.name} now mounts PVC ${claimName} as volume "${volume}"`,
+        description: `${patched.kind} ${workload.metadata.name} now mounts PVC ${claimName} as volume "${volume}"`,
     };
 }
 

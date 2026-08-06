@@ -25,6 +25,11 @@ import { isClusterScoped } from '../utils/k8sScope';
 import {
     buildTeachingFrame,
     DEFAULT_CLUSTER_RECT,
+    FALLBACK_NODE_HEIGHT,
+    FALLBACK_NODE_WIDTH,
+    NAMESPACE_MIN_RECT,
+    resolveMoveCollision,
+    resolveResizeCollision,
     type NamespaceRect,
     type NsLayout,
     type Rect,
@@ -1167,12 +1172,16 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         moveNamespace: (name, rect) =>
             set((state) => {
                 const layout = ensureNsLayout(state);
+                // Namespace rectangles never collide: the dragged rect is pushed out
+                // of every other namespace rect before the translation is computed.
+                const others = layout.namespaces.filter((ns) => ns.name !== name);
+                const clamped = resolveMoveCollision(rect, others);
                 // Translation is the diff between the passed rect and the one the
                 // layout currently holds — the caller may pass absolute rects
                 // anchored at drag start without double-applying.
                 const old = layout.namespaces.find((ns) => ns.name === name);
-                const dx = old ? rect.x - old.x : 0;
-                const dy = old ? rect.y - old.y : 0;
+                const dx = old ? clamped.x - old.x : 0;
+                const dy = old ? clamped.y - old.y : 0;
                 // Only top-level namespaced nodes ride along with their rectangle;
                 // nested children (Pods inside RSs/Deployments) follow via their
                 // parent's absolute position and cluster-scoped kinds never move
@@ -1187,7 +1196,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     nodes: nextNodes,
                     nsLayout: {
                         ...layout,
-                        namespaces: upsertNsRect(layout.namespaces, name, rect),
+                        namespaces: upsertNsRect(layout.namespaces, name, clamped),
                     },
                 };
             }),
@@ -1213,18 +1222,44 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         resizeNsRect: (name, rect) =>
             set((state) => {
                 const layout = ensureNsLayout(state);
+                // Resize never collides either: growth is stopped at the nearest
+                // neighbor's facing edge (west/north drags stop at its trailing
+                // edge), a shrink can't leave a contained resource outside the
+                // box, and the box can't extend outside the cluster.
+                const old = layout.namespaces.find((ns) => ns.name === name);
+                const others = layout.namespaces.filter((ns) => ns.name !== name);
+                const clamped = old
+                    ? resolveResizeCollision(
+                          old,
+                          rect,
+                          others,
+                          NAMESPACE_MIN_RECT,
+                          namespaceContentRects(state.nodes, name),
+                          layout.cluster
+                      )
+                    : rect;
                 return {
                     nsLayout: {
                         ...layout,
-                        namespaces: upsertNsRect(layout.namespaces, name, rect),
+                        namespaces: upsertNsRect(layout.namespaces, name, clamped),
                     },
                 };
             }),
 
         resizeClusterRect: (rect) =>
-            set((state) => ({
-                nsLayout: { ...ensureNsLayout(state), cluster: rect },
-            })),
+            set((state) => {
+                const layout = ensureNsLayout(state);
+                // The cluster can't shrink past its namespace boxes either (they
+                // act as its content) — otherwise a ns box would end up outside.
+                const clamped = resolveResizeCollision(
+                    layout.cluster,
+                    rect,
+                    [],
+                    NAMESPACE_MIN_RECT,
+                    layout.namespaces
+                );
+                return { nsLayout: { ...layout, cluster: clamped } };
+            }),
 
         addNamespace: (name, rect) =>
             set((state) => {
@@ -1252,10 +1287,11 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     };
                 }
                 const fallback: Rect = { x: 40, y: 40, width: 320, height: 240 };
+                const placed = resolveMoveCollision(rect ?? fallback, layout.namespaces);
                 return {
                     nsLayout: {
                         ...layout,
-                        namespaces: [...layout.namespaces, { name: trimmed, ...(rect ?? fallback) }],
+                        namespaces: [...layout.namespaces, { name: trimmed, ...placed }],
                     },
                     notice: makeNotice(
                         'success',
@@ -1699,6 +1735,25 @@ function ensureNsLayout(state: VeltraState): NsLayout {
             namespaces: [],
         }
     );
+}
+
+/** The top-level real resources living in the given namespace, as rectangles —
+ *  a namespace box can never shrink past its own resources. */
+function namespaceContentRects(nodes: Node<K8sNodeData>[], name: string): Rect[] {
+    return nodes
+        .filter(
+            (n) =>
+                !n.parentId &&
+                !n.data.synthetic &&
+                !isClusterScoped(n.data.kind) &&
+                (n.data.namespace ?? 'default') === name
+        )
+        .map((n) => ({
+            x: n.position.x,
+            y: n.position.y,
+            width: typeof n.style?.width === 'number' ? n.style.width : FALLBACK_NODE_WIDTH,
+            height: typeof n.style?.height === 'number' ? n.style.height : FALLBACK_NODE_HEIGHT,
+        }));
 }
 
 function readNsLayout(): NsLayout | null {

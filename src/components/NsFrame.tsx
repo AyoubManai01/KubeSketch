@@ -3,11 +3,9 @@ import { ViewportPortal, useReactFlow } from '@xyflow/react';
 import type { Node } from '@xyflow/react';
 import { useVeltraStore } from '../store/store';
 import { isClusterScoped } from '../utils/k8sScope';
-import type { NsLayout, Rect } from '../utils/teachingFrame';
+import { NAMESPACE_MIN_RECT, type NsLayout, type Rect } from '../utils/teachingFrame';
 import type { K8sNodeData } from '../utils/buildGraph';
 import type { PointerEvent as ReactPointerEvent } from 'react';
-
-const MIN_RECT = 80;
 
 const RESIZE_HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const;
 type ResizeDir = (typeof RESIZE_HANDLES)[number];
@@ -222,14 +220,14 @@ function FrameHandles({
 /** New rectangle for a corner/edge drag starting from `start`. */
 function resizeRect(start: Rect, dx: number, dy: number, dir: ResizeDir): Rect {
     let { x, y, width, height } = start;
-    if (dir.includes('e')) width = Math.max(MIN_RECT, start.width + dx);
-    if (dir.includes('s')) height = Math.max(MIN_RECT, start.height + dy);
+    if (dir.includes('e')) width = Math.max(NAMESPACE_MIN_RECT, start.width + dx);
+    if (dir.includes('s')) height = Math.max(NAMESPACE_MIN_RECT, start.height + dy);
     if (dir.includes('w')) {
-        width = Math.max(MIN_RECT, start.width - dx);
+        width = Math.max(NAMESPACE_MIN_RECT, start.width - dx);
         x = start.x + (start.width - width);
     }
     if (dir.includes('n')) {
-        height = Math.max(MIN_RECT, start.height - dy);
+        height = Math.max(NAMESPACE_MIN_RECT, start.height - dy);
         y = start.y + (start.height - height);
     }
     return { x, y, width, height };

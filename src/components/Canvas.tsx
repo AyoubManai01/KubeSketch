@@ -34,8 +34,11 @@ import { isClusterScoped } from "../utils/k8sScope";
 import {
   effectiveNsLayout,
   rectContains,
+  clampPositionToRect,
+  resolveNodeCollision,
   FALLBACK_NODE_WIDTH,
   FALLBACK_NODE_HEIGHT,
+  type NsLayout,
 } from "../utils/teachingFrame";
 import {
   getWorkloadPodLabels,
@@ -62,6 +65,7 @@ import ConfigMapLinkModal from "./ConfigMapLinkModal";
 import PvcLinkModal from "./PvcLinkModal";
 import SecretLinkModal from "./SecretLinkModal";
 import IngressTlsLinkModal from "./IngressTlsLinkModal";
+import NamespaceModal from "./NamespaceModal";
 
 /** Register our custom node type so React Flow can render it */
 const nodeTypes: NodeTypes = {
@@ -320,7 +324,6 @@ export default function Canvas() {
   const nsLayout = useVeltraStore((s) => s.nsLayout);
   const nsEditMode = useVeltraStore((s) => s.nsEditMode);
   const setNsEditMode = useVeltraStore((s) => s.setNsEditMode);
-  const addNamespace = useVeltraStore((s) => s.addNamespace);
   // Persisted + auto-discovered cluster/namespace rectangles — the drop targets
   // for namespace reassignment and the frames NsFrame renders.
   const effectiveLayout = useMemo(
@@ -930,6 +933,11 @@ export default function Canvas() {
   // attempt, not a move — resources are fixed in place and move only with their
   // rectangle. The pre-drag positions let us snap everything back on drop.
   const dragOriginRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  // The cluster/namespace rectangles captured at drag start. Auto-derived
+  // layouts re-hug the live nodes every render, so clamping against the *live*
+  // layout would let a dragged node drag its own boundary along — the captured
+  // layout is a stable constraint for the whole gesture.
+  const dragLayoutRef = useRef<NsLayout | null>(null);
 
   const onNodeDragStart = (
     _: unknown,
@@ -938,6 +946,62 @@ export default function Canvas() {
   ) => {
     const moved = draggedNodes?.length ? draggedNodes : [node];
     moved.forEach((n) => dragOriginRef.current.set(n.id, { ...n.position }));
+    dragLayoutRef.current = effectiveLayout;
+  };
+
+  // Constrain a node's position while dragging in normal mode: namespaced
+  // resources never leave their namespace box, and cluster-scoped kinds
+  // (PV/StorageClass) never enter one (they stay inside the cluster instead).
+  const clampDraggedNode = (n: Node<K8sNodeData>, layout: NsLayout) => {
+    const width =
+      typeof n.style?.width === "number" ? n.style.width : FALLBACK_NODE_WIDTH;
+    const height =
+      typeof n.style?.height === "number" ? n.style.height : FALLBACK_NODE_HEIGHT;
+    if (isClusterScoped(n.data.kind)) {
+      return resolveNodeCollision(
+        n.position.x,
+        n.position.y,
+        width,
+        height,
+        null,
+        layout.namespaces,
+      );
+    }
+    const nsRect = layout.namespaces.find(
+      (ns) => ns.name === (n.data.namespace ?? "default"),
+    );
+    return clampPositionToRect(
+      n.position.x,
+      n.position.y,
+      width,
+      height,
+      nsRect ?? layout.cluster,
+    );
+  };
+
+  const onNodeDrag = (
+    _: unknown,
+    node: Node<K8sNodeData>,
+    draggedNodes: Node<K8sNodeData>[],
+  ) => {
+    if (nsEditMode) return;
+    const layout = dragLayoutRef.current;
+    if (!layout) return;
+    const moved = draggedNodes?.length ? draggedNodes : [node];
+    // React Flow emits onNodesChange before onNodeDrag in the same event, and
+    // re-renders are batched — the render-scope `nodes` is one frame behind, so
+    // clamp against the fresh store state.
+    const current = useVeltraStore.getState().nodes;
+    const next = current.map((n) => {
+      const m = moved.find((mn) => mn.id === n.id);
+      if (!m || n.parentId) return n;
+      const clamped = clampDraggedNode(n, layout);
+      if (clamped.x === n.position.x && clamped.y === n.position.y) return n;
+      return { ...n, position: clamped };
+    });
+    if (next.some((n, i) => n !== current[i])) {
+      setCanvasNodesPositionOnly(next);
+    }
   };
 
   // Dragging only moves nodes — positions are persisted once on drop and the
@@ -950,39 +1014,93 @@ export default function Canvas() {
   ) => {
     const moved = draggedNodes?.length ? draggedNodes : [node];
     if (!nsEditMode) {
+      const layout = dragLayoutRef.current;
+      dragLayoutRef.current = null;
       dragOriginRef.current.clear();
+      // React Flow emits one last unclamped position change on drop, after the
+      // final onNodeDrag — re-apply the constraint so the node doesn't jump out
+      // of its box at the end of the gesture.
+      if (layout) {
+        const current = useVeltraStore.getState().nodes;
+        const clamped = current.map((n) => {
+          const m = moved.find((mn) => mn.id === n.id);
+          if (!m || n.parentId) return n;
+          const c = clampDraggedNode(n, layout);
+          if (c.x === n.position.x && c.y === n.position.y) return n;
+          return { ...n, position: c };
+        });
+        if (clamped.some((n, i) => n !== current[i])) {
+          setCanvasNodesPositionOnly(clamped);
+        }
+      }
       persistNodePositions(moved.map((n) => n.id));
       return;
     }
     // Namespace editing: resources are fixed — snap every dragged node back to
     // its pre-drag position, then interpret the drop as a reassignment attempt.
+    // A node that lands in ANOTHER namespace is repositioned *inside* that box
+    // (pointer-anchored), so the reassignment is visible on the canvas instead
+    // of leaving the node stranded at its old spot.
     const origins = dragOriginRef.current;
-    const nextNodes = nodes.map((n) => {
+    const pointer = flowPointFromScreen(
+      event as { clientX?: number; clientY?: number },
+    );
+    // Use the layout captured at drag start — the live layout re-hugs the dragged
+    // node mid-drag, which would make the node's own box follow the pointer and
+    // the target lookup unreliable.
+    const dropLayout = dragLayoutRef.current ?? effectiveLayout;
+    // Auto-derived rectangles can overlap (a big workload's namespace box can
+    // surround a smaller one) — the drop target is the SMALLEST box containing
+    // the pointer, i.e. the most specific namespace.
+    const findDropTarget = (point: { x: number; y: number }) =>
+      dropLayout.namespaces
+        .filter((ns) => rectContains(ns, point))
+        .sort((a, b) => a.width * a.height - b.width * b.height)[0];
+    const reassignedIds: string[] = [];
+    const current = useVeltraStore.getState().nodes;
+    const nextNodes = current.map((n) => {
       const origin = origins.get(n.id);
-      return origin ? { ...n, position: origin } : n;
+      if (!origin) return n;
+      // Synthetic nodes belong to their owner's namespace; cluster-scoped kinds
+      // never have a namespace — neither can be reassigned.
+      if (n.data.synthetic || isClusterScoped(n.data.kind)) {
+        return { ...n, position: origin };
+      }
+      const width =
+        typeof n.style?.width === "number" ? n.style.width : FALLBACK_NODE_WIDTH;
+      const height =
+        typeof n.style?.height === "number" ? n.style.height : FALLBACK_NODE_HEIGHT;
+      const center = { x: n.position.x + width / 2, y: n.position.y + height / 2 };
+      const target = findDropTarget(pointer ?? center);
+      const current = n.data.namespace ?? "default";
+      if (!target || target.name === current) {
+        return { ...n, position: origin };
+      }
+      // Land the node where the pointer dropped, clamped inside the target box.
+      const pad = 8;
+      const x = clampValue(
+        pointer?.x ?? center.x - width / 2 - pad,
+        target.x + pad,
+        target.x + target.width - width - pad,
+      );
+      const y = clampValue(
+        pointer?.y ?? center.y - height / 2 - pad,
+        target.y + pad,
+        target.y + target.height - height - pad,
+      );
+      reassignedIds.push(n.id);
+      return { ...n, position: { x, y } };
     });
     dragOriginRef.current = new Map();
     setCanvasNodesPositionOnly(nextNodes);
     // The drop anchor is the POINTER position (in flow coordinates), not the node
     // center — large workloads (Deployments) dwarf their target rectangles, and
     // the user aims at the rectangle with the cursor, not the node's centroid.
-    const pointer = flowPointFromScreen(
-      event as { clientX?: number; clientY?: number },
-    );
-    moved.forEach((n) => {
-      // Synthetic nodes belong to their owner's namespace; cluster-scoped kinds
-      // never have a namespace — neither can be reassigned.
-      if (n.data.synthetic || isClusterScoped(n.data.kind)) return;
-      const width =
-        typeof n.style?.width === "number" ? n.style.width : FALLBACK_NODE_WIDTH;
-      const height =
-        typeof n.style?.height === "number" ? n.style.height : FALLBACK_NODE_HEIGHT;
-      const center = {
-        x: n.position.x + width / 2,
-        y: n.position.y + height / 2,
-      };
-      const target = effectiveLayout.namespaces.find((ns) =>
-        rectContains(ns, pointer ?? center),
+    reassignedIds.forEach((id) => {
+      const n = nextNodes.find((nn) => nn.id === id);
+      if (!n) return;
+      const target = findDropTarget(
+        pointer ?? { x: n.position.x, y: n.position.y },
       );
       if (!target) return;
       const current = n.data.namespace ?? "default";
@@ -994,23 +1112,16 @@ export default function Canvas() {
         text: `Moved ${n.data.name} to namespace “${target.name}”.`,
       });
     });
+    // The reassigned nodes got new (user-placed) positions — pin them like any
+    // other drag so a later commit doesn't auto-layout them back away.
+    if (reassignedIds.length) persistNodePositions(reassignedIds);
+    dragLayoutRef.current = null;
   };
 
-  // Add an empty namespace: prompt for the name, drop a default-size rectangle
-  // below the cluster. Validation (empty/duplicate) is surfaced by the store.
-  const handleAddNamespace = () => {
-    const name = window.prompt("New namespace name");
-    if (name === null) return;
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    const cluster = effectiveLayout?.cluster ?? { x: 20, y: 20, width: 1200, height: 1400 };
-    addNamespace(trimmed, {
-      x: cluster.x + 20,
-      y: cluster.y + cluster.height + 40,
-      width: 320,
-      height: 240,
-    });
-  };
+  // Add an empty namespace: modal asks for the name, then a default-size
+  // rectangle is dropped below the cluster. Validation is inline in the modal
+  // and re-checked by the store.
+  const [namespaceModalOpen, setNamespaceModalOpen] = useState(false);
 
   const onFlowInit = useCallback(
     (instance: ReactFlowInstance<Node<K8sNodeData>>) => {
@@ -1049,7 +1160,7 @@ export default function Canvas() {
             <button
               type="button"
               className="canvas-button"
-              onClick={handleAddNamespace}
+              onClick={() => setNamespaceModalOpen(true)}
               title="Add an empty namespace rectangle to the cluster"
             >
               + Namespace
@@ -1108,6 +1219,7 @@ export default function Canvas() {
               }}
               onPaneClick={() => setSelectedResource(null)}
               onNodeDragStart={onNodeDragStart}
+              onNodeDrag={onNodeDrag}
               onNodeDragStop={onNodeDragStop}
               onInit={onFlowInit}
               nodesDraggable
@@ -3502,6 +3614,11 @@ export default function Canvas() {
 
       {/* Post-drag hosts prompt for Ingress → Secret TLS connections */}
       <IngressTlsLinkModal />
+
+      {/* New-namespace prompt (namespace editing mode) */}
+      {namespaceModalOpen && (
+        <NamespaceModal onClose={() => setNamespaceModalOpen(false)} />
+      )}
     </div>
   );
 }
@@ -3563,6 +3680,11 @@ function toOptionalNumber(value: string): number | undefined {
   if (!value.trim()) return undefined;
   const n = Number(value);
   return Number.isFinite(n) ? n : undefined;
+}
+
+/** Clamp `v` into [min, max], tolerating inverted ranges (item bigger than the box). */
+function clampValue(v: number, min: number, max: number): number {
+  return Math.min(Math.max(v, min), Math.max(min, max));
 }
 
 function parseKeyValueString(

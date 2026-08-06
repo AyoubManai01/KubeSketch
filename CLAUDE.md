@@ -46,16 +46,41 @@ Cluster/`ns:` bounding frames become editable:
   (nested children follow via their parent). **Drag the cluster rect** → every
   top-level node (namespaced AND cluster-scoped) plus all namespace rects move.
   Resize via the 8 handles on each rect (nodes never move on resize).
-- **"+ Namespace"** prompts for a name (validated: non-empty, unique against
-  both persisted rects and namespaces discovered from the graph) and drops a
-  default-size empty rect below the cluster.
+  Rectangles can never overlap each other: the store clamps every move/resize
+  (`resolveMoveCollision`/`resolveResizeCollision` — the dragged rect is pushed
+  out along the axis of least penetration; growth stops at a neighbor's facing
+  edge) and even the add-namespace placement is collision-resolved. A resize
+  can never shrink past a contained resource either (each edge stops at its
+  content's facing edge, so a resource is never left outside its box), and a
+  namespace box can never extend outside the cluster box (edges are clamped to
+  the cluster while the box overlaps it — a west/north clamp re-anchors the
+  opposite edge so the box never grows from the wrong side into a neighbor).
+  Symmetrically, the cluster box can't shrink past its namespace boxes
+  (`resizeClusterRect` clamps the namespace rects as content).
+- **"+ Namespace"** opens a modal (like the resource creation prompts, not a
+  native alert) — inline validation for empty/duplicate names (against both
+  persisted rects and namespaces discovered from the graph) and a default-size
+  empty rect dropped below the cluster on confirm.
 - **Resources are fixed in place**: a node drag is a *reassignment attempt* —
   on drop the node snaps back to its pre-drag position and, if the **pointer**
   (not the node centroid — large workloads dwarf their target rects) is inside
   another namespace rect, `updateNodeFromCanvas({namespace})` reassigns it.
-  Synthetic nodes and cluster-scoped kinds can't be reassigned. Dragging is
-  disabled per-node for cluster-scoped kinds in NS mode, and
-  `autoPanOnNodeDrag` is off so the view never shifts mid-drop.
+  When a reassignment happens the node is repositioned **inside the target
+  rect** (pointer-anchored, clamped to its interior) and that position is
+  pinned, so the move is visible on the canvas instead of snapping back. The
+  drop target is the SMALLEST rect containing the pointer (auto-derived rects
+  can overlap when one namespace's workload surrounds another's). Synthetic
+  nodes and cluster-scoped kinds can't be reassigned. Dragging is disabled
+  per-node for cluster-scoped kinds in NS mode, and `autoPanOnNodeDrag` is off
+  so the view never shifts mid-drop.
+- **Normal mode is boundary-enforcing**: while dragging, namespaced nodes are
+  clamped inside their namespace box and cluster-scoped kinds are pushed out of
+  every namespace box (`clampDraggedNode` in Canvas, run live in `onNodeDrag`
+  and once more on drop — React Flow emits a final unclamped position change
+  after the last `onNodeDrag`, so the drop re-clamps against the layout
+  captured at drag start; all reads go through `useVeltraStore.getState()`
+  because React batches re-renders and the render-scope nodes are one frame
+  stale during a drag).
 - **Persistence**: `veltra_ns_layout` is written only when leaving NS mode AND
   the layout was actually edited. `nsLayout` starts `null` — `effectiveNsLayout`
   then derives everything from the live graph, so YAML changes always re-hug

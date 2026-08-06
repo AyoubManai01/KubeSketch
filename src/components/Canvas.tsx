@@ -10,7 +10,6 @@ import {
   type NodeChange,
   type Node,
   Panel,
-  ViewportPortal,
   type ReactFlowInstance,
 } from "@xyflow/react";
 import {
@@ -25,11 +24,19 @@ import "@xyflow/react/dist/style.css";
 
 import { useVeltraStore, apiVersionForKind } from "../store/store";
 import K8sNode from "./K8sNode";
+import NsFrame from "./NsFrame";
 import {
   SUPPORTED_KINDS,
   type K8sResource,
   type SupportedKind,
 } from "../types/types";
+import { isClusterScoped } from "../utils/k8sScope";
+import {
+  effectiveNsLayout,
+  rectContains,
+  FALLBACK_NODE_WIDTH,
+  FALLBACK_NODE_HEIGHT,
+} from "../utils/teachingFrame";
 import {
   getWorkloadPodLabels,
   getHpaTarget,
@@ -60,8 +67,6 @@ import IngressTlsLinkModal from "./IngressTlsLinkModal";
 const nodeTypes: NodeTypes = {
   k8sNode: K8sNode,
 };
-const FALLBACK_NODE_WIDTH = 220;
-const FALLBACK_NODE_HEIGHT = 130;
 const DEFAULT_NAMESPACES = ["default", "kube-system", "kube-public"];
 const SERVICE_TYPES = ["ClusterIP", "NodePort", "LoadBalancer", "ExternalName"];
 
@@ -312,15 +317,33 @@ export default function Canvas() {
   }, [selectionKey]);
 
   const isEmpty = nodes.length === 0;
-  const teachingFrame = useMemo(() => buildTeachingFrame(nodes), [nodes]);
+  const nsLayout = useVeltraStore((s) => s.nsLayout);
+  const nsEditMode = useVeltraStore((s) => s.nsEditMode);
+  const setNsEditMode = useVeltraStore((s) => s.setNsEditMode);
+  const addNamespace = useVeltraStore((s) => s.addNamespace);
+  // Persisted + auto-discovered cluster/namespace rectangles — the drop targets
+  // for namespace reassignment and the frames NsFrame renders.
+  const effectiveLayout = useMemo(
+    () => effectiveNsLayout(nsLayout, nodes),
+    [nsLayout, nodes],
+  );
+  // In namespace editing mode cluster-scoped kinds (PV/StorageClass) are fixed —
+  // they can't be reassigned, so they must not be draggable at all.
+  const displayNodes = useMemo(() => {
+    if (!nsEditMode) return nodes;
+    return nodes.map((n) =>
+      isClusterScoped(n.data.kind) ? { ...n, draggable: false } : n,
+    );
+  }, [nodes, nsEditMode]);
 
   const namespaceOptions = useMemo(() => {
     const discovered = new Set<string>(DEFAULT_NAMESPACES);
     nodes.forEach((node) => {
       if (node.data?.namespace) discovered.add(node.data.namespace);
     });
+    nsLayout?.namespaces?.forEach((ns) => discovered.add(ns.name));
     return Array.from(discovered).sort((a, b) => a.localeCompare(b));
-  }, [nodes]);
+  }, [nodes, nsLayout]);
 
   // Selectable `app` label values, with the real resources they come from —
   // selector fields are dropdowns over the live model, never free text.
@@ -850,16 +873,22 @@ export default function Canvas() {
     if (pvcAccessModeViolation) return;
 
     // The final resource: raw string drafts parsed into the structured model.
+    const metadata: K8sResource["metadata"] = {
+      ...(draftResource.metadata ?? {}),
+      name,
+      labels: parseKeyValueString(labelsDraft),
+      annotations: parseKeyValueString(annotationsDraft),
+    };
+    // Cluster-scoped kinds (PV/StorageClass) never carry a namespace — strip any
+    // stale value the draft may have inherited from YAML.
+    if (isClusterScoped(kind)) {
+      delete metadata.namespace;
+    }
     const finalResource: K8sResource = {
       ...draftResource,
       kind,
       apiVersion: apiVersionForKind(kind),
-      metadata: {
-        ...(draftResource.metadata ?? {}),
-        name,
-        labels: parseKeyValueString(labelsDraft),
-        annotations: parseKeyValueString(annotationsDraft),
-      },
+      metadata,
     };
 
     // Renames go through the identity path so reference cascades run
@@ -897,16 +926,90 @@ export default function Canvas() {
     addCanvasEdge(connection);
   };
 
-  // Dragging only moves nodes — positions are persisted once on drop and the
-  // YAML is never rewritten for a layout change (positions are not part of YAML).
-  // Only the dragged nodes are pinned so the rest keep auto-layout behavior.
-  const onNodeDragStop = (
+  // In namespace editing mode a resource drag is a namespace *reassignment*
+  // attempt, not a move — resources are fixed in place and move only with their
+  // rectangle. The pre-drag positions let us snap everything back on drop.
+  const dragOriginRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+
+  const onNodeDragStart = (
     _: unknown,
     node: Node<K8sNodeData>,
     draggedNodes: Node<K8sNodeData>[],
   ) => {
     const moved = draggedNodes?.length ? draggedNodes : [node];
-    persistNodePositions(moved.map((n) => n.id));
+    moved.forEach((n) => dragOriginRef.current.set(n.id, { ...n.position }));
+  };
+
+  // Dragging only moves nodes — positions are persisted once on drop and the
+  // YAML is never rewritten for a layout change (positions are not part of YAML).
+  // Only the dragged nodes are pinned so the rest keep auto-layout behavior.
+  const onNodeDragStop = (
+    event: unknown,
+    node: Node<K8sNodeData>,
+    draggedNodes: Node<K8sNodeData>[],
+  ) => {
+    const moved = draggedNodes?.length ? draggedNodes : [node];
+    if (!nsEditMode) {
+      dragOriginRef.current.clear();
+      persistNodePositions(moved.map((n) => n.id));
+      return;
+    }
+    // Namespace editing: resources are fixed — snap every dragged node back to
+    // its pre-drag position, then interpret the drop as a reassignment attempt.
+    const origins = dragOriginRef.current;
+    const nextNodes = nodes.map((n) => {
+      const origin = origins.get(n.id);
+      return origin ? { ...n, position: origin } : n;
+    });
+    dragOriginRef.current = new Map();
+    setCanvasNodesPositionOnly(nextNodes);
+    // The drop anchor is the POINTER position (in flow coordinates), not the node
+    // center — large workloads (Deployments) dwarf their target rectangles, and
+    // the user aims at the rectangle with the cursor, not the node's centroid.
+    const pointer = flowPointFromScreen(
+      event as { clientX?: number; clientY?: number },
+    );
+    moved.forEach((n) => {
+      // Synthetic nodes belong to their owner's namespace; cluster-scoped kinds
+      // never have a namespace — neither can be reassigned.
+      if (n.data.synthetic || isClusterScoped(n.data.kind)) return;
+      const width =
+        typeof n.style?.width === "number" ? n.style.width : FALLBACK_NODE_WIDTH;
+      const height =
+        typeof n.style?.height === "number" ? n.style.height : FALLBACK_NODE_HEIGHT;
+      const center = {
+        x: n.position.x + width / 2,
+        y: n.position.y + height / 2,
+      };
+      const target = effectiveLayout.namespaces.find((ns) =>
+        rectContains(ns, pointer ?? center),
+      );
+      if (!target) return;
+      const current = n.data.namespace ?? "default";
+      if (target.name === current) return;
+      updateNodeFromCanvas(n.id, { namespace: target.name });
+      setNotice({
+        id: Date.now() + Math.random(),
+        tone: "success",
+        text: `Moved ${n.data.name} to namespace “${target.name}”.`,
+      });
+    });
+  };
+
+  // Add an empty namespace: prompt for the name, drop a default-size rectangle
+  // below the cluster. Validation (empty/duplicate) is surfaced by the store.
+  const handleAddNamespace = () => {
+    const name = window.prompt("New namespace name");
+    if (name === null) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const cluster = effectiveLayout?.cluster ?? { x: 20, y: 20, width: 1200, height: 1400 };
+    addNamespace(trimmed, {
+      x: cluster.x + 20,
+      y: cluster.y + cluster.height + 40,
+      width: 320,
+      height: 240,
+    });
   };
 
   const onFlowInit = useCallback(
@@ -941,19 +1044,56 @@ export default function Canvas() {
             </button>
           ))}
         </div>
-        <span className="canvas-toolbar__hint">
-          <span
-            className={`canvas-sync-dot canvas-sync-dot--${isBidirectionalSync ? "active" : "inactive"}`}
-          />
-          {isBidirectionalSync ? "Sync active" : "Sync paused"}
-        </span>
+        <div className="canvas-toolbar__group">
+          {nsEditMode && (
+            <button
+              type="button"
+              className="canvas-button"
+              onClick={handleAddNamespace}
+              title="Add an empty namespace rectangle to the cluster"
+            >
+              + Namespace
+            </button>
+          )}
+          <button
+            type="button"
+            className={`canvas-button canvas-button--nsmode${nsEditMode ? " canvas-button--active" : ""}`}
+            onClick={() => setNsEditMode(!nsEditMode)}
+            title={
+              nsEditMode
+                ? "Exit namespace editing mode (layout is saved)"
+                : "Enter namespace editing mode — drag, resize and add namespace boxes"
+            }
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="3" y="3" width="8" height="8" rx="1.5" />
+              <rect x="13" y="3" width="8" height="8" rx="1.5" />
+              <rect x="3" y="13" width="8" height="8" rx="1.5" />
+              <rect x="13" y="13" width="8" height="8" rx="1.5" />
+            </svg>
+            {nsEditMode ? "Done" : "Namespaces"}
+          </button>
+          <span className="canvas-toolbar__hint">
+            <span
+              className={`canvas-sync-dot canvas-sync-dot--${isBidirectionalSync ? "active" : "inactive"}`}
+            />
+            {isBidirectionalSync ? "Sync active" : "Sync paused"}
+          </span>
+        </div>
       </div>
 
       <div className="canvas-wrapper">
         <div className="canvas-body">
           <div className="canvas-flow-host">
             <ReactFlow
-              nodes={nodes}
+              nodes={displayNodes}
               edges={edges}
               nodeTypes={nodeTypes}
               defaultEdgeOptions={{ type: "bezier" }}
@@ -967,42 +1107,20 @@ export default function Canvas() {
                 });
               }}
               onPaneClick={() => setSelectedResource(null)}
+              onNodeDragStart={onNodeDragStart}
               onNodeDragStop={onNodeDragStop}
               onInit={onFlowInit}
               nodesDraggable
+              nodesConnectable={!nsEditMode}
+              // Resources are fixed in NS mode (drags snap back), so edge auto-pan
+              // would only shift the view mid-drag and mislead the drop target.
+              autoPanOnNodeDrag={!nsEditMode}
               selectionOnDrag={false}
               elevateEdgesOnSelect={false}
               proOptions={{ hideAttribution: true }}
             >
-              <ViewportPortal>
-                {teachingFrame && (
-                  <div
-                    className="teaching-frame teaching-frame--outer"
-                    style={{
-                      width: teachingFrame.width,
-                      height: teachingFrame.height,
-                      transform: `translate(${teachingFrame.x}px, ${teachingFrame.y}px)`,
-                    }}
-                  >
-                    <div className="teaching-frame__title">Cluster</div>
-                  </div>
-                )}
-                {teachingFrame?.namespaces.map((namespace) => (
-                  <div
-                    key={namespace.id}
-                    className="teaching-frame teaching-frame--inner"
-                    style={{
-                      width: namespace.width,
-                      height: namespace.height,
-                      transform: `translate(${namespace.x}px, ${namespace.y}px)`,
-                    }}
-                  >
-                    <div className="teaching-frame__title">
-                      ns: {namespace.title}
-                    </div>
-                  </div>
-                ))}
-              </ViewportPortal>
+              {/* Cluster/namespace bounding frames — editable in namespace editing mode */}
+              <NsFrame layout={effectiveLayout} nodes={nodes} />
               <Panel position="top-left">
                 <div className="canvas-legend">
                   <span className="canvas-legend__item canvas-legend__item--own">
@@ -1244,7 +1362,7 @@ export default function Canvas() {
                     >
                       {inspectorData.name}
                     </div>
-                    {inspectorData.namespace && (
+                    {inspectorData.namespace && !isClusterScoped(inspectorData.kind) && (
                       <div className="inspector-hero__namespace">
                         ns/{inspectorData.namespace}
                       </div>
@@ -1417,24 +1535,26 @@ export default function Canvas() {
                         error={nameError}
                         onChange={setNameDraft}
                       />
-                      <div className="inspector-field">
-                        <label className="inspector-field__label">
-                          Namespace
-                        </label>
-                        <input
-                          className="inspector-field__input"
-                          value={(draftMetadata.namespace as string) ?? ""}
-                          list={namespaceListId}
-                          onChange={(e) =>
-                            patchDraft({
-                              metadata: {
-                                namespace: e.target.value || undefined,
-                              },
-                            })
-                          }
-                          placeholder="default"
-                        />
-                      </div>
+                      {!isClusterScoped(draftKind) && (
+                        <div className="inspector-field">
+                          <label className="inspector-field__label">
+                            Namespace
+                          </label>
+                          <input
+                            className="inspector-field__input"
+                            value={(draftMetadata.namespace as string) ?? ""}
+                            list={namespaceListId}
+                            onChange={(e) =>
+                              patchDraft({
+                                metadata: {
+                                  namespace: e.target.value || undefined,
+                                },
+                              })
+                            }
+                            placeholder="default"
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -3419,57 +3539,23 @@ function NameField({
 // ─── Helper functions ───────────────────────────────────────────────────────
 
 /**
- * Compute the Cluster/namespace guide frames from the *top-level* nodes only,
- * using each node's real width/height. Child nodes have parent-relative
- * coordinates and must not participate in absolute bounds.
+ * Convert screen (client) coordinates to flow coordinates. Mirrors React Flow's
+ * own screenToFlowPosition: the viewport transform is applied relative to the
+ * flow renderer's bounding box, so that offset must be subtracted too.
  */
-function buildTeachingFrame(nodes: Node<K8sNodeData>[]) {
-  const topLevel = nodes.filter((n) => !n.parentId);
-  if (!topLevel.length) return null;
-  const outer = getNodeBounds(topLevel, 90, 110);
-  const namespaceMap = new Map<string, Node<K8sNodeData>[]>();
-  topLevel.forEach((node) => {
-    const key = node.data?.namespace ?? "default";
-    const list = namespaceMap.get(key) ?? [];
-    list.push(node);
-    namespaceMap.set(key, list);
-  });
-
-  const namespaces = Array.from(namespaceMap.entries()).map(
-    ([namespace, members]) => {
-      const bounds = getNodeBounds(members, 40, 46);
-      return { id: `ns-${namespace}`, title: namespace, ...bounds };
-    },
-  );
-
-  return { ...outer, namespaces };
-}
-
-function getNodeBounds(nodes: Node<K8sNodeData>[], xPad: number, yPad: number) {
-  const bounds = nodes.reduce(
-    (acc, node) => {
-      const width =
-        typeof node.style?.width === "number"
-          ? node.style.width
-          : FALLBACK_NODE_WIDTH;
-      const height =
-        typeof node.style?.height === "number"
-          ? node.style.height
-          : FALLBACK_NODE_HEIGHT;
-      return {
-        minX: Math.min(acc.minX, node.position.x),
-        maxX: Math.max(acc.maxX, node.position.x + width),
-        minY: Math.min(acc.minY, node.position.y),
-        maxY: Math.max(acc.maxY, node.position.y + height),
-      };
-    },
-    { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity },
-  );
+function flowPointFromScreen(e: {
+  clientX?: number;
+  clientY?: number;
+}): { x: number; y: number } | null {
+  if (typeof e?.clientX !== "number" || typeof e.clientY !== "number") return null;
+  const renderer = document.querySelector(".react-flow__renderer") as HTMLElement | null;
+  const viewport = document.querySelector(".react-flow__viewport") as HTMLElement | null;
+  if (!renderer || !viewport) return null;
+  const bounds = renderer.getBoundingClientRect();
+  const m = new DOMMatrixReadOnly(viewport.style.transform);
   return {
-    x: bounds.minX - xPad,
-    y: bounds.minY - yPad,
-    width: bounds.maxX - bounds.minX + xPad * 2,
-    height: bounds.maxY - bounds.minY + yPad * 2,
+    x: (e.clientX - bounds.left - m.e) / m.a,
+    y: (e.clientY - bounds.top - m.f) / m.d,
   };
 }
 

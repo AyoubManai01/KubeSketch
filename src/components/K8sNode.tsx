@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { K8sNodeData } from '../utils/buildGraph';
+import { isClusterScoped } from '../utils/k8sScope';
 
 // Custom K8s inline SVG icons
 const ICONS: Record<string, React.ReactNode> = {
@@ -168,7 +169,8 @@ function K8sNodeComponent({ data }: NodeProps) {
             {/* Content Body (only for Leaf Nodes or empty Containers) */}
             {!isContainer && (
                 <div className="k8s-node__body">
-                    {nodeData.namespace && (
+                    {/* Cluster-scoped kinds (PV/StorageClass) have no namespace */}
+                    {nodeData.namespace && !isClusterScoped(nodeData.kind) && (
                         <div className="k8s-node__info-row">
                             <span className="k8s-node__info-key">Namespace:</span>
                             <span className="k8s-node__info-val">{nodeData.namespace}</span>

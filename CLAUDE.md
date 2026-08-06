@@ -30,9 +30,41 @@ YAML text ──parseYaml──▶ K8sResource[] ──buildGraph──▶ nodes
 - [src/utils/buildGraph.ts](src/utils/buildGraph.ts) — resources → React Flow nodes (nested containment: Pod ⊂ ReplicaSet ⊂ Deployment) + inferred edges (ingress backends, service selectors, HPA scaleTargetRefs), plus lane-based auto-layout and collision resolution.
 - [src/utils/linkResources.ts](src/utils/linkResources.ts) — semantic meaning of manual canvas connections (writes selectors/labels/backends into the model).
 - [src/utils/serializeYaml.ts](src/utils/serializeYaml.ts) — resources → YAML (`skipInvalid: true`).
+- [src/utils/k8sScope.ts](src/utils/k8sScope.ts) — `CLUSTER_SCOPED_KINDS` (PersistentVolume, StorageClass) + `isClusterScoped(kind)`.
+- [src/utils/teachingFrame.ts](src/utils/teachingFrame.ts) — cluster/namespace bounding frames: `buildTeachingFrame` (auto-derive from top-level nodes; cluster-scoped kinds never join a namespace rect), `effectiveNsLayout` (persisted layout ∪ auto-discovered namespaces), `rectContains`.
+- [src/components/NsFrame.tsx](src/components/NsFrame.tsx) — renders the frames inside a `ViewportPortal`; in NS editing mode they get pointer drag/resize surfaces (8 handles each). Drag deltas are cumulative and events bubble through the outer frame, so only the pointer-captured element may apply a move (guard: `drag.el === e.currentTarget`), and the store diffs absolute rects against its own layout instead of adding deltas.
 - [src/components/Canvas.tsx](src/components/Canvas.tsx) — canvas + node inspector. [src/components/YamlEditor.tsx](src/components/YamlEditor.tsx) — Monaco + selected-resource highlight. [src/components/CreateResourceModal.tsx](src/components/CreateResourceModal.tsx) — resource creation with validation.
 
-localStorage keys: `veltra_yaml`, `veltra_user_edges`, `veltra_node_positions`.
+localStorage keys: `veltra_yaml`, `veltra_user_edges`, `veltra_node_positions`, `veltra_ns_layout`.
+
+## Namespace editing mode
+
+The toolbar's "Namespaces" toggle enters NS editing mode, where the decorative
+Cluster/`ns:` bounding frames become editable:
+
+- **Drag a namespace rect** → its contained top-level nodes translate with it
+  (nested children follow via their parent). **Drag the cluster rect** → every
+  top-level node (namespaced AND cluster-scoped) plus all namespace rects move.
+  Resize via the 8 handles on each rect (nodes never move on resize).
+- **"+ Namespace"** prompts for a name (validated: non-empty, unique against
+  both persisted rects and namespaces discovered from the graph) and drops a
+  default-size empty rect below the cluster.
+- **Resources are fixed in place**: a node drag is a *reassignment attempt* —
+  on drop the node snaps back to its pre-drag position and, if the **pointer**
+  (not the node centroid — large workloads dwarf their target rects) is inside
+  another namespace rect, `updateNodeFromCanvas({namespace})` reassigns it.
+  Synthetic nodes and cluster-scoped kinds can't be reassigned. Dragging is
+  disabled per-node for cluster-scoped kinds in NS mode, and
+  `autoPanOnNodeDrag` is off so the view never shifts mid-drop.
+- **Persistence**: `veltra_ns_layout` is written only when leaving NS mode AND
+  the layout was actually edited. `nsLayout` starts `null` — `effectiveNsLayout`
+  then derives everything from the live graph, so YAML changes always re-hug
+  the frames; edit actions lazily seed `nsLayout` from the graph via
+  `ensureNsLayout` in the store.
+- **Cluster-scoped kinds** (PV/StorageClass) render inside the cluster rect but
+  OUTSIDE any namespace rect; the create modal and the inspector hide the
+  Namespace field for them, and `updateNodeFromCanvas`/`handleValidate` strip a
+  stale namespace.
 
 ## Invariants — do not break these
 

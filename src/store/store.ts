@@ -21,11 +21,20 @@ import {
     type ConfigMapMechanism,
     type SecretMechanism,
 } from '../utils/linkResources';
+import { isClusterScoped } from '../utils/k8sScope';
+import {
+    buildTeachingFrame,
+    DEFAULT_CLUSTER_RECT,
+    type NamespaceRect,
+    type NsLayout,
+    type Rect,
+} from '../utils/teachingFrame';
 import type { SupportedKind, K8sResource } from '../types/types';
 
 const YAML_KEY = 'veltra_yaml';
 const USER_EDGES_KEY = 'veltra_user_edges';
 const POSITIONS_KEY = 'veltra_node_positions';
+const NS_LAYOUT_KEY = 'veltra_ns_layout';
 
 /** Default YAML shown when the app first loads */
 export const DEFAULT_YAML = `# Paste your Kubernetes YAML here (multi-document with ---)
@@ -243,6 +252,16 @@ interface VeltraState {
     /** An Ingress→Secret drag awaiting the TLS hosts in the post-drag prompt. */
     pendingIngressTlsLink: PendingIngressTlsLink | null;
 
+    /** Namespace editing mode: namespace/cluster rectangles become draggable,
+     *  resizeable and addable; resources are fixed in place (group-moved with
+     *  their rectangle) and can be dragged onto another rectangle to reassign. */
+    nsEditMode: boolean;
+
+    /** Cluster + namespace rectangles (positions/sizes). Null until the user
+     *  edits them — the rendered layout then derives from the live graph every
+     *  time. Persisted on exit of namespace editing. */
+    nsLayout: NsLayout | null;
+
     setNotice: (notice: CanvasNotice | null) => void;
     setYaml: (value: string) => void;
     setBidirectionalSync: (enabled: boolean) => void;
@@ -291,6 +310,21 @@ interface VeltraState {
     resetLayout: () => void;
     /** Clear the manifest, canvas, manual edges and saved layout. */
     clearAll: () => void;
+    /** Enter/exit namespace editing mode; exiting persists the layout. */
+    setNsEditMode: (on: boolean) => void;
+    /** Move a namespace rectangle (and every contained top-level node with it).
+     *  The node translation is derived by diffing `rect` against the current
+     *  rectangle, so callers may pass absolute (drag-start-anchored) rects. */
+    moveNamespace: (name: string, rect: Rect) => void;
+    /** Move the cluster rectangle, all namespace rectangles and every top-level
+     *  node with it (translation derived from the rect diff). */
+    moveClusterRect: (cluster: Rect) => void;
+    /** Resize a namespace rectangle (no node movement). */
+    resizeNsRect: (name: string, rect: Rect) => void;
+    /** Resize the cluster rectangle (no node movement). */
+    resizeClusterRect: (rect: Rect) => void;
+    /** Add an empty namespace rectangle with the given position/size. */
+    addNamespace: (name: string, rect?: Rect) => void;
 }
 
 export const useVeltraStore = create<VeltraState>((set, get) => {
@@ -357,6 +391,10 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
     let initialHpaOverrides: HpaReplicaOverride[] = [];
     let initialError: string | null = null;
 
+    // Persisted namespace layout, or null (derive from the live graph until the
+    // user actually edits rectangles).
+    const savedNsLayout = readNsLayout();
+
     try {
         const resources = parseYaml(yamlVal);
         // HPA priority also corrects pasted/saved YAML on load: the clamped value
@@ -391,6 +429,8 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         pendingPvcLink: null,
         pendingSecretLink: null,
         pendingIngressTlsLink: null,
+        nsEditMode: false,
+        nsLayout: savedNsLayout,
 
         setNotice: (notice) => set({ notice }),
 
@@ -483,7 +523,12 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
 
                 const kind = (patch.kind ?? node.data.kind) as SupportedKind;
                 const name = (patch.name ?? node.data.name).trim();
-                const namespace = patch.namespace !== undefined ? patch.namespace : node.data.namespace;
+                // Cluster-scoped kinds (PV/StorageClass) can never hold a namespace.
+                const namespace = isClusterScoped(kind)
+                    ? undefined
+                    : patch.namespace !== undefined
+                    ? patch.namespace
+                    : node.data.namespace;
 
                 if (!name) return {}; // never allow a nameless resource
                 const duplicate = state.nodes.some(
@@ -1067,13 +1112,20 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
 
         resetLayout: () => {
             localStorage.removeItem(POSITIONS_KEY);
+            localStorage.removeItem(NS_LAYOUT_KEY);
             set((state) => {
                 // Rebuild with no previous coordinates so every node returns to auto-layout.
                 // HPA clamps are already written into the node resources; re-run the
                 // override pass so the status bar reflects the current state.
                 const resources = toResources(state.nodes);
                 const hpaOverrides = applyHpaReplicaOverrides(resources);
-                return { ...deriveGraph(resources, [], state.userEdges), hpaOverrides };
+                const derived = deriveGraph(resources, [], state.userEdges);
+                return {
+                    ...derived,
+                    hpaOverrides,
+                    // Namespace/cluster frames re-derive from the fresh auto-layout.
+                    nsLayout: null,
+                };
             });
         },
 
@@ -1081,6 +1133,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
             localStorage.setItem(YAML_KEY, '');
             localStorage.removeItem(POSITIONS_KEY);
             localStorage.removeItem(USER_EDGES_KEY);
+            localStorage.removeItem(NS_LAYOUT_KEY);
             set({
                 yaml: '',
                 nodes: [],
@@ -1096,8 +1149,120 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 pendingSecretLink: null,
                 pendingIngressTlsLink: null,
                 canvasDirtyWhilePaused: false,
+                nsEditMode: false,
+                nsLayout: null,
             });
         },
+
+        setNsEditMode: (on) => {
+            if (!on) {
+                // Auto-persist the layout when leaving namespace editing mode —
+                // but only if the user actually edited it (null = pure auto-layout).
+                const layout = get().nsLayout;
+                if (layout) persistNsLayout(layout);
+            }
+            set({ nsEditMode: on });
+        },
+
+        moveNamespace: (name, rect) =>
+            set((state) => {
+                const layout = ensureNsLayout(state);
+                // Translation is the diff between the passed rect and the one the
+                // layout currently holds — the caller may pass absolute rects
+                // anchored at drag start without double-applying.
+                const old = layout.namespaces.find((ns) => ns.name === name);
+                const dx = old ? rect.x - old.x : 0;
+                const dy = old ? rect.y - old.y : 0;
+                // Only top-level namespaced nodes ride along with their rectangle;
+                // nested children (Pods inside RSs/Deployments) follow via their
+                // parent's absolute position and cluster-scoped kinds never move
+                // with a namespace.
+                const nextNodes = state.nodes.map((n) => {
+                    if (n.parentId) return n;
+                    if (isClusterScoped(n.data.kind)) return n;
+                    if ((n.data.namespace ?? 'default') !== name) return n;
+                    return { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } };
+                });
+                return {
+                    nodes: nextNodes,
+                    nsLayout: {
+                        ...layout,
+                        namespaces: upsertNsRect(layout.namespaces, name, rect),
+                    },
+                };
+            }),
+
+        moveClusterRect: (cluster) =>
+            set((state) => {
+                const layout = ensureNsLayout(state);
+                const dx = cluster.x - layout.cluster.x;
+                const dy = cluster.y - layout.cluster.y;
+                // The whole cluster translates: every top-level node (namespaced
+                // and cluster-scoped alike) plus all namespace rectangles.
+                const nextNodes = state.nodes.map((n) =>
+                    n.parentId ? n : { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } }
+                );
+                const namespaces = layout.namespaces.map((ns) => ({
+                    ...ns,
+                    x: ns.x + dx,
+                    y: ns.y + dy,
+                }));
+                return { nodes: nextNodes, nsLayout: { cluster, namespaces } };
+            }),
+
+        resizeNsRect: (name, rect) =>
+            set((state) => {
+                const layout = ensureNsLayout(state);
+                return {
+                    nsLayout: {
+                        ...layout,
+                        namespaces: upsertNsRect(layout.namespaces, name, rect),
+                    },
+                };
+            }),
+
+        resizeClusterRect: (rect) =>
+            set((state) => ({
+                nsLayout: { ...ensureNsLayout(state), cluster: rect },
+            })),
+
+        addNamespace: (name, rect) =>
+            set((state) => {
+                const layout = ensureNsLayout(state);
+                const trimmed = (name ?? '').trim();
+                if (!trimmed) {
+                    return { notice: makeNotice('error', 'Namespace name cannot be empty.') };
+                }
+                // Duplicates cover persisted rectangles AND namespaces currently
+                // discovered from the graph (YAML-authored, never edited).
+                const exists =
+                    layout.namespaces.some((ns) => ns.name === trimmed) ||
+                    state.nodes.some(
+                        (n) =>
+                            !n.data.synthetic &&
+                            !isClusterScoped(n.data.kind) &&
+                            (n.data.namespace ?? 'default') === trimmed
+                    );
+                if (exists) {
+                    return {
+                        notice: makeNotice(
+                            'error',
+                            `Namespace “${trimmed}” already exists on the canvas.`
+                        ),
+                    };
+                }
+                const fallback: Rect = { x: 40, y: 40, width: 320, height: 240 };
+                return {
+                    nsLayout: {
+                        ...layout,
+                        namespaces: [...layout.namespaces, { name: trimmed, ...(rect ?? fallback) }],
+                    },
+                    notice: makeNotice(
+                        'success',
+                        `Namespace “${trimmed}” added — drag resources onto it to assign them.`
+                    ),
+                };
+            }),
     };
 });
 
@@ -1520,4 +1685,68 @@ function renameStoredPosition(oldKey: string, newKey: string) {
             localStorage.setItem(POSITIONS_KEY, JSON.stringify(positions));
         }
     } catch {}
+}
+
+// ─── Namespace layout storage helpers ────────────────────────────────────────
+
+/** The layout to edit: the persisted one, or a fresh auto-derivation from the
+ *  current graph (so unedited layouts always hug the live nodes). */
+function ensureNsLayout(state: VeltraState): NsLayout {
+    if (state.nsLayout) return state.nsLayout;
+    return (
+        buildTeachingFrame(state.nodes) ?? {
+            cluster: { ...DEFAULT_CLUSTER_RECT },
+            namespaces: [],
+        }
+    );
+}
+
+function readNsLayout(): NsLayout | null {
+    try {
+        const saved = localStorage.getItem(NS_LAYOUT_KEY);
+        if (!saved) return null;
+        const parsed = JSON.parse(saved);
+        const isValidRect = (r: unknown): r is Rect =>
+            !!r &&
+            typeof (r as Rect).x === 'number' &&
+            typeof (r as Rect).y === 'number' &&
+            typeof (r as Rect).width === 'number' &&
+            typeof (r as Rect).height === 'number';
+        if (!isValidRect(parsed?.cluster)) return null;
+        const namespaces = Array.isArray(parsed?.namespaces)
+            ? (parsed.namespaces as unknown[]).filter(
+                  (ns): ns is NamespaceRect =>
+                      isValidRect(ns) &&
+                      typeof (ns as NamespaceRect).name === 'string' &&
+                      (ns as NamespaceRect).name.length > 0
+              )
+            : [];
+        return { cluster: parsed.cluster, namespaces };
+    } catch {
+        return null;
+    }
+}
+
+function persistNsLayout(layout: NsLayout) {
+    try {
+        localStorage.setItem(NS_LAYOUT_KEY, JSON.stringify(layout));
+    } catch (e) {
+        console.error('Failed to save namespace layout to storage', e);
+    }
+}
+
+/** Upsert a rectangle into the namespace list (used for auto-discovered namespaces
+ *  that are being edited for the first time). */
+function upsertNsRect(
+    namespaces: NamespaceRect[],
+    name: string,
+    rect: Rect
+): NamespaceRect[] {
+    const idx = namespaces.findIndex((ns) => ns.name === name);
+    if (idx >= 0) {
+        const copy = [...namespaces];
+        copy[idx] = { ...copy[idx], ...rect };
+        return copy;
+    }
+    return [...namespaces, { name, ...rect }];
 }

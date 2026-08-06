@@ -479,6 +479,30 @@ body,
   border-color: rgba(239, 68, 68, 0.3);
 }
 
+.canvas-button--nsmode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.canvas-button--nsmode svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
+.canvas-button--active {
+  background: rgba(20, 184, 166, 0.14);
+  border-color: rgba(20, 184, 166, 0.5);
+  color: #2dd4bf;
+}
+
+.canvas-button--active:hover {
+  background: rgba(20, 184, 166, 0.2);
+  border-color: rgba(20, 184, 166, 0.6);
+}
+
 .canvas-wrapper {
   flex: 1;
   position: relative;
@@ -851,6 +875,46 @@ body,
   padding: 1px 7px;
   letter-spacing: 0.8px;
 }
+
+/* Namespace editing mode: the frames become draggable/resizeable surfaces */
+.teaching-frame--editable {
+  pointer-events: auto;
+  cursor: move;
+}
+
+.teaching-frame--outer.teaching-frame--editable {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.teaching-frame--inner.teaching-frame--editable {
+  border-color: rgba(20, 184, 166, 0.4);
+  background: rgba(20, 184, 166, 0.06);
+}
+
+.teaching-frame__resize-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: rgba(148, 163, 184, 0.95);
+  border: 1px solid rgba(15, 20, 32, 0.9);
+  border-radius: 2px;
+  z-index: 5;
+}
+
+.teaching-frame__resize-handle:hover {
+  background: #60a5fa;
+  box-shadow: 0 0 6px rgba(96, 165, 250, 0.6);
+}
+
+.teaching-frame__resize-handle--nw { top: -5px; left: -5px; cursor: nwse-resize; }
+.teaching-frame__resize-handle--n { top: -5px; left: 50%; margin-left: -5px; cursor: ns-resize; }
+.teaching-frame__resize-handle--ne { top: -5px; right: -5px; cursor: nesw-resize; }
+.teaching-frame__resize-handle--e { right: -5px; top: 50%; margin-top: -5px; cursor: ew-resize; }
+.teaching-frame__resize-handle--se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+.teaching-frame__resize-handle--s { bottom: -5px; left: 50%; margin-left: -5px; cursor: ns-resize; }
+.teaching-frame__resize-handle--sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
+.teaching-frame__resize-handle--w { left: -5px; top: 50%; margin-top: -5px; cursor: ew-resize; }
 
 /* ---------- Canvas Toolbar Group ---------- */
 .canvas-toolbar__group {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { K8sResource, SupportedKind } from '../types/types';
 import { getWorkloadPodLabels, replicasOf } from '../utils/buildGraph';
+import { isClusterScoped } from '../utils/k8sScope';
 import type { ConfigMapMechanism, SecretMechanism } from '../utils/linkResources';
 import {
     useVeltraStore,
@@ -118,6 +119,7 @@ function hexToRgba(hex: string, alpha: number): string {
 export default function CreateResourceModal({ kind, onClose }: Props) {
     const nodes = useVeltraStore((s) => s.nodes);
     const addConfiguredNode = useVeltraStore((s) => s.addConfiguredNode);
+    const nsLayout = useVeltraStore((s) => s.nsLayout);
 
     const suggestedName = useMemo(() => {
         const base = kind.toLowerCase();
@@ -234,8 +236,9 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     const namespaceOptions = useMemo(() => {
         const vals = new Set<string>(['default', 'kube-system']);
         nodes.forEach((n) => { if (n.data.namespace) vals.add(n.data.namespace); });
+        nsLayout?.namespaces?.forEach((ns) => vals.add(ns.name));
         return Array.from(vals).sort();
-    }, [nodes]);
+    }, [nodes, nsLayout]);
 
     // Link targets for a new ConfigMap: real Deployments/ReplicaSets/standalone Pods,
     // plus controller-materialized Pods (their ref is written to the real owner's pod
@@ -542,7 +545,8 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                 return {
                     apiVersion: 'v1',
                     kind,
-                    metadata: { name: meta.name, namespace: meta.namespace },
+                    // PVs are cluster-scoped — no namespace field.
+                    metadata: { name: meta.name },
                     spec: {
                         capacity: { storage: pvCapacity.trim() || '10Gi' },
                         accessModes: [pvAccessModes],
@@ -553,7 +557,8 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                 return {
                     apiVersion: 'storage.k8s.io/v1',
                     kind,
-                    metadata: { name: meta.name, namespace: meta.namespace },
+                    // StorageClasses are cluster-scoped — no namespace field.
+                    metadata: { name: meta.name },
                     spec: {
                         provisioner: scProvisioner.trim() || 'kubernetes.io/no-provisioner',
                         ...(scReclaimPolicy ? { reclaimPolicy: scReclaimPolicy } : {}),
@@ -668,19 +673,21 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                             />
                             {nameError && <span className="modal-field__error">{nameError}</span>}
                         </div>
-                        <div className="modal-field">
-                            <label className="modal-field__label">Namespace</label>
-                            <input
-                                className="modal-field__input"
-                                value={namespace}
-                                list="modal-ns-list"
-                                onChange={(e) => setNamespace(e.target.value)}
-                                placeholder="default"
-                            />
-                            <datalist id="modal-ns-list">
-                                {namespaceOptions.map((ns) => <option key={ns} value={ns} />)}
-                            </datalist>
-                        </div>
+                        {!isClusterScoped(kind) && (
+                            <div className="modal-field">
+                                <label className="modal-field__label">Namespace</label>
+                                <input
+                                    className="modal-field__input"
+                                    value={namespace}
+                                    list="modal-ns-list"
+                                    onChange={(e) => setNamespace(e.target.value)}
+                                    placeholder="default"
+                                />
+                                <datalist id="modal-ns-list">
+                                    {namespaceOptions.map((ns) => <option key={ns} value={ns} />)}
+                                </datalist>
+                            </div>
+                        )}
                     </div>
 
                     {/* App Label — auto-generated for workloads/Pods, target picker for Services */}

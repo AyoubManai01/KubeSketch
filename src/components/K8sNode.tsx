@@ -79,6 +79,20 @@ const ICONS: Record<string, React.ReactNode> = {
             <circle cx="12" cy="15.5" r="1.5" />
         </svg>
     ),
+    Job: (
+        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M8 2v4M16 2v4M3 9h18" />
+            <path d="M9 14l2 2 4-4" />
+        </svg>
+    ),
+    CronJob: (
+        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v5l3 3" />
+            <path d="M12 4v3M12 17v3" />
+        </svg>
+    ),
 };
 
 const KIND_COLORS: Record<string, string> = {
@@ -93,6 +107,8 @@ const KIND_COLORS: Record<string, string> = {
     PersistentVolume: '#84cc16',      // Lime
     StorageClass: '#6366f1',          // Indigo
     Secret: '#dc2626',                // Red
+    Job: '#eab308',                   // Yellow
+    CronJob: '#d946ef',               // Fuchsia
 };
 
 function K8sNodeComponent({ data }: NodeProps) {
@@ -151,6 +167,16 @@ function K8sNodeComponent({ data }: NodeProps) {
                 {kind === 'HPA' && typeof spec.maxReplicas === 'number' && (
                     <div className="k8s-node__badge" title="Max replicas">
                         ≤ {spec.maxReplicas}
+                    </div>
+                )}
+                {kind === 'Job' && typeof spec.parallelism === 'number' && (
+                    <div className="k8s-node__badge" title="Pods running in parallel">
+                        ∥{spec.parallelism} Pods
+                    </div>
+                )}
+                {kind === 'CronJob' && typeof spec.schedule === 'string' && (
+                    <div className="k8s-node__badge" title="Cron schedule">
+                        {spec.schedule}
                     </div>
                 )}
                 {kind === 'PersistentVolumeClaim' &&
@@ -313,6 +339,48 @@ function buildResourceDetails(nodeData: K8sNodeData): DetailPair[] {
         }
         if (spec.reclaimPolicy) {
             details.push({ key: 'reclaim', val: String(spec.reclaimPolicy) });
+        }
+    }
+    if (nodeData.kind === 'Job') {
+        if (spec.restartPolicy || spec.template?.spec?.restartPolicy) {
+            details.push({
+                key: 'restart',
+                val: String(spec.restartPolicy ?? spec.template?.spec?.restartPolicy),
+            });
+        }
+        if (typeof spec.parallelism === 'number') {
+            details.push({ key: 'parallelism', val: String(spec.parallelism) });
+        }
+        if (typeof spec.completions === 'number') {
+            details.push({ key: 'completions', val: String(spec.completions) });
+        }
+        const container = spec.template?.spec?.containers?.[0];
+        if (container?.name) {
+            details.push({ key: 'container', val: container.name });
+        }
+        if (container?.image) {
+            const parts = container.image.split('/');
+            details.push({ key: 'image', val: parts[parts.length - 1] });
+        }
+    }
+    if (nodeData.kind === 'CronJob') {
+        if (spec.schedule) {
+            details.push({ key: 'schedule', val: String(spec.schedule) });
+        }
+        const jobSpec = spec.jobTemplate?.spec;
+        if (typeof jobSpec?.parallelism === 'number') {
+            details.push({ key: 'parallelism', val: String(jobSpec.parallelism) });
+        }
+        if (typeof jobSpec?.completions === 'number') {
+            details.push({ key: 'completions', val: String(jobSpec.completions) });
+        }
+        const container = jobSpec?.template?.spec?.containers?.[0];
+        if (container?.name) {
+            details.push({ key: 'container', val: container.name });
+        }
+        if (container?.image) {
+            const parts = container.image.split('/');
+            details.push({ key: 'image', val: parts[parts.length - 1] });
         }
     }
     return details;

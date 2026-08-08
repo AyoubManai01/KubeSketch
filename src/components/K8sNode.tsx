@@ -86,6 +86,13 @@ const ICONS: Record<string, React.ReactNode> = {
             <path d="M9 14l2 2 4-4" />
         </svg>
     ),
+    CronJob: (
+        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v5l3 3" />
+            <path d="M12 4v3M12 17v3" />
+        </svg>
+    ),
 };
 
 const KIND_COLORS: Record<string, string> = {
@@ -101,6 +108,7 @@ const KIND_COLORS: Record<string, string> = {
     StorageClass: '#6366f1',          // Indigo
     Secret: '#dc2626',                // Red
     Job: '#eab308',                   // Yellow
+    CronJob: '#d946ef',               // Fuchsia
 };
 
 function K8sNodeComponent({ data }: NodeProps) {
@@ -164,6 +172,11 @@ function K8sNodeComponent({ data }: NodeProps) {
                 {kind === 'Job' && typeof spec.parallelism === 'number' && (
                     <div className="k8s-node__badge" title="Pods running in parallel">
                         ∥{spec.parallelism} Pods
+                    </div>
+                )}
+                {kind === 'CronJob' && typeof spec.schedule === 'string' && (
+                    <div className="k8s-node__badge" title="Cron schedule">
+                        {spec.schedule}
                     </div>
                 )}
                 {kind === 'PersistentVolumeClaim' &&
@@ -342,6 +355,26 @@ function buildResourceDetails(nodeData: K8sNodeData): DetailPair[] {
             details.push({ key: 'completions', val: String(spec.completions) });
         }
         const container = spec.template?.spec?.containers?.[0];
+        if (container?.name) {
+            details.push({ key: 'container', val: container.name });
+        }
+        if (container?.image) {
+            const parts = container.image.split('/');
+            details.push({ key: 'image', val: parts[parts.length - 1] });
+        }
+    }
+    if (nodeData.kind === 'CronJob') {
+        if (spec.schedule) {
+            details.push({ key: 'schedule', val: String(spec.schedule) });
+        }
+        const jobSpec = spec.jobTemplate?.spec;
+        if (typeof jobSpec?.parallelism === 'number') {
+            details.push({ key: 'parallelism', val: String(jobSpec.parallelism) });
+        }
+        if (typeof jobSpec?.completions === 'number') {
+            details.push({ key: 'completions', val: String(jobSpec.completions) });
+        }
+        const container = jobSpec?.template?.spec?.containers?.[0];
         if (container?.name) {
             details.push({ key: 'container', val: container.name });
         }

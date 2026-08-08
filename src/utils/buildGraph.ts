@@ -34,6 +34,8 @@ const SECRET_WIDTH = 180;
 const SECRET_HEIGHT = 104; // fits header + data rows without overflowing the leaf box
 const JOB_WIDTH = 180;
 const JOB_HEIGHT = 124; // fits header + restart/parallelism/completions rows without overflowing the leaf box
+const CRONJOB_WIDTH = 185;
+const CRONJOB_HEIGHT = 150; // fits header + schedule/parallelism/completions/container/image rows without overflowing the leaf box
 const RS_HEADER_HEIGHT = 45;
 const DEP_HEADER_HEIGHT = 45;
 
@@ -74,6 +76,14 @@ export function replicasOf(resource: K8sResource): number {
 export function parallelismOf(resource: K8sResource): number {
     const spec = resource.spec as { parallelism?: unknown } | undefined;
     const n = spec?.parallelism;
+    if (typeof n === 'number' && Number.isFinite(n) && n >= 1) return Math.floor(n);
+    return 1;
+}
+
+/** Number of Pods a CronJob's Job runs at the same time (spec.jobTemplate.spec.parallelism, defaults to 1 when unset). */
+export function cronParallelismOf(resource: K8sResource): number {
+    const spec = resource.spec as { jobTemplate?: { spec?: { parallelism?: unknown } } } | undefined;
+    const n = spec?.jobTemplate?.spec?.parallelism;
     if (typeof n === 'number' && Number.isFinite(n) && n >= 1) return Math.floor(n);
     return 1;
 }
@@ -235,6 +245,33 @@ function synthesizePod(rs: K8sResource, name: string): K8sResource {
 }
 
 /**
+ * The Job a real cluster's CronJob controller would create for its next scheduled
+ * run. The Job's spec is the CronJob's `spec.jobTemplate.spec` — a CronJob never
+ * links to an existing Job, it always creates its own.
+ */
+function synthesizeJob(cron: K8sResource): K8sResource {
+    const spec = cron.spec as { jobTemplate?: { spec?: unknown } } | undefined;
+    const podLabels = getWorkloadPodLabels(cron) ?? { app: cron.metadata.name };
+    return {
+        apiVersion: 'batch/v1',
+        kind: 'Job',
+        metadata: {
+            name: `${cron.metadata.name}-${shortHash(cron.metadata.name)}`,
+            ...(cron.metadata.namespace ? { namespace: cron.metadata.namespace } : {}),
+            labels: { ...podLabels },
+        },
+        spec: spec?.jobTemplate?.spec
+            ? structuredClone(spec.jobTemplate.spec)
+            : {
+                  template: {
+                      metadata: { labels: { ...podLabels } },
+                      spec: { restartPolicy: 'OnFailure', containers: [{ name: 'app', image: 'nginx:latest' }] },
+                  },
+              },
+    };
+}
+
+/**
  * Helper to fetch a node's saved position from localStorage.
  * Used on initial load to preserve manual drag positions.
  */
@@ -316,6 +353,7 @@ export function buildGraph(
     const storageClasses = resources.filter((r) => r.kind === 'StorageClass');
     const secrets = resources.filter((r) => r.kind === 'Secret');
     const jobs = resources.filter((r) => r.kind === 'Job');
+    const cronJobs = resources.filter((r) => r.kind === 'CronJob');
 
     // Ownership assignment: each ReplicaSet is claimed by at most ONE Deployment,
     // each Pod by at most ONE ReplicaSet (first match wins). This prevents a resource
@@ -441,6 +479,38 @@ export function buildGraph(
         jobToPod.set(job, [...explicit, ...generated]);
     });
 
+    // CronJobs always create their OWN Job (never claim an existing one — a real
+    // Job in the manifest stays standalone). Synthesize exactly one Job from the
+    // CronJob's spec.jobTemplate.spec and materialize its Pods up to the
+    // template's parallelism. The Job and its Pods are siblings of the CronJob
+    // node (linked by inferred edges), never nested.
+    const cronToJob = new Map<K8sResource, K8sResource>();
+    const syntheticCronJobs: K8sResource[] = [];
+    cronJobs.forEach((cron) => {
+        const job = synthesizeJob(cron);
+        syntheticOwner.set(job, { kind: 'CronJob', name: cron.metadata.name });
+        cronToJob.set(cron, job);
+        syntheticCronJobs.push(job);
+    });
+    syntheticCronJobs.forEach((job) => {
+        const desired = parallelismOf(job);
+        const shortfall = Math.min(desired, MAX_SYNTHETIC_PODS);
+        if (shortfall === 0) return;
+        const owner = syntheticOwner.get(job) ?? { kind: 'CronJob', name: job.metadata.name };
+        const generated: K8sResource[] = [];
+        let suffix = 1;
+        for (let i = 0; i < shortfall; i++) {
+            let name = `${job.metadata.name}-${suffix++}`;
+            while (usedJobPodNames.has(name)) name = `${job.metadata.name}-${suffix++}`;
+            usedJobPodNames.add(name);
+            const pod = synthesizePod(job, name);
+            syntheticOwner.set(pod, owner);
+            generated.push(pod);
+        }
+        syntheticPods.push(...generated);
+        jobToPod.set(job, generated);
+    });
+
     /** All pods that end up on the canvas — explicit + controller-materialized. */
     const allPods = [...pods, ...syntheticPods];
 
@@ -552,6 +622,16 @@ export function buildGraph(
         if (pos) fixedWorkloadSpans.push({ x: pos.x, width: POD_WIDTH });
     });
     jobs.forEach((job) => {
+        const pos = workloadPos('Job', job.metadata.name);
+        if (pos) fixedWorkloadSpans.push({ x: pos.x, width: JOB_WIDTH });
+    });
+    cronJobs.forEach((cron) => {
+        const pos = workloadPos('CronJob', cron.metadata.name);
+        if (pos) fixedWorkloadSpans.push({ x: pos.x, width: CRONJOB_WIDTH });
+    });
+    // A pinned synthetic CronJob Job is a top-level workload too — auto-placed
+    // nodes must clear it just like a real Job's pinned position.
+    syntheticCronJobs.forEach((job) => {
         const pos = workloadPos('Job', job.metadata.name);
         if (pos) fixedWorkloadSpans.push({ x: pos.x, width: JOB_WIDTH });
     });
@@ -727,6 +807,83 @@ export function buildGraph(
                 name: job.metadata.name,
                 namespace: job.metadata.namespace,
                 resource: job,
+            },
+            draggable: true,
+        });
+
+        const children = jobToPod.get(job) ?? [];
+        children.forEach((pod) => {
+            const podId = allocateId(pod);
+            const savedPodPos = getSavedPosition('Pod', pod.metadata.name);
+            const prevPodPos = prevCoords.get(`Pod:${pod.metadata.name}`);
+            const podPos = prevPodPos || savedPodPos || {
+                x: autoPlaceWorkload(POD_WIDTH),
+                y: 320,
+            };
+            absCoords.set(podId, podPos);
+            nodes.push({
+                id: podId,
+                type: 'k8sNode',
+                position: podPos,
+                style: { width: POD_WIDTH, height: POD_HEIGHT },
+                data: {
+                    kind: 'Pod',
+                    name: pod.metadata.name,
+                    namespace: pod.metadata.namespace,
+                    resource: pod,
+                    ...syntheticMeta(pod),
+                },
+                draggable: true,
+            });
+        });
+    });
+
+    // E. CronJobs — the CronJob node plus the Job it creates and that Job's Pods
+    // (all siblings, linked by inferred edges). The synthetic Job and its Pods
+    // are draggable like a real Job's Pods (positions persist), and are
+    // auto-placed right after their CronJob so the group reads left-to-right:
+    // CronJob → Job → Pods.
+    cronJobs.forEach((cron) => {
+        const cronId = allocateId(cron);
+        const key = `CronJob:${cron.metadata.name}`;
+        const savedPos = getSavedPosition('CronJob', cron.metadata.name);
+        const prevPos = prevCoords.get(key);
+        const cronPos = prevPos || savedPos || { x: autoPlaceWorkload(CRONJOB_WIDTH), y: 320 };
+
+        absCoords.set(cronId, cronPos);
+
+        nodes.push({
+            id: cronId,
+            type: 'k8sNode',
+            position: cronPos,
+            style: { width: CRONJOB_WIDTH, height: CRONJOB_HEIGHT },
+            data: {
+                kind: 'CronJob',
+                name: cron.metadata.name,
+                namespace: cron.metadata.namespace,
+                resource: cron,
+            },
+            draggable: true,
+        });
+
+        const job = cronToJob.get(cron);
+        if (!job) return;
+        const jobId = allocateId(job);
+        const savedJobPos = getSavedPosition('Job', job.metadata.name);
+        const prevJobPos = prevCoords.get(`Job:${job.metadata.name}`);
+        const jobPos = prevJobPos || savedJobPos || { x: autoPlaceWorkload(JOB_WIDTH), y: 320 };
+        absCoords.set(jobId, jobPos);
+        nodes.push({
+            id: jobId,
+            type: 'k8sNode',
+            position: jobPos,
+            style: { width: JOB_WIDTH, height: JOB_HEIGHT },
+            data: {
+                kind: 'Job',
+                name: job.metadata.name,
+                namespace: job.metadata.namespace,
+                resource: job,
+                ...syntheticMeta(job),
             },
             draggable: true,
         });
@@ -1360,9 +1517,22 @@ export function buildGraph(
         });
     });
 
-    // Job → Pod: every Pod a Job runs (claimed or materialized) is linked to its
-    // Job by an inferred edge — the Job is the only owner these Pods have.
-    jobs.forEach((job) => {
+    // CronJob → Job "triggers": every CronJob draws an edge to the Job it would
+    // create for its next scheduled run (always the CronJob's own synthetic Job —
+    // it never claims an existing one).
+    cronJobs.forEach((cron) => {
+        const cronId = idByResource.get(cron);
+        if (!cronId) return;
+        const job = cronToJob.get(cron);
+        if (!job) return;
+        const jobId = idByResource.get(job);
+        if (jobId) addEdge(cronId, jobId, 'triggers');
+    });
+
+    // Job → Pod: every Pod a Job runs (claimed or materialized — including the
+    // Jobs a CronJob synthesizes) is linked to its Job by an inferred edge — the
+    // Job is the only owner these Pods have.
+    [...jobs, ...syntheticCronJobs].forEach((job) => {
         const jobId = idByResource.get(job);
         if (!jobId) return;
         const children = jobToPod.get(job) ?? [];
@@ -1439,7 +1609,7 @@ export function buildGraph(
     });
 
     resources.forEach((workload) => {
-        if (workload.kind !== 'Deployment' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod' && workload.kind !== 'Job') {
+        if (workload.kind !== 'Deployment' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod' && workload.kind !== 'Job' && workload.kind !== 'CronJob') {
             return;
         }
         const workloadId = idByResource.get(workload);
@@ -1461,7 +1631,7 @@ export function buildGraph(
     });
 
     resources.forEach((workload) => {
-        if (workload.kind !== 'Deployment' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod' && workload.kind !== 'Job') {
+        if (workload.kind !== 'Deployment' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod' && workload.kind !== 'Job' && workload.kind !== 'CronJob') {
             return;
         }
         const workloadId = idByResource.get(workload);
@@ -1496,7 +1666,7 @@ export function buildGraph(
     });
 
     resources.forEach((workload) => {
-        if (workload.kind !== 'Deployment' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod' && workload.kind !== 'Job') {
+        if (workload.kind !== 'Deployment' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod' && workload.kind !== 'Job' && workload.kind !== 'CronJob') {
             return;
         }
         const workloadId = idByResource.get(workload);
@@ -1538,11 +1708,12 @@ export function buildGraph(
     return { nodes, edges };
 }
 
-/** Inferred edge stroke color by source kind: HPA scaling (amber), Ingress routes (purple), Jobs (yellow), everything else (blue). */
+/** Inferred edge stroke color by source kind: HPA scaling (amber), Ingress routes (purple), Jobs (yellow), CronJobs (fuchsia), everything else (blue). */
 function edgeColorFor(kind: string): string {
     if (kind === 'HPA') return '#f59e0b';
     if (kind === 'Ingress') return '#a78bfa';
     if (kind === 'Job') return '#eab308';
+    if (kind === 'CronJob') return '#d946ef';
     return '#60a5fa';
 }
 
@@ -1642,12 +1813,35 @@ export function getTargetLabels(resource: K8sResource): Record<string, string> |
     return metadataLabels ?? spec?.template?.metadata?.labels;
 }
 
-/** The labels the pods created by a workload would carry (template first, then selector, then metadata). */
+/** The labels the pods created by a workload would carry (template first, then selector, then metadata).
+ *  CronJobs carry the pod template labels under spec.jobTemplate.spec.template. */
 export function getWorkloadPodLabels(resource: K8sResource): Record<string, string> | undefined {
     const spec = resource.spec as
-        | { template?: { metadata?: { labels?: Record<string, string> } } }
+        | {
+              template?: { metadata?: { labels?: Record<string, string> } };
+              jobTemplate?: { spec?: { template?: { metadata?: { labels?: Record<string, string> } } } };
+          }
         | undefined;
+    if (resource.kind === 'CronJob') {
+        return (
+            spec?.jobTemplate?.spec?.template?.metadata?.labels ??
+            getSelector(resource) ??
+            resource.metadata?.labels
+        );
+    }
     return spec?.template?.metadata?.labels ?? getSelector(resource) ?? resource.metadata?.labels;
+}
+
+/**
+ * The Pod spec of a resource: `spec` for Pods, `spec.template.spec` for
+ * Deployment/ReplicaSet/Job, and `spec.jobTemplate.spec.template.spec` for
+ * CronJobs (their Pods are described inside the Job template).
+ */
+function podSpecOf(resource: K8sResource): Record<string, any> | undefined {
+    const spec = resource.spec as Record<string, any> | undefined;
+    if (resource.kind === 'Pod') return spec;
+    if (resource.kind === 'CronJob') return spec?.jobTemplate?.spec?.template?.spec;
+    return spec?.template?.spec;
 }
 
 export function matchesSelector(
@@ -1718,13 +1912,7 @@ export function getHpaTarget(
  * document order.
  */
 export function getConfigMapRefs(resource: K8sResource): string[] {
-    const spec = resource.spec as
-        | { template?: { spec?: Record<string, unknown> }; [key: string]: unknown }
-        | undefined;
-    const podSpec =
-        (resource.kind === 'Deployment' || resource.kind === 'ReplicaSet' || resource.kind === 'Job')
-            ? (spec?.template?.spec as Record<string, any> | undefined)
-            : (spec as Record<string, any> | undefined);
+    const podSpec = podSpecOf(resource);
     if (!podSpec) return [];
 
     const names = new Set<string>();
@@ -1766,13 +1954,7 @@ export function getConfigMapRefs(resource: K8sResource): string[] {
  * claim names in document order.
  */
 export function getPvcRefs(resource: K8sResource): string[] {
-    const spec = resource.spec as
-        | { template?: { spec?: Record<string, unknown> }; [key: string]: unknown }
-        | undefined;
-    const podSpec =
-        resource.kind === 'Deployment' || resource.kind === 'ReplicaSet' || resource.kind === 'Job'
-            ? (spec?.template?.spec as Record<string, any> | undefined)
-            : (spec as Record<string, any> | undefined);
+    const podSpec = podSpecOf(resource);
     if (!podSpec || !Array.isArray(podSpec.volumes)) return [];
 
     const names: string[] = [];
@@ -1794,19 +1976,14 @@ export function getResourcesUsingPvc(resources: K8sResource[], claimName: string
             r.kind === 'Deployment' ||
             r.kind === 'ReplicaSet' ||
             r.kind === 'Pod' ||
-            r.kind === 'Job'
+            r.kind === 'Job' ||
+            r.kind === 'CronJob'
     ).filter((r) => getPvcRefs(r).includes(claimName));
 }
 
 /** How a resource claims each PVC it references: the volume name + claim name, for the inspector. */
 export function getPvcRefDetails(resource: K8sResource): Array<{ name: string; volumeName: string }> {
-    const spec = resource.spec as
-        | { template?: { spec?: Record<string, unknown> }; [key: string]: unknown }
-        | undefined;
-    const podSpec =
-        resource.kind === 'Deployment' || resource.kind === 'ReplicaSet' || resource.kind === 'Job'
-            ? (spec?.template?.spec as Record<string, any> | undefined)
-            : (spec as Record<string, any> | undefined);
+    const podSpec = podSpecOf(resource);
     if (!podSpec || !Array.isArray(podSpec.volumes)) return [];
 
     const entries: Array<{ name: string; volumeName: string }> = [];
@@ -1858,7 +2035,8 @@ export function getResourcesUsingConfigMap(resources: K8sResource[], cmName: str
             r.kind === 'Deployment' ||
             r.kind === 'ReplicaSet' ||
             r.kind === 'Pod' ||
-            r.kind === 'Job'
+            r.kind === 'Job' ||
+            r.kind === 'CronJob'
     ).filter((r) => getConfigMapRefs(r).includes(cmName));
 }
 
@@ -1872,13 +2050,7 @@ export function getConfigMapRefDetails(resource: K8sResource): Array<{
     mechanism: 'envFrom' | 'envKey' | 'volumes';
     key?: string;
 }> {
-    const spec = resource.spec as
-        | { template?: { spec?: Record<string, unknown> }; [key: string]: unknown }
-        | undefined;
-    const podSpec =
-        resource.kind === 'Deployment' || resource.kind === 'ReplicaSet' || resource.kind === 'Job'
-            ? (spec?.template?.spec as Record<string, any> | undefined)
-            : (spec as Record<string, any> | undefined);
+    const podSpec = podSpecOf(resource);
     if (!podSpec) return [];
 
     const entries: Array<{ name: string; mechanism: 'envFrom' | 'envKey' | 'volumes'; key?: string }> = [];
@@ -1925,13 +2097,7 @@ export function getConfigMapRefDetails(resource: K8sResource): Array<{
  * directly. Returns unique names in document order.
  */
 export function getSecretRefs(resource: K8sResource): string[] {
-    const spec = resource.spec as
-        | { template?: { spec?: Record<string, unknown> }; [key: string]: unknown }
-        | undefined;
-    const podSpec =
-        (resource.kind === 'Deployment' || resource.kind === 'ReplicaSet' || resource.kind === 'Job')
-            ? (spec?.template?.spec as Record<string, any> | undefined)
-            : (spec as Record<string, any> | undefined);
+    const podSpec = podSpecOf(resource);
     if (!podSpec) return [];
 
     const names = new Set<string>();
@@ -1976,13 +2142,7 @@ export function getSecretRefDetails(resource: K8sResource): Array<{
     mechanism: 'envFrom' | 'envKey' | 'volumes';
     key?: string;
 }> {
-    const spec = resource.spec as
-        | { template?: { spec?: Record<string, unknown> }; [key: string]: unknown }
-        | undefined;
-    const podSpec =
-        resource.kind === 'Deployment' || resource.kind === 'ReplicaSet' || resource.kind === 'Job'
-            ? (spec?.template?.spec as Record<string, any> | undefined)
-            : (spec as Record<string, any> | undefined);
+    const podSpec = podSpecOf(resource);
     if (!podSpec) return [];
 
     const entries: Array<{ name: string; mechanism: 'envFrom' | 'envKey' | 'volumes'; key?: string }> = [];
@@ -2029,6 +2189,7 @@ export function getResourcesUsingSecret(resources: K8sResource[], secretName: st
             r.kind === 'Deployment' ||
             r.kind === 'ReplicaSet' ||
             r.kind === 'Pod' ||
-            r.kind === 'Job'
+            r.kind === 'Job' ||
+            r.kind === 'CronJob'
     ).filter((r) => getSecretRefs(r).includes(secretName));
 }

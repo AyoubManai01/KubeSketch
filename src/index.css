@@ -30,6 +30,7 @@
   --accent-pvc: #ec4899;         /* Pink */
   --accent-pv: #84cc16;          /* Lime */
   --accent-sc: #6366f1;          /* Indigo */
+  --accent-cronjob: #d946ef;     /* Fuchsia */
 
   /* UI Tokens */
   --toolbar-height: 54px;
@@ -675,6 +676,10 @@ body,
 
 .k8s-node--storageclass {
   --kind-color: var(--accent-sc);
+}
+
+.k8s-node--cronjob {
+  --kind-color: var(--accent-cronjob);
 }
 
 /* CONTAINER NODES (Deployment, ReplicaSet) */

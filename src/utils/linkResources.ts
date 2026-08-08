@@ -44,6 +44,11 @@ export function connectResources(
     if (pair('Job', 'Pod')) {
         return linkOwnership(resources, byKind('Job'), byKind('Pod'));
     }
+    if (pair('CronJob', 'Job')) {
+        // A CronJob never links to an existing Job — it creates its own (shown as a
+        // synthetic node). Rejected so no meaningless edge lands on the canvas.
+        return null;
+    }
     if (pair('Deployment', 'Pod')) {
         // Auto-correct: Deployments never own Pods directly in Kubernetes. Labeling the
         // Pod with the Deployment's selector lets its ReplicaSet adopt it instead.
@@ -139,6 +144,25 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
     }
     if (pair('Ingress', 'Pod')) {
         return 'An Ingress cannot route to a Pod directly — route it to a Service that selects the Pod.';
+    }
+    if (pair('CronJob', 'Job')) {
+        return 'A CronJob creates its own Job on each schedule tick — it cannot be linked to an existing Job. Connect a ConfigMap/Secret/PVC to the CronJob to configure its Pod template instead.';
+    }
+    if (pair('CronJob', 'Pod')) {
+        return 'A CronJob does not own Pods directly — it creates a Job which runs the Pods. Configure the CronJob\u2019s Job template instead.';
+    }
+    if (a === 'CronJob' || b === 'CronJob') {
+        const other = a === 'CronJob' ? b : a;
+        if (other === 'Service') {
+            return 'A Service selects Pods by labels — it already routes to a CronJob\u2019s Pods if their labels match.';
+        }
+        if (other === 'Ingress') {
+            return 'An Ingress cannot route to a CronJob — expose its Pods with a Service first.';
+        }
+        if (other === 'HPA') {
+            return 'An HPA scales Deployments/ReplicaSets, not CronJobs.';
+        }
+        return `A CronJob runs batch Jobs on a schedule — it has no direct relationship with a ${other}.`;
     }
     if (pair('Ingress', 'Deployment') || pair('Ingress', 'ReplicaSet') || pair('Ingress', 'Job')) {
         return `An Ingress cannot route to a ${a === 'Ingress' ? b : a} — expose the workload with a Service first, then route the Ingress to it.`;
@@ -332,7 +356,14 @@ export function linkConfigMapToWorkload(
     const patched = clone(workload);
     const spec = (patched.spec ?? {}) as Record<string, any>;
     let podSpec: Record<string, any>;
-    if (patched.kind === 'Deployment' || patched.kind === 'ReplicaSet' || patched.kind === 'Job') {
+    if (patched.kind === 'CronJob') {
+        // CronJob pods are described inside the Job template: spec.jobTemplate.spec.template.spec.
+        spec.jobTemplate = spec.jobTemplate ?? {};
+        spec.jobTemplate.spec = spec.jobTemplate.spec ?? {};
+        spec.jobTemplate.spec.template = spec.jobTemplate.spec.template ?? {};
+        spec.jobTemplate.spec.template.spec = spec.jobTemplate.spec.template.spec ?? {};
+        podSpec = spec.jobTemplate.spec.template.spec;
+    } else if (patched.kind === 'Deployment' || patched.kind === 'ReplicaSet' || patched.kind === 'Job') {
         spec.template = spec.template ?? {};
         spec.template.spec = spec.template.spec ?? {};
         podSpec = spec.template.spec;
@@ -401,7 +432,13 @@ export function linkSecretToWorkload(
     const patched = clone(workload);
     const spec = (patched.spec ?? {}) as Record<string, any>;
     let podSpec: Record<string, any>;
-    if (patched.kind === 'Deployment' || patched.kind === 'ReplicaSet' || patched.kind === 'Job') {
+    if (patched.kind === 'CronJob') {
+        spec.jobTemplate = spec.jobTemplate ?? {};
+        spec.jobTemplate.spec = spec.jobTemplate.spec ?? {};
+        spec.jobTemplate.spec.template = spec.jobTemplate.spec.template ?? {};
+        spec.jobTemplate.spec.template.spec = spec.jobTemplate.spec.template.spec ?? {};
+        podSpec = spec.jobTemplate.spec.template.spec;
+    } else if (patched.kind === 'Deployment' || patched.kind === 'ReplicaSet' || patched.kind === 'Job') {
         spec.template = spec.template ?? {};
         spec.template.spec = spec.template.spec ?? {};
         podSpec = spec.template.spec;
@@ -513,7 +550,13 @@ export function linkPvcToWorkload(
     const patched = clone(workload);
     const spec = (patched.spec ?? {}) as Record<string, any>;
     let podSpec: Record<string, any>;
-    if (patched.kind === 'Deployment' || patched.kind === 'ReplicaSet' || patched.kind === 'Job') {
+    if (patched.kind === 'CronJob') {
+        spec.jobTemplate = spec.jobTemplate ?? {};
+        spec.jobTemplate.spec = spec.jobTemplate.spec ?? {};
+        spec.jobTemplate.spec.template = spec.jobTemplate.spec.template ?? {};
+        spec.jobTemplate.spec.template.spec = spec.jobTemplate.spec.template.spec ?? {};
+        podSpec = spec.jobTemplate.spec.template.spec;
+    } else if (patched.kind === 'Deployment' || patched.kind === 'ReplicaSet' || patched.kind === 'Job') {
         spec.template = spec.template ?? {};
         spec.template.spec = spec.template.spec ?? {};
         podSpec = spec.template.spec;

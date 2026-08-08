@@ -56,6 +56,7 @@ import {
   isSingleNodeAccessMode,
   nodeIdFor,
   parallelismOf,
+  cronParallelismOf,
   replicasOf,
   type K8sNodeData,
 } from "../utils/buildGraph";
@@ -88,6 +89,7 @@ const KIND_COLORS: Record<string, string> = {
   StorageClass: "#6366f1",
   Secret: "#dc2626",
   Job: "#eab308",
+  CronJob: "#d946ef",
 };
 
 const KIND_ICONS: Record<string, React.ReactNode> = {
@@ -256,6 +258,20 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
       <rect x="3" y="4" width="18" height="16" rx="2" />
       <path d="M8 2v4M16 2v4M3 9h18" />
       <path d="M9 14l2 2 4-4" />
+    </svg>
+  ),
+  CronJob: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 3" />
+      <path d="M12 4v3M12 17v3" />
     </svg>
   ),
 };
@@ -446,7 +462,7 @@ export default function Canvas() {
   const selectedNodeConfigMaps = useMemo(() => {
     if (!selectedNode) return [];
     const kind = selectedNode.data.kind;
-    if (kind !== "Pod" && kind !== "Deployment" && kind !== "ReplicaSet" && kind !== "Job") {
+    if (kind !== "Pod" && kind !== "Deployment" && kind !== "ReplicaSet" && kind !== "Job" && kind !== "CronJob") {
       return [];
     }
     return getConfigMapRefDetails(selectedNode.data.resource);
@@ -463,7 +479,8 @@ export default function Canvas() {
           (n.data.kind === "Deployment" ||
             n.data.kind === "ReplicaSet" ||
             n.data.kind === "Pod" ||
-            n.data.kind === "Job") &&
+            n.data.kind === "Job" ||
+            n.data.kind === "CronJob") &&
           getConfigMapRefs(n.data.resource).includes(selectedNode.data.name),
       )
       .map((n) => ({ kind: n.data.kind, name: n.data.name }));
@@ -474,7 +491,7 @@ export default function Canvas() {
   const selectedNodeSecrets = useMemo(() => {
     if (!selectedNode) return [];
     const kind = selectedNode.data.kind;
-    if (kind !== "Pod" && kind !== "Deployment" && kind !== "ReplicaSet" && kind !== "Job") {
+    if (kind !== "Pod" && kind !== "Deployment" && kind !== "ReplicaSet" && kind !== "Job" && kind !== "CronJob") {
       return [];
     }
     return getSecretRefDetails(selectedNode.data.resource);
@@ -491,7 +508,8 @@ export default function Canvas() {
           (n.data.kind === "Deployment" ||
             n.data.kind === "ReplicaSet" ||
             n.data.kind === "Pod" ||
-            n.data.kind === "Job") &&
+            n.data.kind === "Job" ||
+            n.data.kind === "CronJob") &&
           getSecretRefs(n.data.resource).includes(selectedNode.data.name),
       )
       .map((n) => ({ kind: n.data.kind, name: n.data.name }));
@@ -511,7 +529,7 @@ export default function Canvas() {
   const selectedNodePvcs = useMemo(() => {
     if (!selectedNode) return [];
     const kind = selectedNode.data.kind;
-    if (kind !== "Pod" && kind !== "Deployment" && kind !== "ReplicaSet" && kind !== "Job") {
+    if (kind !== "Pod" && kind !== "Deployment" && kind !== "ReplicaSet" && kind !== "Job" && kind !== "CronJob") {
       return [];
     }
     return getPvcRefDetails(selectedNode.data.resource);
@@ -529,7 +547,8 @@ export default function Canvas() {
           (n.data.kind === "Deployment" ||
             n.data.kind === "ReplicaSet" ||
             n.data.kind === "Pod" ||
-            n.data.kind === "Job") &&
+            n.data.kind === "Job" ||
+            n.data.kind === "CronJob") &&
           getPvcRefs(n.data.resource).includes(selectedNode.data.name),
       )
       .map((n) => ({ kind: n.data.kind, name: n.data.name }));
@@ -737,6 +756,13 @@ export default function Canvas() {
         );
         return node ? parallelismOf(node.data.resource) > 1 : false;
       }
+      if (ref.kind === "CronJob") {
+        const node = nodes.find(
+          (n) =>
+            !n.data.synthetic && n.data.kind === ref.kind && n.data.name === ref.name,
+        );
+        return node ? cronParallelismOf(node.data.resource) > 1 : false;
+      }
       if (ref.kind !== "Deployment" && ref.kind !== "ReplicaSet") return false;
       const node = nodes.find(
         (n) =>
@@ -747,6 +773,9 @@ export default function Canvas() {
     if (!offender) return null;
     if (offender.kind === "Job") {
       return `${draftMode} can only attach to one node, but Job ${offender.name} runs more than 1 pod in parallel. Reduce parallelism or use ReadWriteMany/ReadOnlyMany.`;
+    }
+    if (offender.kind === "CronJob") {
+      return `${draftMode} can only attach to one node, but CronJob ${offender.name} runs more than 1 pod in parallel. Reduce parallelism or use ReadWriteMany/ReadOnlyMany.`;
     }
     return `${draftMode} can only attach to one node, but ${offender.kind} ${offender.name} runs more than 1 replica. Scale it down or use ReadWriteMany/ReadOnlyMany.`;
   }, [selectedNode, draftResource, pvcUsedBy, nodes]);
@@ -2078,6 +2107,303 @@ export default function Canvas() {
                   </div>
                 )}
 
+                {/* ── Section: CronJob (schedule/job template) ── */}
+                {!isManaged && draftKind === "CronJob" && (
+                  <div className="inspector-section">
+                    <div className="inspector-section__header">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <circle cx="12" cy="12" r="9" />
+                        <path d="M12 7v5l3 3" />
+                        <path d="M12 4v3M12 17v3" />
+                      </svg>
+                      CronJob
+                    </div>
+                    <div className="inspector-section__body">
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">Schedule</label>
+                        <input
+                          className={`inspector-field__input ${cronScheduleError(String(draftSpec?.schedule ?? "")) ? "inspector-field__input--invalid" : ""}`}
+                          value={String(draftSpec?.schedule ?? "")}
+                          onChange={(e) =>
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                schedule: e.target.value,
+                              },
+                            })
+                          }
+                          placeholder="* * * * *"
+                        />
+                        <span className="inspector-field__hint">
+                          5-field cron (minute hour day month weekday) or an
+                          @-descriptor like @hourly.
+                        </span>
+                        {cronScheduleError(String(draftSpec?.schedule ?? "")) && (
+                          <span className="inspector-field__error">
+                            {cronScheduleError(String(draftSpec?.schedule ?? ""))}
+                          </span>
+                        )}
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Restart Policy
+                        </label>
+                        <select
+                          className="inspector-field__input inspector-field__input--select"
+                          value={String(
+                            draftSpec?.jobTemplate?.spec?.template?.spec
+                              ?.restartPolicy ?? "OnFailure",
+                          )}
+                          onChange={(e) =>
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                jobTemplate: {
+                                  ...(draftSpec?.jobTemplate ?? {}),
+                                  spec: {
+                                    ...(draftSpec?.jobTemplate?.spec ?? {}),
+                                    template: {
+                                      ...(draftSpec?.jobTemplate?.spec
+                                        ?.template ?? {}),
+                                      spec: {
+                                        ...(draftSpec?.jobTemplate?.spec
+                                          ?.template?.spec ?? {}),
+                                        restartPolicy: e.target.value,
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                            })
+                          }
+                        >
+                          <option>OnFailure</option>
+                          <option>Never</option>
+                        </select>
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Parallelism
+                        </label>
+                        <input
+                          className="inspector-field__input"
+                          type="number"
+                          min={1}
+                          value={String(
+                            draftSpec?.jobTemplate?.spec?.parallelism ?? "",
+                          )}
+                          onChange={(e) =>
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                jobTemplate: {
+                                  ...(draftSpec?.jobTemplate ?? {}),
+                                  spec: {
+                                    ...(draftSpec?.jobTemplate?.spec ?? {}),
+                                    parallelism: toOptionalNumber(e.target.value),
+                                  },
+                                },
+                              },
+                            })
+                          }
+                          placeholder="1"
+                        />
+                        <span className="inspector-field__hint">
+                          This many Pods run at the same time on each scheduled run.
+                        </span>
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Completions
+                        </label>
+                        <input
+                          className="inspector-field__input"
+                          type="number"
+                          min={1}
+                          value={String(
+                            draftSpec?.jobTemplate?.spec?.completions ?? "",
+                          )}
+                          onChange={(e) =>
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                jobTemplate: {
+                                  ...(draftSpec?.jobTemplate ?? {}),
+                                  spec: {
+                                    ...(draftSpec?.jobTemplate?.spec ?? {}),
+                                    completions: toOptionalNumber(e.target.value),
+                                  },
+                                },
+                              },
+                            })
+                          }
+                          placeholder="1"
+                        />
+                        <span className="inspector-field__hint">
+                          Total Pods the created Job runs to completion.
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Section: Containers (CronJob) ───────── */}
+                {!isManaged && draftKind === "CronJob" && (
+                  <div className="inspector-section">
+                    <div className="inspector-section__header">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <rect x="2" y="7" width="20" height="14" rx="2" />
+                        <path d="M16 7V5a4 4 0 00-8 0v2" />
+                      </svg>
+                      Containers
+                    </div>
+                    <div className="inspector-section__body">
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Container Name
+                        </label>
+                        <input
+                          className="inspector-field__input"
+                          value={String(
+                            draftSpec?.jobTemplate?.spec?.template?.spec
+                              ?.containers?.[0]?.name ?? "",
+                          )}
+                          onChange={(e) =>
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                jobTemplate: {
+                                  ...(draftSpec?.jobTemplate ?? {}),
+                                  spec: {
+                                    ...(draftSpec?.jobTemplate?.spec ?? {}),
+                                    template: {
+                                      ...(draftSpec?.jobTemplate?.spec
+                                        ?.template ?? {}),
+                                      spec: {
+                                        ...(draftSpec?.jobTemplate?.spec
+                                          ?.template?.spec ?? {}),
+                                        containers: [
+                                          {
+                                            ...(draftSpec?.jobTemplate?.spec
+                                              ?.template?.spec
+                                              ?.containers?.[0] ?? {}),
+                                            name: e.target.value,
+                                          },
+                                        ],
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                            })
+                          }
+                          placeholder="app"
+                        />
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">Image</label>
+                        <input
+                          className="inspector-field__input"
+                          value={String(
+                            draftSpec?.jobTemplate?.spec?.template?.spec
+                              ?.containers?.[0]?.image ?? "",
+                          )}
+                          onChange={(e) =>
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                jobTemplate: {
+                                  ...(draftSpec?.jobTemplate ?? {}),
+                                  spec: {
+                                    ...(draftSpec?.jobTemplate?.spec ?? {}),
+                                    template: {
+                                      ...(draftSpec?.jobTemplate?.spec
+                                        ?.template ?? {}),
+                                      spec: {
+                                        ...(draftSpec?.jobTemplate?.spec
+                                          ?.template?.spec ?? {}),
+                                        containers: [
+                                          {
+                                            ...(draftSpec?.jobTemplate?.spec
+                                              ?.template?.spec
+                                              ?.containers?.[0] ?? {}),
+                                            image: e.target.value,
+                                          },
+                                        ],
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                            })
+                          }
+                          placeholder="nginx:latest"
+                        />
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Shell command (optional)
+                        </label>
+                        <input
+                          className="inspector-field__input"
+                          value={String(
+                            draftSpec?.jobTemplate?.spec?.template?.spec
+                              ?.containers?.[0]?.args?.[0] ?? "",
+                          )}
+                          onChange={(e) =>
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                jobTemplate: {
+                                  ...(draftSpec?.jobTemplate ?? {}),
+                                  spec: {
+                                    ...(draftSpec?.jobTemplate?.spec ?? {}),
+                                    template: {
+                                      ...(draftSpec?.jobTemplate?.spec
+                                        ?.template ?? {}),
+                                      spec: {
+                                        ...(draftSpec?.jobTemplate?.spec
+                                          ?.template?.spec ?? {}),
+                                        containers: [
+                                          {
+                                            ...(draftSpec?.jobTemplate?.spec
+                                              ?.template?.spec
+                                              ?.containers?.[0] ?? {}),
+                                            command: ["/bin/sh", "-c"],
+                                            args: [e.target.value],
+                                          },
+                                        ],
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                            })
+                          }
+                          placeholder="echo hello && date"
+                        />
+                        <span className="inspector-field__hint">
+                          Runs /bin/sh -c &quot;&lt;command&gt;&quot; instead of
+                          the image&apos;s default command. Clear to run the
+                          image&apos;s default.
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* ── Section: Containers (Pod) ───────────── */}
                 {!isManaged && draftKind === "Pod" && (
                   <div className="inspector-section">
@@ -2151,7 +2477,8 @@ export default function Canvas() {
                   (inspectorData.kind === "Pod" ||
                     inspectorData.kind === "Deployment" ||
                     inspectorData.kind === "ReplicaSet" ||
-                    inspectorData.kind === "Job") &&
+                    inspectorData.kind === "Job" ||
+                    inspectorData.kind === "CronJob") &&
                   selectedNodeConfigMaps.length > 0 && (
                     <div className="inspector-section">
                       <div className="inspector-section__header">
@@ -2237,7 +2564,8 @@ export default function Canvas() {
                   (inspectorData.kind === "Pod" ||
                     inspectorData.kind === "Deployment" ||
                     inspectorData.kind === "ReplicaSet" ||
-                    inspectorData.kind === "Job") &&
+                    inspectorData.kind === "Job" ||
+                    inspectorData.kind === "CronJob") &&
                   selectedNodeSecrets.length > 0 && (
                     <div className="inspector-section">
                       <div className="inspector-section__header">
@@ -2324,7 +2652,8 @@ export default function Canvas() {
                   (inspectorData.kind === "Pod" ||
                     inspectorData.kind === "Deployment" ||
                     inspectorData.kind === "ReplicaSet" ||
-                    inspectorData.kind === "Job") &&
+                    inspectorData.kind === "Job" ||
+                    inspectorData.kind === "CronJob") &&
                   selectedNodePvcs.length > 0 && (
                     <div className="inspector-section">
                       <div className="inspector-section__header">
@@ -3892,6 +4221,16 @@ function toOptionalNumber(value: string): number | undefined {
   if (!value.trim()) return undefined;
   const n = Number(value);
   return Number.isFinite(n) ? n : undefined;
+}
+
+/** Empty string = valid; otherwise the cron-schedule validation error to show. */
+function cronScheduleError(schedule: string): string {
+  const trimmed = schedule.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("@")) return "";
+  return trimmed.split(/\s+/).length === 5
+    ? ""
+    : "A cron schedule has 5 fields: minute hour day month weekday (e.g. \"* * * * *\").";
 }
 
 /** Clamp `v` into [min, max], tolerating inverted ranges (item bigger than the box). */

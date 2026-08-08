@@ -32,6 +32,8 @@ const STORAGECLASS_WIDTH = 185;
 const STORAGECLASS_HEIGHT = 124;
 const SECRET_WIDTH = 180;
 const SECRET_HEIGHT = 104; // fits header + data rows without overflowing the leaf box
+const JOB_WIDTH = 180;
+const JOB_HEIGHT = 124; // fits header + restart/parallelism/completions rows without overflowing the leaf box
 const RS_HEADER_HEIGHT = 45;
 const DEP_HEADER_HEIGHT = 45;
 
@@ -65,6 +67,14 @@ export function replicasOf(resource: K8sResource): number {
     const spec = resource.spec as { replicas?: unknown } | undefined;
     const n = spec?.replicas;
     if (typeof n === 'number' && Number.isFinite(n) && n >= 0) return Math.floor(n);
+    return 1;
+}
+
+/** Number of Pods a Job runs at the same time (spec.parallelism, defaults to 1 when unset). */
+export function parallelismOf(resource: K8sResource): number {
+    const spec = resource.spec as { parallelism?: unknown } | undefined;
+    const n = spec?.parallelism;
+    if (typeof n === 'number' && Number.isFinite(n) && n >= 1) return Math.floor(n);
     return 1;
 }
 
@@ -305,6 +315,7 @@ export function buildGraph(
     const pvs = resources.filter((r) => r.kind === 'PersistentVolume');
     const storageClasses = resources.filter((r) => r.kind === 'StorageClass');
     const secrets = resources.filter((r) => r.kind === 'Secret');
+    const jobs = resources.filter((r) => r.kind === 'Job');
 
     // Ownership assignment: each ReplicaSet is claimed by at most ONE Deployment,
     // each Pod by at most ONE ReplicaSet (first match wins). This prevents a resource
@@ -396,6 +407,40 @@ export function buildGraph(
         rsToPod.set(rs, [...explicit, ...generated]);
     });
 
+    // Jobs own their Pods directly (no ReplicaSet layer): claim explicit Pods that
+    // match the Job's selector/name, then materialize the shortfall up to
+    // spec.parallelism. Job Pods are siblings of the Job node (linked by an inferred
+    // edge), never nested — Kubernetes never re-parents them.
+    const jobToPod = new Map<K8sResource, K8sResource[]>();
+    const claimedJobPods = new Set<K8sResource>();
+    jobs.forEach((job) => {
+        const children = pods.filter((pod) => {
+            if (claimedJobPods.has(pod)) return false;
+            return ownsResource(job, pod);
+        });
+        children.forEach((pod) => claimedJobPods.add(pod));
+        jobToPod.set(job, children);
+    });
+    const usedJobPodNames = new Set(pods.map((p) => p.metadata.name));
+    jobs.forEach((job) => {
+        const explicit = jobToPod.get(job) ?? [];
+        const desired = parallelismOf(job);
+        const shortfall = Math.min(Math.max(desired - explicit.length, 0), MAX_SYNTHETIC_PODS);
+        if (shortfall === 0) return;
+        const generated: K8sResource[] = [];
+        let suffix = 1;
+        for (let i = 0; i < shortfall; i++) {
+            let name = `${job.metadata.name}-${suffix++}`;
+            while (usedJobPodNames.has(name)) name = `${job.metadata.name}-${suffix++}`;
+            usedJobPodNames.add(name);
+            const pod = synthesizePod(job, name);
+            syntheticOwner.set(pod, { kind: 'Job', name: job.metadata.name });
+            generated.push(pod);
+        }
+        syntheticPods.push(...generated);
+        jobToPod.set(job, [...explicit, ...generated]);
+    });
+
     /** All pods that end up on the canvas — explicit + controller-materialized. */
     const allPods = [...pods, ...syntheticPods];
 
@@ -407,7 +452,7 @@ export function buildGraph(
 
     // Standalone elements
     const standaloneRs = replicaSets.filter((rs) => !claimedRs.has(rs));
-    const standalonePods = pods.filter((pod) => !claimedPods.has(pod));
+    const standalonePods = pods.filter((pod) => !claimedPods.has(pod) && !claimedJobPods.has(pod));
 
     // Keep track of all absolute coordinates for aligning Services/Ingresses
     const absCoords = new Map<string, { x: number; y: number }>();
@@ -505,6 +550,10 @@ export function buildGraph(
     standalonePods.forEach((pod) => {
         const pos = workloadPos('Pod', pod.metadata.name);
         if (pos) fixedWorkloadSpans.push({ x: pos.x, width: POD_WIDTH });
+    });
+    jobs.forEach((job) => {
+        const pos = workloadPos('Job', job.metadata.name);
+        if (pos) fixedWorkloadSpans.push({ x: pos.x, width: JOB_WIDTH });
     });
 
     const autoPlaceWorkload = (width: number): number => {
@@ -655,6 +704,57 @@ export function buildGraph(
                 resource: pod,
             },
             draggable: true,
+        });
+    });
+
+    // D. Jobs — the Job node plus the Pods it runs (siblings, linked by an inferred edge)
+    jobs.forEach((job) => {
+        const jobId = allocateId(job);
+        const key = `Job:${job.metadata.name}`;
+        const savedPos = getSavedPosition('Job', job.metadata.name);
+        const prevPos = prevCoords.get(key);
+        const jobPos = prevPos || savedPos || { x: autoPlaceWorkload(JOB_WIDTH), y: 320 };
+
+        absCoords.set(jobId, jobPos);
+
+        nodes.push({
+            id: jobId,
+            type: 'k8sNode',
+            position: jobPos,
+            style: { width: JOB_WIDTH, height: JOB_HEIGHT },
+            data: {
+                kind: 'Job',
+                name: job.metadata.name,
+                namespace: job.metadata.namespace,
+                resource: job,
+            },
+            draggable: true,
+        });
+
+        const children = jobToPod.get(job) ?? [];
+        children.forEach((pod) => {
+            const podId = allocateId(pod);
+            const savedPodPos = getSavedPosition('Pod', pod.metadata.name);
+            const prevPodPos = prevCoords.get(`Pod:${pod.metadata.name}`);
+            const podPos = prevPodPos || savedPodPos || {
+                x: autoPlaceWorkload(POD_WIDTH),
+                y: 320,
+            };
+            absCoords.set(podId, podPos);
+            nodes.push({
+                id: podId,
+                type: 'k8sNode',
+                position: podPos,
+                style: { width: POD_WIDTH, height: POD_HEIGHT },
+                data: {
+                    kind: 'Pod',
+                    name: pod.metadata.name,
+                    namespace: pod.metadata.namespace,
+                    resource: pod,
+                    ...syntheticMeta(pod),
+                },
+                draggable: true,
+            });
         });
     });
 
@@ -1260,6 +1360,18 @@ export function buildGraph(
         });
     });
 
+    // Job → Pod: every Pod a Job runs (claimed or materialized) is linked to its
+    // Job by an inferred edge — the Job is the only owner these Pods have.
+    jobs.forEach((job) => {
+        const jobId = idByResource.get(job);
+        if (!jobId) return;
+        const children = jobToPod.get(job) ?? [];
+        children.forEach((pod) => {
+            const podId = idByResource.get(pod);
+            if (podId) addEdge(jobId, podId, 'owns');
+        });
+    });
+
     // Service → Pod (real Kubernetes networking: Services select Pods by labels,
     // including the controller-materialized ones). Falls back to a Service → workload
     // edge only when the workload matches but currently runs no pods (replicas: 0).
@@ -1327,7 +1439,7 @@ export function buildGraph(
     });
 
     resources.forEach((workload) => {
-        if (workload.kind !== 'Deployment' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod') {
+        if (workload.kind !== 'Deployment' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod' && workload.kind !== 'Job') {
             return;
         }
         const workloadId = idByResource.get(workload);
@@ -1349,7 +1461,7 @@ export function buildGraph(
     });
 
     resources.forEach((workload) => {
-        if (workload.kind !== 'Deployment' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod') {
+        if (workload.kind !== 'Deployment' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod' && workload.kind !== 'Job') {
             return;
         }
         const workloadId = idByResource.get(workload);
@@ -1384,7 +1496,7 @@ export function buildGraph(
     });
 
     resources.forEach((workload) => {
-        if (workload.kind !== 'Deployment' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod') {
+        if (workload.kind !== 'Deployment' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod' && workload.kind !== 'Job') {
             return;
         }
         const workloadId = idByResource.get(workload);
@@ -1426,10 +1538,11 @@ export function buildGraph(
     return { nodes, edges };
 }
 
-/** Inferred edge stroke color by source kind: HPA scaling (amber), Ingress routes (purple), everything else (blue). */
+/** Inferred edge stroke color by source kind: HPA scaling (amber), Ingress routes (purple), Jobs (yellow), everything else (blue). */
 function edgeColorFor(kind: string): string {
     if (kind === 'HPA') return '#f59e0b';
     if (kind === 'Ingress') return '#a78bfa';
+    if (kind === 'Job') return '#eab308';
     return '#60a5fa';
 }
 
@@ -1609,7 +1722,7 @@ export function getConfigMapRefs(resource: K8sResource): string[] {
         | { template?: { spec?: Record<string, unknown> }; [key: string]: unknown }
         | undefined;
     const podSpec =
-        (resource.kind === 'Deployment' || resource.kind === 'ReplicaSet')
+        (resource.kind === 'Deployment' || resource.kind === 'ReplicaSet' || resource.kind === 'Job')
             ? (spec?.template?.spec as Record<string, any> | undefined)
             : (spec as Record<string, any> | undefined);
     if (!podSpec) return [];
@@ -1657,7 +1770,7 @@ export function getPvcRefs(resource: K8sResource): string[] {
         | { template?: { spec?: Record<string, unknown> }; [key: string]: unknown }
         | undefined;
     const podSpec =
-        resource.kind === 'Deployment' || resource.kind === 'ReplicaSet'
+        resource.kind === 'Deployment' || resource.kind === 'ReplicaSet' || resource.kind === 'Job'
             ? (spec?.template?.spec as Record<string, any> | undefined)
             : (spec as Record<string, any> | undefined);
     if (!podSpec || !Array.isArray(podSpec.volumes)) return [];
@@ -1680,7 +1793,8 @@ export function getResourcesUsingPvc(resources: K8sResource[], claimName: string
         (r) =>
             r.kind === 'Deployment' ||
             r.kind === 'ReplicaSet' ||
-            r.kind === 'Pod'
+            r.kind === 'Pod' ||
+            r.kind === 'Job'
     ).filter((r) => getPvcRefs(r).includes(claimName));
 }
 
@@ -1690,7 +1804,7 @@ export function getPvcRefDetails(resource: K8sResource): Array<{ name: string; v
         | { template?: { spec?: Record<string, unknown> }; [key: string]: unknown }
         | undefined;
     const podSpec =
-        resource.kind === 'Deployment' || resource.kind === 'ReplicaSet'
+        resource.kind === 'Deployment' || resource.kind === 'ReplicaSet' || resource.kind === 'Job'
             ? (spec?.template?.spec as Record<string, any> | undefined)
             : (spec as Record<string, any> | undefined);
     if (!podSpec || !Array.isArray(podSpec.volumes)) return [];
@@ -1743,7 +1857,8 @@ export function getResourcesUsingConfigMap(resources: K8sResource[], cmName: str
         (r) =>
             r.kind === 'Deployment' ||
             r.kind === 'ReplicaSet' ||
-            r.kind === 'Pod'
+            r.kind === 'Pod' ||
+            r.kind === 'Job'
     ).filter((r) => getConfigMapRefs(r).includes(cmName));
 }
 
@@ -1761,7 +1876,7 @@ export function getConfigMapRefDetails(resource: K8sResource): Array<{
         | { template?: { spec?: Record<string, unknown> }; [key: string]: unknown }
         | undefined;
     const podSpec =
-        resource.kind === 'Deployment' || resource.kind === 'ReplicaSet'
+        resource.kind === 'Deployment' || resource.kind === 'ReplicaSet' || resource.kind === 'Job'
             ? (spec?.template?.spec as Record<string, any> | undefined)
             : (spec as Record<string, any> | undefined);
     if (!podSpec) return [];
@@ -1814,7 +1929,7 @@ export function getSecretRefs(resource: K8sResource): string[] {
         | { template?: { spec?: Record<string, unknown> }; [key: string]: unknown }
         | undefined;
     const podSpec =
-        (resource.kind === 'Deployment' || resource.kind === 'ReplicaSet')
+        (resource.kind === 'Deployment' || resource.kind === 'ReplicaSet' || resource.kind === 'Job')
             ? (spec?.template?.spec as Record<string, any> | undefined)
             : (spec as Record<string, any> | undefined);
     if (!podSpec) return [];
@@ -1865,7 +1980,7 @@ export function getSecretRefDetails(resource: K8sResource): Array<{
         | { template?: { spec?: Record<string, unknown> }; [key: string]: unknown }
         | undefined;
     const podSpec =
-        resource.kind === 'Deployment' || resource.kind === 'ReplicaSet'
+        resource.kind === 'Deployment' || resource.kind === 'ReplicaSet' || resource.kind === 'Job'
             ? (spec?.template?.spec as Record<string, any> | undefined)
             : (spec as Record<string, any> | undefined);
     if (!podSpec) return [];
@@ -1913,6 +2028,7 @@ export function getResourcesUsingSecret(resources: K8sResource[], secretName: st
         (r) =>
             r.kind === 'Deployment' ||
             r.kind === 'ReplicaSet' ||
-            r.kind === 'Pod'
+            r.kind === 'Pod' ||
+            r.kind === 'Job'
     ).filter((r) => getSecretRefs(r).includes(secretName));
 }

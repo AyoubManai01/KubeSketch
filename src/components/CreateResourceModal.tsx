@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { K8sResource, SupportedKind } from '../types/types';
-import { getWorkloadPodLabels, replicasOf } from '../utils/buildGraph';
+import { getWorkloadPodLabels, parallelismOf, replicasOf } from '../utils/buildGraph';
 import { isClusterScoped } from '../utils/k8sScope';
 import type { ConfigMapMechanism, SecretMechanism } from '../utils/linkResources';
 import {
@@ -29,6 +29,7 @@ const KIND_COLORS: Record<string, string> = {
     PersistentVolume: '#84cc16',
     StorageClass: '#6366f1',
     Secret: '#dc2626',
+    Job: '#eab308',
 };
 
 const KIND_ICONS: Record<string, React.ReactNode> = {
@@ -106,6 +107,13 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
             <rect x="5" y="11" width="14" height="9" rx="2" />
             <path d="M8 11V7a4 4 0 018 0v4" />
             <circle cx="12" cy="15.5" r="1.5" />
+        </svg>
+    ),
+    Job: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M8 2v4M16 2v4M3 9h18" />
+            <path d="M9 14l2 2 4-4" />
         </svg>
     ),
 };
@@ -186,6 +194,10 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     // StorageClass fields
     const [scProvisioner, setScProvisioner] = useState('kubernetes.io/no-provisioner');
     const [scReclaimPolicy, setScReclaimPolicy] = useState('Delete');
+    // Job fields
+    const [restartPolicy, setRestartPolicy] = useState('OnFailure');
+    const [parallelism, setParallelism] = useState('1');
+    const [completions, setCompletions] = useState('1');
 
     const firstInputRef = useRef<HTMLInputElement>(null);
 
@@ -197,7 +209,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     // Auto-generated label follows the resource name until the user overrides it
     const appLabel = appLabelTouched
         ? appLabelDraft
-        : isWorkload || kind === 'Pod'
+        : isWorkload || kind === 'Pod' || kind === 'Job'
         ? name.trim() || suggestedName
         : appLabelDraft;
 
@@ -223,8 +235,11 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
             if (n.data.synthetic) return;
             const k = n.data.kind;
             let value: string | undefined;
-            if (k === 'Deployment' || k === 'ReplicaSet') value = getWorkloadPodLabels(n.data.resource)?.app;
-            else if (k === 'Pod') value = n.data.resource.metadata?.labels?.app;
+            if (k === 'Deployment' || k === 'ReplicaSet' || k === 'Job') {
+                value = getWorkloadPodLabels(n.data.resource)?.app;
+            } else if (k === 'Pod') {
+                value = n.data.resource.metadata?.labels?.app;
+            }
             if (!value) return;
             const list = owners.get(value) ?? [];
             list.push(`${k} ${n.data.name}`);
@@ -249,7 +264,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         const options: Array<{ label: string; value: string }> = [];
         nodes.forEach((n) => {
             const k = n.data.kind;
-            if (k !== 'Pod' && k !== 'Deployment' && k !== 'ReplicaSet') return;
+            if (k !== 'Pod' && k !== 'Deployment' && k !== 'ReplicaSet' && k !== 'Job') return;
             let realKind: string = k;
             let realName: string = n.data.name;
             let label = `${k} ${n.data.name}`;
@@ -275,7 +290,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         const options: Array<{ label: string; value: string }> = [];
         nodes.forEach((n) => {
             const k = n.data.kind;
-            if (k !== 'Pod' && k !== 'Deployment' && k !== 'ReplicaSet') return;
+            if (k !== 'Pod' && k !== 'Deployment' && k !== 'ReplicaSet' && k !== 'Job') return;
             let realKind: string = k;
             let realName: string = n.data.name;
             let label = `${k} ${n.data.name}`;
@@ -313,7 +328,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         const options: Array<{ label: string; value: string }> = [];
         nodes.forEach((n) => {
             const k = n.data.kind;
-            if (k !== 'Pod' && k !== 'Deployment' && k !== 'ReplicaSet') return;
+            if (k !== 'Pod' && k !== 'Deployment' && k !== 'ReplicaSet' && k !== 'Job') return;
             let realKind: string = k;
             let realName: string = n.data.name;
             let label = `${k} ${n.data.name}`;
@@ -344,6 +359,11 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
             (n) => n.data.kind === targetKind && n.data.name === targetName
         );
         if (!target) return null;
+        if (targetKind === 'Job') {
+            const parallelism = parallelismOf(target.data.resource);
+            if (parallelism <= 1) return null;
+            return `Job ${targetName} runs ${parallelism} pods in parallel — a ${pvcAccessModes} PVC can only attach to one node. Reduce parallelism to 1 or pick ReadOnlyMany/ReadWriteMany.`;
+        }
         const replicas = replicasOf(target.data.resource);
         if (replicas <= 1) return null;
         return `${targetKind} ${targetName} runs ${replicas} replicas — a ${pvcAccessModes} PVC can only attach to one node. Scale down to 1 or pick ReadOnlyMany/ReadWriteMany.`;
@@ -564,6 +584,35 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                         ...(scReclaimPolicy ? { reclaimPolicy: scReclaimPolicy } : {}),
                     },
                 };
+            case 'Job': {
+                const parallelismNum = parseInt(parallelism, 10);
+                const completionsNum = parseInt(completions, 10);
+                const label = appLabel.trim() || meta.name;
+                return {
+                    apiVersion: 'batch/v1',
+                    kind,
+                    metadata: { ...meta, labels: { app: label } },
+                    spec: {
+                        parallelism:
+                            Number.isFinite(parallelismNum) && parallelismNum > 0 ? parallelismNum : 1,
+                        completions:
+                            Number.isFinite(completionsNum) && completionsNum > 0 ? completionsNum : 1,
+                        selector: { matchLabels: { app: label } },
+                        template: {
+                            metadata: { labels: { app: label } },
+                            spec: {
+                                restartPolicy: restartPolicy || 'OnFailure',
+                                containers: [
+                                    {
+                                        name: containerName.trim() || 'app',
+                                        image: containerImage.trim() || 'nginx:latest',
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                };
+            }
         }
     }
 
@@ -691,12 +740,12 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                     </div>
 
                     {/* App Label — auto-generated for workloads/Pods, target picker for Services */}
-                    {(isWorkload || kind === 'Pod') && (
+                    {(isWorkload || kind === 'Pod' || kind === 'Job') && (
                         <div className="modal-field">
                             <label className="modal-field__label">
                                 App Label
                                 <span className="modal-field__hint">
-                                    {isWorkload
+                                    {isWorkload || kind === 'Job'
                                         ? 'Auto-generated from the name. Sets metadata.labels.app and spec.selector.matchLabels.app.'
                                         : 'Auto-generated from the name. Sets metadata.labels.app — enables containment inside matching ReplicaSets.'}
                                 </span>
@@ -782,6 +831,82 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                                 />
                             </div>
                         </div>
+                    )}
+
+                    {/* Job: restart policy + parallelism + completions */}
+                    {kind === 'Job' && (
+                        <>
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    Restart Policy
+                                    <span className="modal-field__hint">
+                                        OnFailure restarts the failed container in the same Pod; Never lets the Pod fail so a new one is created.
+                                    </span>
+                                </label>
+                                <select
+                                    className="modal-field__input modal-field__input--select"
+                                    value={restartPolicy}
+                                    onChange={(e) => setRestartPolicy(e.target.value)}
+                                >
+                                    <option>OnFailure</option>
+                                    <option>Never</option>
+                                </select>
+                            </div>
+                            <div className="modal-row">
+                                <div className="modal-field">
+                                    <label className="modal-field__label">
+                                        Parallelism
+                                        <span className="modal-field__hint">
+                                            How many Pods run at the same time.
+                                        </span>
+                                    </label>
+                                    <input
+                                        className="modal-field__input"
+                                        type="number"
+                                        min={1}
+                                        value={parallelism}
+                                        onChange={(e) => setParallelism(e.target.value)}
+                                        placeholder="1"
+                                    />
+                                </div>
+                                <div className="modal-field">
+                                    <label className="modal-field__label">
+                                        Completions
+                                        <span className="modal-field__hint">
+                                            Total Pods to run to completion.
+                                        </span>
+                                    </label>
+                                    <input
+                                        className="modal-field__input"
+                                        type="number"
+                                        min={1}
+                                        value={completions}
+                                        onChange={(e) => setCompletions(e.target.value)}
+                                        placeholder="1"
+                                    />
+                                </div>
+                            </div>
+                            <div className="modal-row">
+                                <div className="modal-field">
+                                    <label className="modal-field__label">Container Name</label>
+                                    <input
+                                        className="modal-field__input"
+                                        value={containerName}
+                                        onChange={(e) => setContainerName(e.target.value)}
+                                        placeholder="app"
+                                    />
+                                </div>
+                                <div className="modal-field">
+                                    <label className="modal-field__label">Image</label>
+                                    <input
+                                        className="modal-field__input"
+                                        value={containerImage}
+                                        onChange={(e) => setContainerImage(e.target.value)}
+                                        placeholder="nginx:latest"
+                                    />
+                                </div>
+                            </div>
+                        </>
                     )}
 
                     {/* Service: type + ports */}

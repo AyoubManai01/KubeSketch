@@ -6,6 +6,7 @@ import {
     buildGraph,
     isSingleNodeAccessMode,
     nodeIdFor,
+    parallelismOf,
     replicasOf,
     type HpaReplicaOverride,
     type K8sNodeData,
@@ -44,7 +45,7 @@ const NS_LAYOUT_KEY = 'veltra_ns_layout';
 /** Default YAML shown when the app first loads */
 export const DEFAULT_YAML = `# Paste your Kubernetes YAML here (multi-document with ---)
 # Recognized resources: Deployment, Service, Ingress, ReplicaSet, Pod, HPA,
-# ConfigMap, PersistentVolumeClaim, PersistentVolume, StorageClass, Secret
+# ConfigMap, PersistentVolumeClaim, PersistentVolume, StorageClass, Secret, Job
 #
 # Like a real cluster, Veltra materializes a Deployment's ReplicaSet and
 # Pods on the canvas automatically — you only declare the Deployment.
@@ -136,12 +137,12 @@ export interface CanvasNotice {
  */
 export interface PendingConfigMapLink {
     cm: { name: string };
-    target: { kind: 'Pod' | 'Deployment' | 'ReplicaSet'; name: string };
+    target: { kind: 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job'; name: string };
 }
 
 /** Target + mechanism for writing a ConfigMap reference (create-modal path). */
 export interface ConfigMapLinkPayload {
-    targetKind: 'Pod' | 'Deployment' | 'ReplicaSet';
+    targetKind: 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job';
     targetName: string;
     mechanism: ConfigMapMechanism;
     key?: string;
@@ -154,12 +155,12 @@ export interface ConfigMapLinkPayload {
  */
 export interface PendingSecretLink {
     secret: { name: string };
-    target: { kind: 'Pod' | 'Deployment' | 'ReplicaSet'; name: string };
+    target: { kind: 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job'; name: string };
 }
 
 /** Target + mechanism for writing a Secret reference (create-modal path). */
 export interface SecretLinkPayload {
-    targetKind: 'Pod' | 'Deployment' | 'ReplicaSet';
+    targetKind: 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job';
     targetName: string;
     mechanism: SecretMechanism;
     key?: string;
@@ -190,7 +191,7 @@ export interface IngressTlsPayload {
  */
 export interface PendingPvcLink {
     pvc: { name: string };
-    target: { kind: 'Pod' | 'Deployment' | 'ReplicaSet'; name: string };
+    target: { kind: 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job'; name: string };
 }
 
 /**
@@ -200,7 +201,7 @@ export interface PendingPvcLink {
  * a StorageClass. Setting one bind kind clears the other field on the PVC.
  */
 export interface PvcLinkPayload {
-    mountTarget?: { kind: 'Pod' | 'Deployment' | 'ReplicaSet'; name: string; volumeName: string };
+    mountTarget?: { kind: 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job'; name: string; volumeName: string };
     bindTarget?: { kind: 'PersistentVolume' | 'StorageClass'; name: string };
 }
 
@@ -770,7 +771,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 // the post-drag prompt instead of committing immediately. `sourceNode`/
                 // `targetNode` are real (synthetic targets were redirected to their owner).
                 const isConfigMapTarget = (kind: string) =>
-                    kind === 'Pod' || kind === 'Deployment' || kind === 'ReplicaSet';
+                    kind === 'Pod' || kind === 'Deployment' || kind === 'ReplicaSet' || kind === 'Job';
                 if (
                     (sourceNode.data.kind === 'ConfigMap' && isConfigMapTarget(targetNode.data.kind)) ||
                     (targetNode.data.kind === 'ConfigMap' && isConfigMapTarget(sourceNode.data.kind))
@@ -781,7 +782,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                         pendingConfigMapLink: {
                             cm: { name: cm.data.name },
                             target: {
-                                kind: workload.data.kind as 'Pod' | 'Deployment' | 'ReplicaSet',
+                                kind: workload.data.kind as 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job',
                                 name: workload.data.name,
                             },
                         },
@@ -793,22 +794,23 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 // Single-node claims (ReadWriteOnce/ReadWriteOncePod) cannot serve a
                 // workload that runs more than one replica — reject those up front.
                 const isPvcMountTarget = (kind: string) =>
-                    kind === 'Pod' || kind === 'Deployment' || kind === 'ReplicaSet';
+                    kind === 'Pod' || kind === 'Deployment' || kind === 'ReplicaSet' || kind === 'Job';
                 if (
                     (sourceNode.data.kind === 'PersistentVolumeClaim' && isPvcMountTarget(targetNode.data.kind)) ||
                     (targetNode.data.kind === 'PersistentVolumeClaim' && isPvcMountTarget(sourceNode.data.kind))
                 ) {
                     const pvc = sourceNode.data.kind === 'PersistentVolumeClaim' ? sourceNode : targetNode;
                     const mountTarget = sourceNode.data.kind === 'PersistentVolumeClaim' ? targetNode : sourceNode;
-                    if (
-                        mountTarget.data.kind !== 'Pod' &&
-                        replicasOf(mountTarget.data.resource) > 1 &&
-                        isSingleNodeAccessMode(pvc.data.resource)
-                    ) {
+                    const multiPod = mountTarget.data.kind === 'Job'
+                        ? parallelismOf(mountTarget.data.resource) > 1
+                        : mountTarget.data.kind !== 'Pod' && replicasOf(mountTarget.data.resource) > 1;
+                    if (multiPod && isSingleNodeAccessMode(pvc.data.resource)) {
                         return {
                             notice: makeNotice(
                                 'error',
-                                `${mountTarget.data.kind} ${mountTarget.data.name} runs ${replicasOf(mountTarget.data.resource)} replicas — a ReadWriteOnce/ReadWriteOncePod PVC can only attach to one node. Scale down to 1 or use ReadWriteMany/ReadOnlyMany.`
+                                mountTarget.data.kind === 'Job'
+                                    ? `Job ${mountTarget.data.name} runs ${parallelismOf(mountTarget.data.resource)} pods in parallel — a ReadWriteOnce/ReadWriteOncePod PVC can only attach to one node. Reduce parallelism to 1 or use ReadWriteMany/ReadOnlyMany.`
+                                    : `${mountTarget.data.kind} ${mountTarget.data.name} runs ${replicasOf(mountTarget.data.resource)} replicas — a ReadWriteOnce/ReadWriteOncePod PVC can only attach to one node. Scale down to 1 or use ReadWriteMany/ReadOnlyMany.`
                             ),
                         };
                     }
@@ -816,7 +818,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                         pendingPvcLink: {
                             pvc: { name: pvc.data.name },
                             target: {
-                                kind: mountTarget.data.kind as 'Pod' | 'Deployment' | 'ReplicaSet',
+                                kind: mountTarget.data.kind as 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job',
                                 name: mountTarget.data.name,
                             },
                         },
@@ -827,7 +829,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 // the consumption mechanism (envFrom / volumes / env-key) first —
                 // surface the post-drag prompt instead of committing immediately.
                 const isSecretTarget = (kind: string) =>
-                    kind === 'Pod' || kind === 'Deployment' || kind === 'ReplicaSet';
+                    kind === 'Pod' || kind === 'Deployment' || kind === 'ReplicaSet' || kind === 'Job';
                 if (
                     (sourceNode.data.kind === 'Secret' && isSecretTarget(targetNode.data.kind)) ||
                     (targetNode.data.kind === 'Secret' && isSecretTarget(sourceNode.data.kind))
@@ -838,7 +840,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                         pendingSecretLink: {
                             secret: { name: secret.data.name },
                             target: {
-                                kind: workload.data.kind as 'Pod' | 'Deployment' | 'ReplicaSet',
+                                kind: workload.data.kind as 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job',
                                 name: workload.data.name,
                             },
                         },
@@ -1362,6 +1364,7 @@ export function apiVersionForKind(kind: SupportedKind): string {
     if (kind === 'Ingress') return 'networking.k8s.io/v1';
     if (kind === 'HPA') return 'autoscaling/v2';
     if (kind === 'StorageClass') return 'storage.k8s.io/v1';
+    if (kind === 'Job') return 'batch/v1';
     if (kind === 'Secret') return 'v1';
     return 'v1';
 }
@@ -1426,7 +1429,7 @@ function renameConfigMapReferences(
     newName: string
 ): Node<K8sNodeData>[] {
     return nodes.map((n) => {
-        if (n.data.kind !== 'Deployment' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod') {
+        if (n.data.kind !== 'Deployment' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod' && n.data.kind !== 'Job') {
             return n;
         }
         const spec = n.data.resource.spec as Record<string, any> | undefined;
@@ -1513,7 +1516,7 @@ function renameSecretReferences(
             });
             return { ...n, data: { ...n.data, resource } };
         }
-        if (n.data.kind !== 'Deployment' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod') {
+        if (n.data.kind !== 'Deployment' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod' && n.data.kind !== 'Job') {
             return n;
         }
         const spec = n.data.resource.spec as Record<string, any> | undefined;
@@ -1584,7 +1587,7 @@ function renamePvcReferences(
     newName: string
 ): Node<K8sNodeData>[] {
     return nodes.map((n) => {
-        if (n.data.kind !== 'Deployment' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod') {
+        if (n.data.kind !== 'Deployment' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod' && n.data.kind !== 'Job') {
             return n;
         }
         const spec = n.data.resource.spec as Record<string, any> | undefined;

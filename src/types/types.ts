@@ -15,7 +15,8 @@ export interface K8sResource {
     | 'PersistentVolumeClaim'
     | 'PersistentVolume'
     | 'StorageClass'
-    | 'Secret';
+    | 'Secret'
+    | 'Job';
   metadata: {
     name: string;
     namespace?: string;
@@ -38,5 +39,6 @@ export const SUPPORTED_KINDS = [
   'PersistentVolume',
   'StorageClass',
   'Secret',
+  'Job',
 ] as const;
 export type SupportedKind = (typeof SUPPORTED_KINDS)[number];

@@ -93,6 +93,14 @@ const ICONS: Record<string, React.ReactNode> = {
             <path d="M12 4v3M12 17v3" />
         </svg>
     ),
+    VerticalPodAutoscaler: (
+        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="4" y="12" width="4" height="8" rx="1" />
+            <rect x="10" y="8" width="4" height="12" rx="1" />
+            <rect x="16" y="4" width="4" height="16" rx="1" />
+            <path d="M5 12V9M11 8V5M17 4V7" strokeDasharray="2 2" />
+        </svg>
+    ),
 };
 
 const KIND_COLORS: Record<string, string> = {
@@ -109,6 +117,7 @@ const KIND_COLORS: Record<string, string> = {
     Secret: '#dc2626',                // Red
     Job: '#eab308',                   // Yellow
     CronJob: '#d946ef',               // Fuchsia
+    VerticalPodAutoscaler: '#0ea5e9', // Sky
 };
 
 function K8sNodeComponent({ data }: NodeProps) {
@@ -179,6 +188,12 @@ function K8sNodeComponent({ data }: NodeProps) {
                         {spec.schedule}
                     </div>
                 )}
+                {kind === 'VerticalPodAutoscaler' &&
+                    typeof spec.updatePolicy?.updateMode === 'string' && (
+                        <div className="k8s-node__badge" title="Update mode">
+                            {spec.updatePolicy.updateMode}
+                        </div>
+                    )}
                 {kind === 'PersistentVolumeClaim' &&
                     typeof spec.resources?.requests?.storage === 'string' && (
                         <div className="k8s-node__badge" title="Requested storage">
@@ -280,6 +295,28 @@ function buildResourceDetails(nodeData: K8sNodeData): DetailPair[] {
         const utilization = spec.metrics?.[0]?.resource?.target?.averageUtilization;
         if (typeof utilization === 'number') {
             details.push({ key: 'cpu target', val: `${utilization}%` });
+        }
+    }
+    if (nodeData.kind === 'VerticalPodAutoscaler') {
+        const target = spec.targetRef;
+        if (target?.kind && target.name) {
+            details.push({ key: 'right-sizes', val: `${target.kind} ${target.name}` });
+        }
+        if (typeof spec.updatePolicy?.updateMode === 'string') {
+            details.push({ key: 'update mode', val: spec.updatePolicy.updateMode });
+        }
+        const policy = spec.resourcePolicy?.containerPolicies?.[0];
+        if (policy) {
+            const minCpu = policy.minAllowed?.cpu;
+            const maxCpu = policy.maxAllowed?.cpu;
+            const minMem = policy.minAllowed?.memory;
+            const maxMem = policy.maxAllowed?.memory;
+            if (minCpu || maxCpu) {
+                details.push({ key: 'cpu', val: `${minCpu ?? '—'} – ${maxCpu ?? '∞'}` });
+            }
+            if (minMem || maxMem) {
+                details.push({ key: 'memory', val: `${minMem ?? '—'} – ${maxMem ?? '∞'}` });
+            }
         }
     }
     if (nodeData.kind === 'ConfigMap') {

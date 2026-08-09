@@ -819,6 +819,7 @@ body,
 .canvas-legend__item--svc::before,
 .canvas-legend__item--ing::before,
 .canvas-legend__item--hpa::before,
+.canvas-legend__item--vpa::before,
 .canvas-legend__item--cm::before,
 .canvas-legend__item--pvc::before,
 .canvas-legend__item--pv::before,
@@ -832,6 +833,7 @@ body,
 .canvas-legend__item--svc::before { background: #60a5fa; }
 .canvas-legend__item--ing::before { background: #a78bfa; }
 .canvas-legend__item--hpa::before { background: #f59e0b; }
+.canvas-legend__item--vpa::before { background: #0ea5e9; }
 .canvas-legend__item--cm::before { background: #06b6d4; }
 .canvas-legend__item--pvc::before { background: #ec4899; }
 .canvas-legend__item--pv::before { background: #84cc16; }

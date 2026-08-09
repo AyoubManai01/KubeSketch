@@ -67,6 +67,19 @@ export function connectResources(
             source.kind === 'HPA' ? targetIdx : sourceIdx
         );
     }
+    if (
+        pair('VerticalPodAutoscaler', 'Deployment') ||
+        pair('VerticalPodAutoscaler', 'ReplicaSet') ||
+        pair('VerticalPodAutoscaler', 'Pod') ||
+        pair('VerticalPodAutoscaler', 'Job') ||
+        pair('VerticalPodAutoscaler', 'CronJob')
+    ) {
+        return linkVpaToTarget(
+            resources,
+            byKind('VerticalPodAutoscaler'),
+            source.kind === 'VerticalPodAutoscaler' ? targetIdx : sourceIdx
+        );
+    }
     if (pair('PersistentVolumeClaim', 'PersistentVolume')) {
         return linkPvcToPv(resources, byKind('PersistentVolumeClaim'), byKind('PersistentVolume'));
     }
@@ -170,6 +183,19 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
     if (pair('HPA', 'Service') || pair('HPA', 'Ingress') || pair('HPA', 'Pod') || pair('HPA', 'Job')) {
         const other = a === 'HPA' ? b : a;
         return `An HPA can only scale a Deployment or ReplicaSet, not a ${other}.`;
+    }
+    if (a === 'VerticalPodAutoscaler' || b === 'VerticalPodAutoscaler') {
+        const other = a === 'VerticalPodAutoscaler' ? b : a;
+        if (other === 'Service') {
+            return 'A VPA right-sizes Pods (via a Deployment/ReplicaSet/Pod/Job/CronJob), not Services.';
+        }
+        if (other === 'Ingress') {
+            return 'A VPA right-sizes Pods, not Ingresses.';
+        }
+        if (other === 'HPA') {
+            return 'A VPA right-sizes container resource requests, while an HPA scales replica counts — the two are independent.';
+        }
+        return `A VPA right-sizes a Pod's containers — it has no direct relationship with a ${other}.`;
     }
     if (a === b) {
         return `Two ${a} resources have no direct relationship in Kubernetes.`;
@@ -328,6 +354,41 @@ function linkHpaToWorkload(
     return {
         resources: next,
         description: `${hpa.metadata.name} now scales ${workload.kind} ${workload.metadata.name}`,
+    };
+}
+
+/** Point the VPA's targetRef at the workload/Pod it should right-size. A VPA
+ *  has exactly one target — an existing targetRef is replaced. */
+function linkVpaToTarget(
+    resources: K8sResource[],
+    vpaIdx: number,
+    targetIdx: number
+): { resources: K8sResource[]; description: string } {
+    const next = [...resources];
+    const target = resources[targetIdx];
+    const targetApiVersion =
+        target.kind === 'Deployment' || target.kind === 'ReplicaSet'
+            ? 'apps/v1'
+            : target.kind === 'Job' || target.kind === 'CronJob'
+            ? 'batch/v1'
+            : 'v1';
+
+    const vpa = clone(resources[vpaIdx]);
+    const spec = (vpa.spec ?? {}) as Record<string, any>;
+    spec.targetRef = {
+        apiVersion: targetApiVersion,
+        kind: target.kind,
+        name: target.metadata.name,
+    };
+    if (!spec.updatePolicy || typeof spec.updatePolicy.updateMode !== 'string') {
+        spec.updatePolicy = { updateMode: 'Auto' };
+    }
+    vpa.spec = spec;
+    next[vpaIdx] = vpa;
+
+    return {
+        resources: next,
+        description: `${vpa.metadata.name} now right-sizes ${target.kind} ${target.metadata.name}`,
     };
 }
 

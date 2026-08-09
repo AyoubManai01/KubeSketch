@@ -47,7 +47,7 @@ const NS_LAYOUT_KEY = 'veltra_ns_layout';
 export const DEFAULT_YAML = `# Paste your Kubernetes YAML here (multi-document with ---)
 # Recognized resources: Deployment, Service, Ingress, ReplicaSet, Pod, HPA,
 # ConfigMap, PersistentVolumeClaim, PersistentVolume, StorageClass, Secret, Job,
-# CronJob
+# CronJob, VerticalPodAutoscaler
 #
 # Like a real cluster, Veltra materializes a Deployment's ReplicaSet and
 # Pods on the canvas automatically — you only declare the Deployment.
@@ -585,6 +585,21 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                         node.data.name,
                         name
                     );
+                    updatedNodes = renameVpaTargetReferences(
+                        updatedNodes,
+                        node.data.kind as 'Deployment' | 'ReplicaSet',
+                        node.data.name,
+                        name
+                    );
+                }
+                if (node.data.kind === 'Pod' && kind === 'Pod' && name !== node.data.name) {
+                    updatedNodes = renameVpaTargetReferences(updatedNodes, 'Pod', node.data.name, name);
+                }
+                if (node.data.kind === 'Job' && kind === 'Job' && name !== node.data.name) {
+                    updatedNodes = renameVpaTargetReferences(updatedNodes, 'Job', node.data.name, name);
+                }
+                if (node.data.kind === 'CronJob' && kind === 'CronJob' && name !== node.data.name) {
+                    updatedNodes = renameVpaTargetReferences(updatedNodes, 'CronJob', node.data.name, name);
                 }
                 if (node.data.kind === 'ConfigMap' && kind === 'ConfigMap' && name !== node.data.name) {
                     updatedNodes = renameConfigMapReferences(updatedNodes, node.data.name, name);
@@ -1370,6 +1385,7 @@ export function apiVersionForKind(kind: SupportedKind): string {
     if (kind === 'Deployment' || kind === 'ReplicaSet') return 'apps/v1';
     if (kind === 'Ingress') return 'networking.k8s.io/v1';
     if (kind === 'HPA') return 'autoscaling/v2';
+    if (kind === 'VerticalPodAutoscaler') return 'autoscaling.k8s.io/v1';
     if (kind === 'StorageClass') return 'storage.k8s.io/v1';
     if (kind === 'Job' || kind === 'CronJob') return 'batch/v1';
     if (kind === 'Secret') return 'v1';
@@ -1424,6 +1440,31 @@ function renameWorkloadReferences(
         const clonedSpec = resource.spec as { scaleTargetRef?: { name?: string } };
         if (clonedSpec.scaleTargetRef) {
             clonedSpec.scaleTargetRef.name = newName;
+        }
+        return { ...n, data: { ...n.data, resource } };
+    });
+}
+
+/** Rewrite VerticalPodAutoscaler spec.targetRef names when their target
+ *  (Deployment/ReplicaSet/Pod/Job/CronJob) is renamed. */
+function renameVpaTargetReferences(
+    nodes: Node<K8sNodeData>[],
+    kind: 'Deployment' | 'ReplicaSet' | 'Pod' | 'Job' | 'CronJob',
+    oldName: string,
+    newName: string
+): Node<K8sNodeData>[] {
+    return nodes.map((n) => {
+        if (n.data.kind !== 'VerticalPodAutoscaler') return n;
+        const spec = n.data.resource.spec as
+            | { targetRef?: { kind?: string; name?: string } }
+            | undefined;
+        const ref = spec?.targetRef;
+        if (!ref || ref.kind !== kind || ref.name !== oldName) return n;
+
+        const resource = structuredClone(n.data.resource);
+        const clonedSpec = resource.spec as { targetRef?: { name?: string } };
+        if (clonedSpec.targetRef) {
+            clonedSpec.targetRef.name = newName;
         }
         return { ...n, data: { ...n.data, resource } };
     });

@@ -43,6 +43,7 @@ import {
 import {
   getWorkloadPodLabels,
   getHpaTarget,
+  getVpaTarget,
   getConfigMapRefs,
   getConfigMapRefDetails,
   getPvcRefs,
@@ -90,6 +91,7 @@ const KIND_COLORS: Record<string, string> = {
   Secret: "#dc2626",
   Job: "#eab308",
   CronJob: "#d946ef",
+  VerticalPodAutoscaler: "#0ea5e9",
 };
 
 const KIND_ICONS: Record<string, React.ReactNode> = {
@@ -274,6 +276,21 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
       <path d="M12 4v3M12 17v3" />
     </svg>
   ),
+  VerticalPodAutoscaler: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="4" y="12" width="4" height="8" rx="1" />
+      <rect x="10" y="8" width="4" height="12" rx="1" />
+      <rect x="16" y="4" width="4" height="16" rx="1" />
+      <path d="M5 12V9M11 8V5M17 4V7" strokeDasharray="2 2" />
+    </svg>
+  ),
 };
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -429,6 +446,56 @@ export default function Canvas() {
         ),
     [nodes],
   );
+
+  // VPA targetRef candidates: every real pod-bearing resource on the canvas
+  // (Deployments/ReplicaSets/Pods/Jobs/CronJobs). Synthetic nodes are excluded —
+  // a targetRef must point at a manifest resource, not a controller-materialized one.
+  const vpaTargetOptions = useMemo(
+    () =>
+      nodes
+        .filter(
+          (node) =>
+            !node.data.synthetic &&
+            (node.data.kind === "Deployment" ||
+              node.data.kind === "ReplicaSet" ||
+              node.data.kind === "Pod" ||
+              node.data.kind === "Job" ||
+              node.data.kind === "CronJob"),
+        )
+        .map((node) => ({
+          kind: node.data.kind as string,
+          name: node.data.name as string,
+        }))
+        .sort((a, b) =>
+          `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`),
+        ),
+    [nodes],
+  );
+
+  // Real VPAs whose spec.targetRef points at the selected workload/Pod —
+  // read-only projection (mirrors the ConfigMap/Secret "Used by" sections).
+  const vpaScaledBy = useMemo(() => {
+    if (!selectedNode) return [];
+    const kind = selectedNode.data.kind;
+    if (
+      kind !== "Deployment" &&
+      kind !== "ReplicaSet" &&
+      kind !== "Pod" &&
+      kind !== "Job" &&
+      kind !== "CronJob"
+    ) {
+      return [];
+    }
+    return nodes
+      .filter(
+        (n) =>
+          !n.data.synthetic &&
+          n.data.kind === "VerticalPodAutoscaler" &&
+          getVpaTarget(n.data.resource)?.kind === kind &&
+          getVpaTarget(n.data.resource)?.name === selectedNode.data.name,
+      )
+      .map((n) => ({ kind: n.data.kind, name: n.data.name }));
+  }, [nodes, selectedNode]);
 
   // When the selected workload is scaled by an HPA, replicas are clamped into
   // [minReplicas, maxReplicas] — surface that priority right at the input.
@@ -1304,6 +1371,9 @@ export default function Canvas() {
                   </span>
                   <span className="canvas-legend__item canvas-legend__item--hpa">
                     HPA scales
+                  </span>
+                  <span className="canvas-legend__item canvas-legend__item--vpa">
+                    VPA right-sizes
                   </span>
                   <span className="canvas-legend__item canvas-legend__item--cm">
                     ConfigMap use
@@ -3688,6 +3758,281 @@ export default function Canvas() {
                   </div>
                 )}
 
+                {/* ── Section: Autoscaling (VPA) ────────── */}
+                {!isManaged && draftKind === "VerticalPodAutoscaler" && (
+                  <div className="inspector-section">
+                    <div className="inspector-section__header">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <rect x="4" y="12" width="4" height="8" rx="1" />
+                        <rect x="10" y="8" width="4" height="12" rx="1" />
+                        <rect x="16" y="4" width="4" height="16" rx="1" />
+                        <path d="M5 12V9M11 8V5M17 4V7" strokeDasharray="2 2" />
+                      </svg>
+                      Autoscaling
+                    </div>
+                    <div className="inspector-section__body">
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Target (targetRef)
+                        </label>
+                        {(() => {
+                          const ref = draftSpec?.targetRef as
+                            | { kind?: string; name?: string }
+                            | undefined;
+                          const current =
+                            ref?.kind && ref.name
+                              ? `${ref.kind}|${ref.name}`
+                              : "";
+                          const known = vpaTargetOptions.some(
+                            (w) => `${w.kind}|${w.name}` === current,
+                          );
+                          return (
+                            <select
+                              className="inspector-field__input inspector-field__input--select"
+                              value={current}
+                              onChange={(e) =>
+                                patchDraft({
+                                  spec: {
+                                    ...draftSpec,
+                                    targetRef: e.target.value
+                                      ? {
+                                          apiVersion: (() => {
+                                            const targetKind =
+                                              e.target.value.split("|")[0];
+                                            return targetKind ===
+                                                "Deployment" ||
+                                              targetKind === "ReplicaSet"
+                                              ? "apps/v1"
+                                              : targetKind === "Job" ||
+                                                  targetKind === "CronJob"
+                                              ? "batch/v1"
+                                              : "v1";
+                                          })(),
+                                          kind: e.target.value.split("|")[0],
+                                          name: e.target.value.split("|")[1],
+                                        }
+                                      : undefined,
+                                  },
+                                })
+                              }
+                            >
+                              <option value="">(no target)</option>
+                              {vpaTargetOptions.map((w) => (
+                                <option
+                                  key={`${w.kind}|${w.name}`}
+                                  value={`${w.kind}|${w.name}`}
+                                >
+                                  {w.kind} {w.name}
+                                </option>
+                              ))}
+                              {current && !known && (
+                                <option value={current}>
+                                  {ref?.kind} {ref?.name} (missing)
+                                </option>
+                              )}
+                            </select>
+                          );
+                        })()}
+                        <span className="inspector-field__hint">
+                          Lists the Deployments, ReplicaSets, Pods, Jobs and
+                          CronJobs currently on the canvas.
+                        </span>
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Update Mode
+                        </label>
+                        <select
+                          className="inspector-field__input inspector-field__input--select"
+                          value={String(
+                            draftSpec?.updatePolicy?.updateMode ?? "Auto",
+                          )}
+                          onChange={(e) =>
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                updatePolicy: {
+                                  ...(draftSpec?.updatePolicy ?? {}),
+                                  updateMode: e.target.value || undefined,
+                                },
+                              },
+                            })
+                          }
+                        >
+                          <option value="Auto">Auto</option>
+                          <option value="Initial">Initial</option>
+                          <option value="Recreate">Recreate</option>
+                          <option value="Off">Off</option>
+                        </select>
+                        <span className="inspector-field__hint">
+                          Auto applies recommended requests to new Pods, Initial
+                          only to the first, Recreate evicts running Pods, Off
+                          never applies.
+                        </span>
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Min CPU
+                        </label>
+                        <input
+                          className="inspector-field__input"
+                          value={String(
+                            draftSpec?.resourcePolicy?.containerPolicies?.[0]
+                              ?.minAllowed?.cpu ?? "",
+                          )}
+                          onChange={(e) =>
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                resourcePolicy: {
+                                  ...(draftSpec?.resourcePolicy ?? {}),
+                                  containerPolicies: [
+                                    {
+                                      ...(draftSpec?.resourcePolicy
+                                        ?.containerPolicies?.[0] ?? {
+                                        containerName: "*",
+                                      }),
+                                      minAllowed: {
+                                        ...(draftSpec?.resourcePolicy
+                                          ?.containerPolicies?.[0]
+                                          ?.minAllowed ?? {}),
+                                        cpu: e.target.value || undefined,
+                                      },
+                                    },
+                                  ],
+                                },
+                              },
+                            })
+                          }
+                          placeholder="100m"
+                        />
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Max CPU
+                        </label>
+                        <input
+                          className="inspector-field__input"
+                          value={String(
+                            draftSpec?.resourcePolicy?.containerPolicies?.[0]
+                              ?.maxAllowed?.cpu ?? "",
+                          )}
+                          onChange={(e) =>
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                resourcePolicy: {
+                                  ...(draftSpec?.resourcePolicy ?? {}),
+                                  containerPolicies: [
+                                    {
+                                      ...(draftSpec?.resourcePolicy
+                                        ?.containerPolicies?.[0] ?? {
+                                        containerName: "*",
+                                      }),
+                                      maxAllowed: {
+                                        ...(draftSpec?.resourcePolicy
+                                          ?.containerPolicies?.[0]
+                                          ?.maxAllowed ?? {}),
+                                        cpu: e.target.value || undefined,
+                                      },
+                                    },
+                                  ],
+                                },
+                              },
+                            })
+                          }
+                          placeholder="1"
+                        />
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Min Memory
+                        </label>
+                        <input
+                          className="inspector-field__input"
+                          value={String(
+                            draftSpec?.resourcePolicy?.containerPolicies?.[0]
+                              ?.minAllowed?.memory ?? "",
+                          )}
+                          onChange={(e) =>
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                resourcePolicy: {
+                                  ...(draftSpec?.resourcePolicy ?? {}),
+                                  containerPolicies: [
+                                    {
+                                      ...(draftSpec?.resourcePolicy
+                                        ?.containerPolicies?.[0] ?? {
+                                        containerName: "*",
+                                      }),
+                                      minAllowed: {
+                                        ...(draftSpec?.resourcePolicy
+                                          ?.containerPolicies?.[0]
+                                          ?.minAllowed ?? {}),
+                                        memory: e.target.value || undefined,
+                                      },
+                                    },
+                                  ],
+                                },
+                              },
+                            })
+                          }
+                          placeholder="256Mi"
+                        />
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Max Memory
+                        </label>
+                        <input
+                          className="inspector-field__input"
+                          value={String(
+                            draftSpec?.resourcePolicy?.containerPolicies?.[0]
+                              ?.maxAllowed?.memory ?? "",
+                          )}
+                          onChange={(e) =>
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                resourcePolicy: {
+                                  ...(draftSpec?.resourcePolicy ?? {}),
+                                  containerPolicies: [
+                                    {
+                                      ...(draftSpec?.resourcePolicy
+                                        ?.containerPolicies?.[0] ?? {
+                                        containerName: "*",
+                                      }),
+                                      maxAllowed: {
+                                        ...(draftSpec?.resourcePolicy
+                                          ?.containerPolicies?.[0]
+                                          ?.maxAllowed ?? {}),
+                                        memory: e.target.value || undefined,
+                                      },
+                                    },
+                                  ],
+                                },
+                              },
+                            })
+                          }
+                          placeholder="2Gi"
+                        />
+                      </div>
+                      <span className="inspector-field__hint">
+                        Bounds apply to the first containerPolicy
+                        (containerName &quot;*&quot;). Clear to leave unbounded.
+                      </span>
+                    </div>
+                  </div>
+                )}
+
                 {/* ── Section: Capacity (PersistentVolume) ── */}
                 {!isManaged && draftKind === "PersistentVolume" && (
                   <div className="inspector-section">
@@ -3944,6 +4289,70 @@ export default function Canvas() {
                         <span className="inspector-field__hint">
                           Claims whose spec.storageClassName references this
                           class.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                {/* ── Section: Vertical scaled by (VPA targets) ── */}
+                {(inspectorData.kind === "Deployment" ||
+                  inspectorData.kind === "ReplicaSet" ||
+                  inspectorData.kind === "Pod" ||
+                  inspectorData.kind === "Job" ||
+                  inspectorData.kind === "CronJob") &&
+                  vpaScaledBy.length > 0 && (
+                    <div className="inspector-section">
+                      <div className="inspector-section__header">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <rect x="4" y="12" width="4" height="8" rx="1" />
+                          <rect x="10" y="8" width="4" height="12" rx="1" />
+                          <rect x="16" y="4" width="4" height="16" rx="1" />
+                          <path d="M5 12V9M11 8V5M17 4V7" strokeDasharray="2 2" />
+                        </svg>
+                        Vertical scaled by
+                        <span className="inspector-section__count">
+                          {vpaScaledBy.length}
+                        </span>
+                      </div>
+                      <div className="inspector-section__body">
+                        <div className="inspector-rel-list">
+                          {vpaScaledBy.map((ref) => (
+                            <button
+                              key={`${ref.kind}:${ref.name}`}
+                              type="button"
+                              className="inspector-rel-item inspector-rel-item--link"
+                              title={`Select ${ref.kind} ${ref.name}`}
+                              onClick={() =>
+                                setSelectedResource({
+                                  kind: ref.kind as SupportedKind,
+                                  name: ref.name,
+                                })
+                              }
+                            >
+                              <span className="inspector-rel-arrow inspector-rel-arrow--incoming">
+                                ↑
+                              </span>
+                              <div className="inspector-rel-info">
+                                <span className="inspector-rel-kind">
+                                  {ref.kind}
+                                </span>
+                                <span className="inspector-rel-name">
+                                  {ref.name}
+                                </span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                        <span className="inspector-field__hint">
+                          VPAs whose spec.targetRef points at this resource —
+                          they right-size the resource requests of its Pods.
                         </span>
                       </div>
                     </div>

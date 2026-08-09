@@ -22,6 +22,8 @@ const SERVICE_HEIGHT = 104;
 const INGRESS_HEIGHT = 104;
 const HPA_WIDTH = 175;
 const HPA_HEIGHT = 104; // fits header + target/min/max rows without overflowing
+const VPA_WIDTH = 185;
+const VPA_HEIGHT = 104; // fits header + target/updateMode rows without overflowing
 const CONFIGMAP_WIDTH = 180;
 const CONFIGMAP_HEIGHT = 104; // fits header + data rows without overflowing the leaf box
 const PVC_WIDTH = 175;
@@ -305,7 +307,10 @@ function getSavedPosition(kind: string, name: string): { x: number; y: number } 
  * 2. ReplicaSets are nested inside Deployments. Lay out horizontally in a row. Compute Deployment size.
  * 3. Services are placed in a lane above workloads (Y = 175). Auto-align horizontally above the Pods they select.
  * 4. Ingresses are placed in the top lane (Y = 25). Auto-align horizontally above the Services they target.
- * 5. HPAs are placed in a lane below workloads (Y = 520). Auto-align horizontally above the workload they scale.
+ * 5. HPAs and VPAs share an autoscaler lane below workloads (Y = 520) with a
+ *    single collision pass so the two kinds never overlap. Auto-align
+ *    horizontally above the resource they scale (VPA via spec.targetRef, which
+ *    may also point at a Pod/Job/CronJob).
  * 6. ConfigMaps are placed in a lane below HPAs (Y = 680). They receive inferred
  *    "uses" edges from every workload whose Pod spec references them.
  * 7. PVCs are placed in a lane below ConfigMaps (Y = 840). They receive inferred
@@ -347,6 +352,7 @@ export function buildGraph(
     const replicaSets = resources.filter((r) => r.kind === 'ReplicaSet');
     const pods = resources.filter((r) => r.kind === 'Pod');
     const hpas = resources.filter((r) => r.kind === 'HPA');
+    const vpas = resources.filter((r) => r.kind === 'VerticalPodAutoscaler');
     const configmaps = resources.filter((r) => r.kind === 'ConfigMap');
     const pvcs = resources.filter((r) => r.kind === 'PersistentVolumeClaim');
     const pvs = resources.filter((r) => r.kind === 'PersistentVolume');
@@ -1073,7 +1079,8 @@ export function buildGraph(
         });
     });
 
-    // 4. LAY OUT HPAs
+    // 4. LAY OUT AUTOSCALERS (HPAs + VPAs) — shared lane at Y = 520, resolved
+    //    in ONE collision pass so the two kinds never overlap in X.
     const hpaLayoutInfo: Array<{ id: string; x: number; width: number; node: K8sResource }> = [];
     let hpaXCursor = 50;
 
@@ -1110,33 +1117,77 @@ export function buildGraph(
         });
     });
 
-    const draggedHpaIds = new Set(
-        hpaLayoutInfo
-            .filter(({ node }) => prevCoords.has(`HPA:${node.metadata.name}`) || getSavedPosition('HPA', node.metadata.name))
+    const vpaLayoutInfo: Array<{ id: string; x: number; width: number; node: K8sResource }> = [];
+    let vpaXCursor = 50;
+
+    vpas.forEach((vpa) => {
+        const vpaId = allocateId(vpa);
+        const key = `VerticalPodAutoscaler:${vpa.metadata.name}`;
+        const savedPos = getSavedPosition('VerticalPodAutoscaler', vpa.metadata.name);
+        const prevPos = prevCoords.get(key);
+
+        let preferredX = 0;
+        if (prevPos) {
+            preferredX = prevPos.x;
+        } else if (savedPos) {
+            preferredX = savedPos.x;
+        } else {
+            // Center above the workload/Pod it right-sizes when possible
+            const target = getVpaTarget(vpa);
+            const targetId = target
+                ? nodes.find((n) => n.data.kind === target.kind && n.data.name === target.name)?.id
+                : undefined;
+            if (targetId && absCoords.has(targetId)) {
+                preferredX = absCoords.get(targetId)!.x;
+            } else {
+                preferredX = vpaXCursor;
+                vpaXCursor += 210;
+            }
+        }
+
+        vpaLayoutInfo.push({
+            id: vpaId,
+            x: preferredX,
+            width: VPA_WIDTH,
+            node: vpa,
+        });
+    });
+
+    const autoscalerLayoutInfo = [...hpaLayoutInfo, ...vpaLayoutInfo];
+    const draggedAutoscalerIds = new Set(
+        autoscalerLayoutInfo
+            .filter(
+                ({ node }) =>
+                    prevCoords.has(`${node.kind}:${node.metadata.name}`) ||
+                    getSavedPosition(node.kind, node.metadata.name)
+            )
             .map(({ id }) => id)
     );
 
-    resolveCollisions(hpaLayoutInfo, draggedHpaIds, 24);
+    resolveCollisions(autoscalerLayoutInfo, draggedAutoscalerIds, 24);
 
-    hpaLayoutInfo.forEach((hInfo) => {
-        const key = `HPA:${hInfo.node.metadata.name}`;
+    autoscalerLayoutInfo.forEach((aInfo) => {
+        const key = `${aInfo.node.kind}:${aInfo.node.metadata.name}`;
         const prevPos = prevCoords.get(key);
-        const savedPos = getSavedPosition('HPA', hInfo.node.metadata.name);
+        const savedPos = getSavedPosition(aInfo.node.kind, aInfo.node.metadata.name);
         const yCoord = prevPos?.y ?? savedPos?.y ?? 520;
 
-        const pos = { x: hInfo.x, y: yCoord };
-        absCoords.set(hInfo.id, pos);
+        const pos = { x: aInfo.x, y: yCoord };
+        absCoords.set(aInfo.id, pos);
 
         nodes.push({
-            id: hInfo.id,
+            id: aInfo.id,
             type: 'k8sNode',
             position: pos,
-            style: { width: HPA_WIDTH, height: HPA_HEIGHT },
+            style: {
+                width: aInfo.node.kind === 'HPA' ? HPA_WIDTH : VPA_WIDTH,
+                height: aInfo.node.kind === 'HPA' ? HPA_HEIGHT : VPA_HEIGHT,
+            },
             data: {
-                kind: 'HPA',
-                name: hInfo.node.metadata.name,
-                namespace: hInfo.node.metadata.namespace,
-                resource: hInfo.node,
+                kind: aInfo.node.kind,
+                name: aInfo.node.metadata.name,
+                namespace: aInfo.node.metadata.namespace,
+                resource: aInfo.node,
             },
             draggable: true,
         });
@@ -1598,6 +1649,32 @@ export function buildGraph(
         if (targetId) addEdge(hpaId, targetId, 'scales');
     });
 
+    // VerticalPodAutoscaler → targetRef (Deployment/ReplicaSet/Pod/Job/CronJob):
+    // a VPA right-sizes the Pods of the resource it points at, so the edge goes
+    // to the targetRef node itself — never to the Pods nested inside it.
+    const vpaTargetIdByName = new Map<string, string>();
+    nodes.forEach((n) => {
+        if (
+            n.data.kind === 'Deployment' ||
+            n.data.kind === 'ReplicaSet' ||
+            n.data.kind === 'Pod' ||
+            n.data.kind === 'Job' ||
+            n.data.kind === 'CronJob'
+        ) {
+            const key = `${n.data.kind}:${n.data.name}`;
+            if (!vpaTargetIdByName.has(key)) vpaTargetIdByName.set(key, n.id);
+        }
+    });
+
+    vpas.forEach((vpa) => {
+        const vpaId = idByResource.get(vpa);
+        if (!vpaId) return;
+        const target = getVpaTarget(vpa);
+        if (!target) return;
+        const targetId = vpaTargetIdByName.get(`${target.kind}:${target.name}`);
+        if (targetId) addEdge(vpaId, targetId, 'right-sizes');
+    });
+
     // ConfigMap → "uses": every workload (real Deployment/ReplicaSet/Pod) whose Pod
     // spec references a ConfigMap draws an edge to it. Synthetic RSs/Pods are not
     // part of `resources`, so no double edges for inherited refs.
@@ -1711,6 +1788,7 @@ export function buildGraph(
 /** Inferred edge stroke color by source kind: HPA scaling (amber), Ingress routes (purple), Jobs (yellow), CronJobs (fuchsia), everything else (blue). */
 function edgeColorFor(kind: string): string {
     if (kind === 'HPA') return '#f59e0b';
+    if (kind === 'VerticalPodAutoscaler') return '#0ea5e9';
     if (kind === 'Ingress') return '#a78bfa';
     if (kind === 'Job') return '#eab308';
     if (kind === 'CronJob') return '#d946ef';
@@ -1903,6 +1981,47 @@ export function getHpaTarget(
         return undefined;
     }
     return { kind: ref.kind, name: ref.name };
+}
+
+/** The resource a VerticalPodAutoscaler right-sizes (from spec.targetRef). A VPA
+ *  points at the pod controller — Deployment/ReplicaSet/Job/CronJob — or at a
+ *  standalone Pod, never at Pods nested inside a controller. */
+export function getVpaTarget(
+    resource: K8sResource
+):
+    | { kind: 'Deployment' | 'ReplicaSet' | 'Pod' | 'Job' | 'CronJob'; name: string }
+    | undefined {
+    const spec = resource.spec as
+        | { targetRef?: { kind?: string; name?: string } }
+        | undefined;
+    const ref = spec?.targetRef;
+    if (
+        !ref ||
+        !ref.name ||
+        (ref.kind !== 'Deployment' &&
+            ref.kind !== 'ReplicaSet' &&
+            ref.kind !== 'Pod' &&
+            ref.kind !== 'Job' &&
+            ref.kind !== 'CronJob')
+    ) {
+        return undefined;
+    }
+    return { kind: ref.kind, name: ref.name };
+}
+
+/** All VPAs whose spec.targetRef points at the given kind+name (for the
+ *  target's "Vertical scaled by" inspector projection). */
+export function getResourcesTargetedByVpa(
+    resources: K8sResource[],
+    kind: 'Deployment' | 'ReplicaSet' | 'Pod' | 'Job' | 'CronJob',
+    name: string
+): K8sResource[] {
+    return resources.filter(
+        (r) =>
+            r.kind === 'VerticalPodAutoscaler' &&
+            getVpaTarget(r)?.kind === kind &&
+            getVpaTarget(r)?.name === name
+    );
 }
 
 /**

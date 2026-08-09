@@ -17,7 +17,8 @@ export interface K8sResource {
     | 'StorageClass'
     | 'Secret'
     | 'Job'
-    | 'CronJob';
+    | 'CronJob'
+    | 'VerticalPodAutoscaler';
   metadata: {
     name: string;
     namespace?: string;
@@ -42,5 +43,6 @@ export const SUPPORTED_KINDS = [
   'Secret',
   'Job',
   'CronJob',
+  'VerticalPodAutoscaler',
 ] as const;
 export type SupportedKind = (typeof SUPPORTED_KINDS)[number];

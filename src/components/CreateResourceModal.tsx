@@ -31,6 +31,7 @@ const KIND_COLORS: Record<string, string> = {
     Secret: '#dc2626',
     Job: '#eab308',
     CronJob: '#d946ef',
+    VerticalPodAutoscaler: '#0ea5e9',
 };
 
 const KIND_ICONS: Record<string, React.ReactNode> = {
@@ -124,6 +125,14 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
             <path d="M12 4v3M12 17v3" />
         </svg>
     ),
+    VerticalPodAutoscaler: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="4" y="12" width="4" height="8" rx="1" />
+            <rect x="10" y="8" width="4" height="12" rx="1" />
+            <rect x="16" y="4" width="4" height="16" rx="1" />
+            <path d="M5 12V9M11 8V5M17 4V7" strokeDasharray="2 2" />
+        </svg>
+    ),
 };
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -172,6 +181,13 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     const [minReplicas, setMinReplicas] = useState('1');
     const [maxReplicas, setMaxReplicas] = useState('10');
     const [cpuTarget, setCpuTarget] = useState('70');
+    // VPA fields
+    const [vpaTarget, setVpaTarget] = useState('');
+    const [vpaUpdateMode, setVpaUpdateMode] = useState('Auto');
+    const [vpaMinCpu, setVpaMinCpu] = useState('');
+    const [vpaMaxCpu, setVpaMaxCpu] = useState('');
+    const [vpaMinMemory, setVpaMinMemory] = useState('');
+    const [vpaMaxMemory, setVpaMaxMemory] = useState('');
     const [cmLabels, setCmLabels] = useState('');
     const [cmAnnotations, setCmAnnotations] = useState('');
     const [cmData, setCmData] = useState<Record<string, string> | undefined>(undefined);
@@ -248,6 +264,25 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         () =>
             nodes
                 .filter((n) => n.data.kind === 'Deployment' || n.data.kind === 'ReplicaSet')
+                .map((n) => ({ kind: n.data.kind as string, name: n.data.name as string }))
+                .sort((a, b) => `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`)),
+        [nodes]
+    );
+
+    // VPA targetRef candidates: every real pod-bearing resource on the canvas
+    // (synthetic nodes are excluded — a targetRef points at a manifest resource).
+    const vpaTargetOptions = useMemo(
+        () =>
+            nodes
+                .filter(
+                    (n) =>
+                        !n.data.synthetic &&
+                        (n.data.kind === 'Deployment' ||
+                            n.data.kind === 'ReplicaSet' ||
+                            n.data.kind === 'Pod' ||
+                            n.data.kind === 'Job' ||
+                            n.data.kind === 'CronJob')
+                )
                 .map((n) => ({ kind: n.data.kind as string, name: n.data.name as string }))
                 .sort((a, b) => `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`)),
         [nodes]
@@ -682,6 +717,56 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                                 },
                             },
                         },
+                    },
+                };
+            }
+            case 'VerticalPodAutoscaler': {
+                const [targetKindRaw, targetNameRaw] = vpaTarget.split('|');
+                const fallback = vpaTargetOptions[0];
+                const targetKind = targetKindRaw || fallback?.kind || 'Deployment';
+                const targetName = targetNameRaw || fallback?.name || '';
+                const targetApiVersion =
+                    targetKind === 'Deployment' || targetKind === 'ReplicaSet'
+                        ? 'apps/v1'
+                        : targetKind === 'Job' || targetKind === 'CronJob'
+                        ? 'batch/v1'
+                        : 'v1';
+                const minAllowed: Record<string, string> = {};
+                const maxAllowed: Record<string, string> = {};
+                if (vpaMinCpu.trim()) minAllowed.cpu = vpaMinCpu.trim();
+                if (vpaMinMemory.trim()) minAllowed.memory = vpaMinMemory.trim();
+                if (vpaMaxCpu.trim()) maxAllowed.cpu = vpaMaxCpu.trim();
+                if (vpaMaxMemory.trim()) maxAllowed.memory = vpaMaxMemory.trim();
+                const hasBounds =
+                    Object.keys(minAllowed).length > 0 || Object.keys(maxAllowed).length > 0;
+                return {
+                    apiVersion: 'autoscaling.k8s.io/v1',
+                    kind,
+                    metadata: { name: meta.name, namespace: meta.namespace },
+                    spec: {
+                        targetRef: {
+                            apiVersion: targetApiVersion,
+                            kind: targetKind,
+                            name: targetName,
+                        },
+                        updatePolicy: { updateMode: vpaUpdateMode },
+                        ...(hasBounds
+                            ? {
+                                  resourcePolicy: {
+                                      containerPolicies: [
+                                          {
+                                              containerName: '*',
+                                              ...(Object.keys(minAllowed).length
+                                                  ? { minAllowed }
+                                                  : {}),
+                                              ...(Object.keys(maxAllowed).length
+                                                  ? { maxAllowed }
+                                                  : {}),
+                                          },
+                                      ],
+                                  },
+                              }
+                            : {}),
                     },
                 };
             }
@@ -1292,6 +1377,93 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                                     placeholder="70"
                                 />
                             </div>
+                        </>
+                    )}
+
+                    {/* VPA: targetRef + update mode + resource bounds */}
+                    {kind === 'VerticalPodAutoscaler' && (
+                        <>
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    Target (targetRef)
+                                    <span className="modal-field__hint">
+                                        Sets spec.targetRef — the Deployment, ReplicaSet, Pod, Job or CronJob whose Pod container requests this VPA adjusts.
+                                    </span>
+                                </label>
+                                <select
+                                    className="modal-field__input modal-field__input--select"
+                                    value={vpaTarget}
+                                    onChange={(e) => setVpaTarget(e.target.value)}
+                                >
+                                    <option value="">(select a target)</option>
+                                    {vpaTargetOptions.map((w) => (
+                                        <option key={`${w.kind}|${w.name}`} value={`${w.kind}|${w.name}`}>
+                                            {w.kind} {w.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    Update Mode
+                                    <span className="modal-field__hint">
+                                        Auto applies recommended requests to new Pods; Initial only to the first; Recreate evicts running Pods; Off never applies.
+                                    </span>
+                                </label>
+                                <select
+                                    className="modal-field__input modal-field__input--select"
+                                    value={vpaUpdateMode}
+                                    onChange={(e) => setVpaUpdateMode(e.target.value)}
+                                >
+                                    <option>Auto</option>
+                                    <option>Initial</option>
+                                    <option>Recreate</option>
+                                    <option>Off</option>
+                                </select>
+                            </div>
+                            <div className="modal-row">
+                                <div className="modal-field">
+                                    <label className="modal-field__label">Min CPU</label>
+                                    <input
+                                        className="modal-field__input"
+                                        value={vpaMinCpu}
+                                        onChange={(e) => setVpaMinCpu(e.target.value)}
+                                        placeholder="100m"
+                                    />
+                                </div>
+                                <div className="modal-field">
+                                    <label className="modal-field__label">Max CPU</label>
+                                    <input
+                                        className="modal-field__input"
+                                        value={vpaMaxCpu}
+                                        onChange={(e) => setVpaMaxCpu(e.target.value)}
+                                        placeholder="1"
+                                    />
+                                </div>
+                            </div>
+                            <div className="modal-row">
+                                <div className="modal-field">
+                                    <label className="modal-field__label">Min Memory</label>
+                                    <input
+                                        className="modal-field__input"
+                                        value={vpaMinMemory}
+                                        onChange={(e) => setVpaMinMemory(e.target.value)}
+                                        placeholder="256Mi"
+                                    />
+                                </div>
+                                <div className="modal-field">
+                                    <label className="modal-field__label">Max Memory</label>
+                                    <input
+                                        className="modal-field__input"
+                                        value={vpaMaxMemory}
+                                        onChange={(e) => setVpaMaxMemory(e.target.value)}
+                                        placeholder="2Gi"
+                                    />
+                                </div>
+                            </div>
+                            <span className="modal-field__hint">
+                                Bounds write spec.resourcePolicy.containerPolicies[0] (containerName &quot;*&quot;). Leave empty for unbounded.
+                            </span>
                         </>
                     )}
 

@@ -48,6 +48,96 @@ const POD_GAP = 12;
 const RS_GAP = 20;
 const WORKLOAD_GAP = 48;
 
+const GATEWAYCLASS_WIDTH = 185;
+const GATEWAYCLASS_HEIGHT = 124; // fits header + controllerName rows without overflowing the leaf box
+const GATEWAY_WIDTH = 185;
+const GATEWAY_HEIGHT = 124; // fits header + class/listener rows without overflowing the leaf box
+const ROUTE_WIDTH = 180;
+const ROUTE_HEIGHT = 124; // fits header + parent/backend/host rows without overflowing the leaf box
+
+/** True for the Gateway API family kinds (GatewayClass / Gateway / route kinds). */
+export function isGatewayApiKind(kind: string): boolean {
+    return (
+        kind === 'GatewayClass' ||
+        kind === 'Gateway' ||
+        kind === 'HTTPRoute' ||
+        kind === 'GRPCRoute' ||
+        kind === 'TCPRoute' ||
+        kind === 'TLSRoute' ||
+        kind === 'UDPRoute'
+    );
+}
+
+/** True for Gateway API route kinds (HTTPRoute / GRPCRoute / TCPRoute / TLSRoute / UDPRoute). */
+export function isRouteKind(kind: string): boolean {
+    return (
+        kind === 'HTTPRoute' ||
+        kind === 'GRPCRoute' ||
+        kind === 'TCPRoute' ||
+        kind === 'TLSRoute' ||
+        kind === 'UDPRoute'
+    );
+}
+
+/**
+ * Collect the connected Gateway API family of a resource: the GatewayClass, every
+ * Gateway referencing it (spec.gatewayClassName) and every Route attached to those
+ * Gateways (spec.parentRefs[].name). Traversed through the semantic references, not
+ * the parentId nesting chain (Gateway API resources are top-level siblings). Services
+ * in a Route's backendRefs are intentionally NEVER collected — a Route routes TO a
+ * Service, it does not own it, so the Service always survives the family cascade.
+ */
+export function collectGatewayApiFamily(nodes: Node<K8sNodeData>[], rootId: string): Set<string> {
+    const doomed = new Set<string>();
+    const root = nodes.find((n) => n.id === rootId);
+    if (!root || !isGatewayApiKind(root.data.kind)) return doomed;
+
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const queue: Node<K8sNodeData>[] = [root];
+    while (queue.length) {
+        const cur = queue.shift()!;
+        if (doomed.has(cur.id)) continue;
+        doomed.add(cur.id);
+        const kind = cur.data.kind;
+        const name = cur.data.name;
+        if (kind === 'GatewayClass') {
+            // down: every Gateway whose spec.gatewayClassName points at this class
+            nodes
+                .filter(
+                    (n) =>
+                        n.data.kind === 'Gateway' &&
+                        (n.data.resource.spec as { gatewayClassName?: string } | undefined)
+                            ?.gatewayClassName === name
+                )
+                .forEach((g) => queue.push(g));
+        } else if (kind === 'Gateway') {
+            // up: the class this Gateway references; down: Routes attached to it
+            const spec = cur.data.resource.spec as { gatewayClassName?: string } | undefined;
+            if (spec?.gatewayClassName) {
+                const gc = byId.get(nodeIdFor('GatewayClass', spec.gatewayClassName));
+                if (gc) queue.push(gc);
+            }
+            nodes
+                .filter(
+                    (n) =>
+                        isRouteKind(n.data.kind) &&
+                        (n.data.resource.spec as { parentRefs?: Array<{ name?: string }> } | undefined)
+                            ?.parentRefs?.some((ref) => ref?.name === name)
+                )
+                .forEach((r) => queue.push(r));
+        } else {
+            // up: the Gateway(s) this Route attaches to via parentRefs
+            const spec = cur.data.resource.spec as { parentRefs?: Array<{ name?: string }> } | undefined;
+            (spec?.parentRefs ?? []).forEach((ref) => {
+                if (!ref?.name) return;
+                const gw = byId.get(nodeIdFor('Gateway', ref.name));
+                if (gw) queue.push(gw);
+            });
+        }
+    }
+    return doomed;
+}
+
 /** Upper bound on materialized Pods per ReplicaSet — keeps huge replica counts renderable.
  *  The replica badge on the workload always shows the true desired count. */
 export const MAX_SYNTHETIC_PODS = 15;
@@ -323,7 +413,14 @@ function getSavedPosition(kind: string, name: string): { x: number; y: number } 
  *    inferred "uses" edges from every workload whose Pod spec references them
  *    (envFrom/secretKeyRef/volumes) and a "tls" edge from every Ingress whose
  *    spec.tls[].secretName points at them.
- * 10. Manual layout adjustments are preserved for all top-level elements.
+ * 10. Gateway API: GatewayClass (cluster-scoped, outside namespace boxes) and
+ *    Gateway share a gateway lane (Y = 1480) with a single combined collision
+ *    pass; all four route kinds (HTTPRoute/GRPCRoute/TCPRoute/TLSRoute) share a
+ *    route lane (Y = 1640). Inferred edges: Gateway→GatewayClass "class"
+ *    (spec.gatewayClassName), Route→Gateway "attaches" (spec.parentRefs[].name)
+ *    and Route→Service "routes to" (spec.backendRefs[].name) — explicit-only,
+ *    a missing target draws nothing.
+ * 11. Manual layout adjustments are preserved for all top-level elements.
  *
  * Invariants:
  * - Every Pod belongs to at most one ReplicaSet, every ReplicaSet to at most one Deployment
@@ -360,6 +457,14 @@ export function buildGraph(
     const secrets = resources.filter((r) => r.kind === 'Secret');
     const jobs = resources.filter((r) => r.kind === 'Job');
     const cronJobs = resources.filter((r) => r.kind === 'CronJob');
+    const gatewayClasses = resources.filter((r) => r.kind === 'GatewayClass');
+    const gateways = resources.filter((r) => r.kind === 'Gateway');
+    const httpRoutes = resources.filter((r) => r.kind === 'HTTPRoute');
+    const grpcRoutes = resources.filter((r) => r.kind === 'GRPCRoute');
+    const tcpRoutes = resources.filter((r) => r.kind === 'TCPRoute');
+    const tlsRoutes = resources.filter((r) => r.kind === 'TLSRoute');
+    const udpRoutes = resources.filter((r) => r.kind === 'UDPRoute');
+    const routes = [...httpRoutes, ...grpcRoutes, ...tcpRoutes, ...tlsRoutes, ...udpRoutes];
 
     // Ownership assignment: each ReplicaSet is claimed by at most ONE Deployment,
     // each Pod by at most ONE ReplicaSet (first match wins). This prevents a resource
@@ -1515,7 +1620,150 @@ export function buildGraph(
         });
     });
 
-    // 10. GENERATE EDGES (Traffic Flow)
+    // 10. LAY OUT GATEWAY API — GatewayClass (cluster-scoped, outside any namespace
+    //     box) and Gateway (namespaced) share the gateway lane (Y = 1480) with a
+    //     single combined collision pass so the two kinds never overlap.
+    const gatewayLaneInfo: Array<{
+        id: string;
+        x: number;
+        width: number;
+        kind: 'GatewayClass' | 'Gateway';
+        node: K8sResource;
+    }> = [];
+    let gatewayClassXCursor = 50;
+    let gatewayXCursor = 50;
+
+    gatewayClasses.forEach((gc) => {
+        const gcId = allocateId(gc);
+        const prevPos = prevCoords.get(`GatewayClass:${gc.metadata.name}`);
+        const savedPos = getSavedPosition('GatewayClass', gc.metadata.name);
+        let preferredX = prevPos?.x ?? savedPos?.x;
+        if (preferredX === undefined) {
+            preferredX = gatewayClassXCursor;
+            gatewayClassXCursor += GATEWAYCLASS_WIDTH + 24;
+        }
+        gatewayLaneInfo.push({
+            id: gcId,
+            x: preferredX,
+            width: GATEWAYCLASS_WIDTH,
+            kind: 'GatewayClass',
+            node: gc,
+        });
+    });
+
+    gateways.forEach((gw) => {
+        const gwId = allocateId(gw);
+        const prevPos = prevCoords.get(`Gateway:${gw.metadata.name}`);
+        const savedPos = getSavedPosition('Gateway', gw.metadata.name);
+        let preferredX = prevPos?.x ?? savedPos?.x;
+        if (preferredX === undefined) {
+            preferredX = gatewayXCursor;
+            gatewayXCursor += GATEWAY_WIDTH + 24;
+        }
+        gatewayLaneInfo.push({
+            id: gwId,
+            x: preferredX,
+            width: GATEWAY_WIDTH,
+            kind: 'Gateway',
+            node: gw,
+        });
+    });
+
+    const draggedGatewayLaneIds = new Set(
+        gatewayLaneInfo
+            .filter(
+                ({ kind, node }) =>
+                    prevCoords.has(`${kind}:${node.metadata.name}`) ||
+                    getSavedPosition(kind, node.metadata.name)
+            )
+            .map(({ id }) => id)
+    );
+
+    resolveCollisions(gatewayLaneInfo, draggedGatewayLaneIds, 24);
+
+    gatewayLaneInfo.forEach((info) => {
+        const prevPos = prevCoords.get(`${info.kind}:${info.node.metadata.name}`);
+        const savedPos = getSavedPosition(info.kind, info.node.metadata.name);
+        const yCoord = prevPos?.y ?? savedPos?.y ?? 1480;
+        const width = info.kind === 'GatewayClass' ? GATEWAYCLASS_WIDTH : GATEWAY_WIDTH;
+        const height = info.kind === 'GatewayClass' ? GATEWAYCLASS_HEIGHT : GATEWAY_HEIGHT;
+        const pos = { x: info.x, y: yCoord };
+        absCoords.set(info.id, pos);
+
+        nodes.push({
+            id: info.id,
+            type: 'k8sNode',
+            position: pos,
+            style: { width, height },
+            data: {
+                kind: info.kind,
+                name: info.node.metadata.name,
+                namespace: info.node.metadata.namespace,
+                resource: info.node,
+            },
+            draggable: true,
+        });
+    });
+
+    // 11. LAY OUT ROUTES — every Gateway API route kind (HTTPRoute/GRPCRoute/TCPRoute/
+    //     TLSRoute) shares the route lane (Y = 1640) with a single combined collision
+    //     pass so the four kinds never overlap.
+    const routeLaneInfo: Array<{ id: string; x: number; width: number; kind: SupportedKind; node: K8sResource }> = [];
+    let routeXCursor = 50;
+
+    routes.forEach((route) => {
+        const routeId = allocateId(route);
+        const prevPos = prevCoords.get(`${route.kind}:${route.metadata.name}`);
+        const savedPos = getSavedPosition(route.kind, route.metadata.name);
+        let preferredX = prevPos?.x ?? savedPos?.x;
+        if (preferredX === undefined) {
+            preferredX = routeXCursor;
+            routeXCursor += ROUTE_WIDTH + 24;
+        }
+        routeLaneInfo.push({
+            id: routeId,
+            x: preferredX,
+            width: ROUTE_WIDTH,
+            kind: route.kind,
+            node: route,
+        });
+    });
+
+    const draggedRouteLaneIds = new Set(
+        routeLaneInfo
+            .filter(
+                ({ kind, node }) =>
+                    prevCoords.has(`${kind}:${node.metadata.name}`) ||
+                    getSavedPosition(kind, node.metadata.name)
+            )
+            .map(({ id }) => id)
+    );
+
+    resolveCollisions(routeLaneInfo, draggedRouteLaneIds, 24);
+
+    routeLaneInfo.forEach((info) => {
+        const prevPos = prevCoords.get(`${info.kind}:${info.node.metadata.name}`);
+        const savedPos = getSavedPosition(info.kind, info.node.metadata.name);
+        const yCoord = prevPos?.y ?? savedPos?.y ?? 1640;
+        const pos = { x: info.x, y: yCoord };
+        absCoords.set(info.id, pos);
+
+        nodes.push({
+            id: info.id,
+            type: 'k8sNode',
+            position: pos,
+            style: { width: ROUTE_WIDTH, height: ROUTE_HEIGHT },
+            data: {
+                kind: info.kind,
+                name: info.node.metadata.name,
+                namespace: info.node.metadata.namespace,
+                resource: info.node,
+            },
+            draggable: true,
+        });
+    });
+
+    // 12. GENERATE EDGES (Traffic Flow)
     const edges: Edge[] = [];
     const byId = new Map<string, Node<K8sNodeData>>();
     nodes.forEach((n) => byId.set(n.id, n));
@@ -1782,6 +2030,45 @@ export function buildGraph(
         }
     });
 
+    // Gateway API: Gateway → GatewayClass "class" (spec.gatewayClassName, 1:1),
+    // Route → Gateway "attaches" (spec.parentRefs[].name) and Route → Service
+    // "routes to" (spec.backendRefs[].name). Explicit-only like storage/ConfigMap:
+    // a missing target draws nothing.
+    const gatewayClassIdByName = new Map<string, string>();
+    nodes.forEach((n) => {
+        if (n.data.kind === 'GatewayClass' && !gatewayClassIdByName.has(n.data.name)) {
+            gatewayClassIdByName.set(n.data.name, n.id);
+        }
+    });
+    const gatewayIdByName = new Map<string, string>();
+    nodes.forEach((n) => {
+        if (n.data.kind === 'Gateway' && !gatewayIdByName.has(n.data.name)) {
+            gatewayIdByName.set(n.data.name, n.id);
+        }
+    });
+
+    gateways.forEach((gw) => {
+        const gwId = idByResource.get(gw);
+        if (!gwId) return;
+        const className = getGatewayClassName(gw);
+        if (!className) return;
+        const classId = gatewayClassIdByName.get(className);
+        if (classId) addEdge(gwId, classId, 'class');
+    });
+
+    routes.forEach((route) => {
+        const routeId = idByResource.get(route);
+        if (!routeId) return;
+        getRouteParentRefNames(route).forEach((parentName) => {
+            const parentId = gatewayIdByName.get(parentName);
+            if (parentId) addEdge(routeId, parentId, 'attaches');
+        });
+        getRouteBackendRefNames(route).forEach((svcName) => {
+            const svcId = serviceIdByName.get(svcName);
+            if (svcId) addEdge(routeId, svcId, 'routes to');
+        });
+    });
+
     return { nodes, edges };
 }
 
@@ -1808,6 +2095,13 @@ function edgeColorForPair(sourceKind: string, targetKind: string): string {
     if (targetKind === 'ConfigMap') return '#06b6d4';
     if (targetKind === 'Secret' && sourceKind === 'Ingress') return '#eab308';
     if (targetKind === 'Secret') return '#dc2626';
+    if (targetKind === 'GatewayClass') return '#f43f5e';
+    if (sourceKind === 'HTTPRoute') return '#0d9488';
+    if (sourceKind === 'GRPCRoute') return '#65a30d';
+    if (sourceKind === 'TCPRoute') return '#0284c7';
+    if (sourceKind === 'TLSRoute') return '#d97706';
+    if (sourceKind === 'UDPRoute') return '#16a34a';
+    if (sourceKind === 'Gateway') return '#7c3aed';
     return edgeColorFor(sourceKind);
 }
 
@@ -2311,4 +2605,50 @@ export function getResourcesUsingSecret(resources: K8sResource[], secretName: st
             r.kind === 'Job' ||
             r.kind === 'CronJob'
     ).filter((r) => getSecretRefs(r).includes(secretName));
+}
+
+/** The GatewayClass a Gateway references (spec.gatewayClassName), or undefined. */
+export function getGatewayClassName(gateway: K8sResource): string | undefined {
+    const spec = gateway.spec as { gatewayClassName?: unknown } | undefined;
+    const name = spec?.gatewayClassName;
+    return typeof name === 'string' && name.trim() ? name : undefined;
+}
+
+/** The Gateway names a route attaches to (spec.parentRefs[].name), in document order. */
+export function getRouteParentRefNames(route: K8sResource): string[] {
+    const spec = route.spec as { parentRefs?: Array<{ name?: unknown }> } | undefined;
+    if (!Array.isArray(spec?.parentRefs)) return [];
+    return spec.parentRefs
+        .filter((ref) => ref && typeof ref.name === 'string' && ref.name.trim())
+        .map((ref) => ref.name as string);
+}
+
+/** The Service names a route routes to (spec.backendRefs[].name), in document order. */
+export function getRouteBackendRefNames(route: K8sResource): string[] {
+    const spec = route.spec as { backendRefs?: Array<{ name?: unknown }> } | undefined;
+    if (!Array.isArray(spec?.backendRefs)) return [];
+    return spec.backendRefs
+        .filter((ref) => ref && typeof ref.name === 'string' && ref.name.trim())
+        .map((ref) => ref.name as string);
+}
+
+/** All Gateways referencing the given GatewayClass by name (spec.gatewayClassName). */
+export function getGatewaysUsingClass(resources: K8sResource[], className: string): K8sResource[] {
+    return resources.filter(
+        (r) => r.kind === 'Gateway' && getGatewayClassName(r) === className
+    );
+}
+
+/** All Routes attached to the given Gateway by name (spec.parentRefs[].name). */
+export function getRoutesForGateway(resources: K8sResource[], gatewayName: string): K8sResource[] {
+    return resources.filter(
+        (r) => isRouteKind(r.kind) && getRouteParentRefNames(r).includes(gatewayName)
+    );
+}
+
+/** All Routes routing to the given Service by name (spec.backendRefs[].name). */
+export function getRoutesForService(resources: K8sResource[], serviceName: string): K8sResource[] {
+    return resources.filter(
+        (r) => isRouteKind(r.kind) && getRouteBackendRefNames(r).includes(serviceName)
+    );
 }

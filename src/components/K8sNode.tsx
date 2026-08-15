@@ -101,6 +101,60 @@ const ICONS: Record<string, React.ReactNode> = {
             <path d="M5 12V9M11 8V5M17 4V7" strokeDasharray="2 2" />
         </svg>
     ),
+    GatewayClass: (
+        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="5" width="18" height="14" rx="2" />
+            <path d="M3 9h18" />
+            <circle cx="7" cy="16" r="1" />
+            <circle cx="12" cy="16" r="1" />
+            <circle cx="17" cy="16" r="1" />
+        </svg>
+    ),
+    Gateway: (
+        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 7h18v10H3z" />
+            <path d="M8 10h4v4H8z" />
+            <path d="M14.5 10h2.5v4h-2.5" />
+        </svg>
+    ),
+    HTTPRoute: (
+        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 19V5" />
+            <path d="M4 5l16 6-16 6" />
+            <path d="M13 5h7v4" />
+        </svg>
+    ),
+    GRPCRoute: (
+        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 19V5" />
+            <path d="M4 5l16 6-16 6" />
+            <path d="M15 4.5l4.5 1.5L15 7.5" />
+            <path d="M15 16.5l4.5 1.5-4.5 1.5" />
+        </svg>
+    ),
+    TCPRoute: (
+        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 19V5" />
+            <path d="M4 5l16 6-16 6" />
+            <circle cx="18" cy="18" r="3" />
+        </svg>
+    ),
+    TLSRoute: (
+        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 19V5" />
+            <path d="M4 5l16 6-16 6" />
+            <rect x="14" y="12" width="8" height="6" rx="1" />
+            <path d="M16 12v-1a2 2 0 014 0v1" />
+        </svg>
+    ),
+    UDPRoute: (
+        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 19V5" />
+            <path d="M4 5l16 6-16 6" />
+            <circle cx="19" cy="18" r="2" />
+            <path d="M19 8v6" strokeDasharray="2 2" />
+        </svg>
+    ),
 };
 
 const KIND_COLORS: Record<string, string> = {
@@ -118,6 +172,13 @@ const KIND_COLORS: Record<string, string> = {
     Job: '#eab308',                   // Yellow
     CronJob: '#d946ef',               // Fuchsia
     VerticalPodAutoscaler: '#0ea5e9', // Sky
+    GatewayClass: '#f43f5e',          // Rose
+    Gateway: '#7c3aed',               // Violet
+    HTTPRoute: '#0d9488',             // Dark teal
+    GRPCRoute: '#65a30d',             // Dark lime
+    TCPRoute: '#0284c7',              // Dark sky
+    TLSRoute: '#d97706',              // Dark amber
+    UDPRoute: '#16a34a',              // Green
 };
 
 function K8sNodeComponent({ data }: NodeProps) {
@@ -205,6 +266,18 @@ function K8sNodeComponent({ data }: NodeProps) {
                         {spec.capacity.storage}
                     </div>
                 )}
+                {kind === 'Gateway' && typeof spec.listeners?.[0]?.port === 'number' && (
+                    <div className="k8s-node__badge" title="Listener port">
+                        :{spec.listeners[0].port}
+                    </div>
+                )}
+                {(kind === 'HTTPRoute' || kind === 'GRPCRoute' || kind === 'TLSRoute') &&
+                    Array.isArray(spec.hostnames) &&
+                    typeof spec.hostnames[0] === 'string' && (
+                        <div className="k8s-node__badge" title="First hostname">
+                            {spec.hostnames[0]}
+                        </div>
+                    )}
             </div>
 
             {/* Content Body (only for Leaf Nodes or empty Containers) */}
@@ -418,6 +491,41 @@ function buildResourceDetails(nodeData: K8sNodeData): DetailPair[] {
         if (container?.image) {
             const parts = container.image.split('/');
             details.push({ key: 'image', val: parts[parts.length - 1] });
+        }
+    }
+    if (nodeData.kind === 'GatewayClass') {
+        if (spec.controllerName) {
+            details.push({ key: 'controller', val: String(spec.controllerName) });
+        }
+    }
+    if (nodeData.kind === 'Gateway') {
+        if (spec.gatewayClassName) {
+            details.push({ key: 'class', val: String(spec.gatewayClassName) });
+        }
+        const listenPort = spec.listeners?.[0]?.port;
+        if (typeof listenPort === 'number') {
+            details.push({ key: 'listen', val: `:${listenPort}` });
+        }
+    }
+    if (
+        nodeData.kind === 'HTTPRoute' ||
+        nodeData.kind === 'GRPCRoute' ||
+        nodeData.kind === 'TCPRoute' ||
+        nodeData.kind === 'TLSRoute'
+    ) {
+        const parent = spec.parentRefs?.[0]?.name;
+        if (parent) {
+            details.push({ key: 'parent', val: parent });
+        }
+        const host = spec.hostnames?.[0];
+        if (typeof host === 'string') {
+            details.push({ key: 'host', val: host });
+        }
+        const backends = Array.isArray(spec.backendRefs)
+            ? spec.backendRefs.filter((b: any) => b?.name).map((b: any) => b.name)
+            : [];
+        if (backends.length > 0) {
+            details.push({ key: 'backends', val: backends.join(', ') });
         }
     }
     return details;

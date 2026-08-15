@@ -9,9 +9,10 @@ import type { SupportedKind } from '../types/types';
 export const CLUSTER_SCOPED_KINDS: readonly SupportedKind[] = [
     'PersistentVolume',
     'StorageClass',
+    'GatewayClass',
 ];
 
-/** True when the kind is cluster-scoped (PV / StorageClass). */
+/** True when the kind is cluster-scoped (PV / StorageClass / GatewayClass). */
 export function isClusterScoped(kind: SupportedKind | string): boolean {
     return (CLUSTER_SCOPED_KINDS as readonly string[]).includes(kind);
 }

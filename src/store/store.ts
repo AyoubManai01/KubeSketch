@@ -4,7 +4,10 @@ import { parseYaml } from '../utils/parseYaml';
 import {
     applyHpaReplicaOverrides,
     buildGraph,
+    collectGatewayApiFamily,
     cronParallelismOf,
+    isGatewayApiKind,
+    isRouteKind,
     isSingleNodeAccessMode,
     nodeIdFor,
     parallelismOf,
@@ -47,7 +50,8 @@ const NS_LAYOUT_KEY = 'veltra_ns_layout';
 export const DEFAULT_YAML = `# Paste your Kubernetes YAML here (multi-document with ---)
 # Recognized resources: Deployment, Service, Ingress, ReplicaSet, Pod, HPA,
 # ConfigMap, PersistentVolumeClaim, PersistentVolume, StorageClass, Secret, Job,
-# CronJob, VerticalPodAutoscaler
+# CronJob, VerticalPodAutoscaler, GatewayClass, Gateway, HTTPRoute, GRPCRoute,
+# TCPRoute, TLSRoute, UDPRoute
 #
 # Like a real cluster, Veltra materializes a Deployment's ReplicaSet and
 # Pods on the canvas automatically — you only declare the Deployment.
@@ -295,6 +299,9 @@ interface VeltraState {
         resource: K8sResource,
         link?: ConfigMapLinkPayload | PvcLinkPayload | SecretLinkPayload | IngressTlsPayload
     ) => void;
+    /** Add a batch of fully configured, already cross-referenced resources in a
+     *  single commit (Gateway API bundles from the combined creation modal). */
+    addConfiguredNodes: (resources: K8sResource[], selectedResource?: SelectedResource) => void;
     /** Surface the mechanism prompt after a ConfigMap→workload drag (or dismiss it). */
     setPendingConfigMapLink: (link: PendingConfigMapLink | null) => void;
     /** Commit the pending ConfigMap link with the chosen mechanism. */
@@ -573,6 +580,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 // name (label selectors are unaffected by renames)
                 if (node.data.kind === 'Service' && kind === 'Service' && name !== node.data.name) {
                     updatedNodes = renameServiceReferences(updatedNodes, node.data.name, name);
+                    updatedNodes = renameRouteBackendReferences(updatedNodes, node.data.name, name);
                 }
                 if (
                     (node.data.kind === 'Deployment' || node.data.kind === 'ReplicaSet') &&
@@ -627,6 +635,16 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     name !== node.data.name
                 ) {
                     updatedNodes = renameStorageClassReferences(updatedNodes, node.data.name, name);
+                }
+                if (
+                    node.data.kind === 'GatewayClass' &&
+                    kind === 'GatewayClass' &&
+                    name !== node.data.name
+                ) {
+                    updatedNodes = renameGatewayClassReferences(updatedNodes, node.data.name, name);
+                }
+                if (node.data.kind === 'Gateway' && kind === 'Gateway' && name !== node.data.name) {
+                    updatedNodes = renameGatewayReferences(updatedNodes, node.data.name, name);
                 }
 
                 // Identity may have changed (kind/name are part of the node ID):
@@ -707,6 +725,12 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 }
                 // Cascade like Kubernetes: deleting a controller removes what it owns.
                 const doomed = collectWithDescendants(state.nodes, nodeId);
+                // Gateway API is one family: deleting any GatewayClass/Gateway/Route
+                // removes the whole linked cluster (class → gateways → routes), but
+                // never the Services its Routes route to (backendRefs are not ownership).
+                if (node && isGatewayApiKind(node.data.kind)) {
+                    collectGatewayApiFamily(state.nodes, nodeId).forEach((id) => doomed.add(id));
+                }
                 if (doomed.size === 0) return {};
 
                 const remaining = state.nodes.filter((n) => !doomed.has(n.id));
@@ -1139,6 +1163,30 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 });
             }),
 
+        addConfiguredNodes: (resources, selectedResource) =>
+            set((state) => {
+                // Validate the whole batch before touching the model: every resource
+                // needs a name and no kind+name may collide with the live canvas.
+                const existing = toResources(state.nodes);
+                const names = new Set<string>();
+                for (const resource of resources) {
+                    const name = resource.metadata?.name?.trim();
+                    if (!name) return {}; // modal validates and surfaces this
+                    const key = `${resource.kind}:${name}`;
+                    if (names.has(key)) return {};
+                    names.add(key);
+                    if (existing.some((r) => r.kind === resource.kind && r.metadata.name === name)) {
+                        return {};
+                    }
+                }
+                // The batch is already cross-referenced (gatewayClassName / parentRefs /
+                // backendRefs are baked in by the modal) — commit everything at once so
+                // the graph, inferred edges and YAML rebuild in one pass.
+                return commitResources(state, [...existing, ...resources], state.nodes, {
+                    selectedResource: selectedResource ?? null,
+                });
+            }),
+
         resetLayout: () => {
             localStorage.removeItem(POSITIONS_KEY);
             localStorage.removeItem(NS_LAYOUT_KEY);
@@ -1389,6 +1437,17 @@ export function apiVersionForKind(kind: SupportedKind): string {
     if (kind === 'StorageClass') return 'storage.k8s.io/v1';
     if (kind === 'Job' || kind === 'CronJob') return 'batch/v1';
     if (kind === 'Secret') return 'v1';
+    if (kind === 'UDPRoute') return 'gateway.networking.k8s.io/v1alpha2';
+    if (
+        kind === 'GatewayClass' ||
+        kind === 'Gateway' ||
+        kind === 'HTTPRoute' ||
+        kind === 'GRPCRoute' ||
+        kind === 'TCPRoute' ||
+        kind === 'TLSRoute'
+    ) {
+        return 'gateway.networking.k8s.io/v1';
+    }
     return 'v1';
 }
 
@@ -1715,6 +1774,61 @@ function collectWithDescendants(nodes: Node<K8sNodeData>[], rootId: string): Set
         }
     }
     return doomed;
+}
+
+/** Rewrite Gateway spec.gatewayClassName references when a GatewayClass is renamed. */
+function renameGatewayClassReferences(
+    nodes: Node<K8sNodeData>[],
+    oldName: string,
+    newName: string
+): Node<K8sNodeData>[] {
+    return nodes.map((n) => {
+        if (n.data.kind !== 'Gateway') return n;
+        const spec = n.data.resource.spec as { gatewayClassName?: string } | undefined;
+        if (spec?.gatewayClassName !== oldName) return n;
+        const resource = structuredClone(n.data.resource);
+        const clonedSpec = resource.spec as { gatewayClassName?: string };
+        if (clonedSpec.gatewayClassName === oldName) clonedSpec.gatewayClassName = newName;
+        return { ...n, data: { ...n.data, resource } };
+    });
+}
+
+/** Rewrite Route spec.parentRefs[].name references when a Gateway is renamed. */
+function renameGatewayReferences(
+    nodes: Node<K8sNodeData>[],
+    oldName: string,
+    newName: string
+): Node<K8sNodeData>[] {
+    return nodes.map((n) => {
+        if (!isRouteKind(n.data.kind)) return n;
+        const spec = n.data.resource.spec as { parentRefs?: Array<{ name?: string }> } | undefined;
+        if (!spec?.parentRefs?.some((ref) => ref?.name === oldName)) return n;
+        const resource = structuredClone(n.data.resource);
+        const clonedSpec = resource.spec as { parentRefs?: Array<{ name?: string }> };
+        (Array.isArray(clonedSpec.parentRefs) ? clonedSpec.parentRefs : []).forEach((ref) => {
+            if (ref?.name === oldName) ref.name = newName;
+        });
+        return { ...n, data: { ...n.data, resource } };
+    });
+}
+
+/** Rewrite Route spec.backendRefs[].name references when a Service is renamed. */
+function renameRouteBackendReferences(
+    nodes: Node<K8sNodeData>[],
+    oldName: string,
+    newName: string
+): Node<K8sNodeData>[] {
+    return nodes.map((n) => {
+        if (!isRouteKind(n.data.kind)) return n;
+        const spec = n.data.resource.spec as { backendRefs?: Array<{ name?: string }> } | undefined;
+        if (!spec?.backendRefs?.some((ref) => ref?.name === oldName)) return n;
+        const resource = structuredClone(n.data.resource);
+        const clonedSpec = resource.spec as { backendRefs?: Array<{ name?: string }> };
+        (Array.isArray(clonedSpec.backendRefs) ? clonedSpec.backendRefs : []).forEach((ref) => {
+            if (ref?.name === oldName) ref.name = newName;
+        });
+        return { ...n, data: { ...n.data, resource } };
+    });
 }
 
 /** True if `ancestorId` contains `nodeId` somewhere up the parent chain. */

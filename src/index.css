@@ -31,6 +31,13 @@
   --accent-pv: #84cc16;          /* Lime */
   --accent-sc: #6366f1;          /* Indigo */
   --accent-cronjob: #d946ef;     /* Fuchsia */
+  --accent-gatewayclass: #f43f5e; /* Rose */
+  --accent-gateway: #7c3aed;     /* Violet */
+  --accent-httproute: #0d9488;   /* Dark teal */
+  --accent-grpcroute: #65a30d;   /* Dark lime */
+  --accent-tcproute: #0284c7;    /* Dark sky */
+  --accent-tlsroute: #d97706;    /* Dark amber */
+  --accent-udproute: #16a34a;    /* Green */
 
   /* UI Tokens */
   --toolbar-height: 54px;
@@ -441,6 +448,11 @@ body,
   background: rgba(15, 20, 34, 0.5);
   backdrop-filter: blur(4px);
   flex-shrink: 0;
+  /* The backdrop-filter already forms a stacking context; pin it at a z-index
+     above the canvas so the Gateway API dropdown (a descendant) paints over
+     React Flow instead of behind it. */
+  position: relative;
+  z-index: 50;
 }
 
 .canvas-toolbar__hint {
@@ -502,6 +514,208 @@ body,
 .canvas-button--active:hover {
   background: rgba(20, 184, 166, 0.2);
   border-color: rgba(20, 184, 166, 0.6);
+}
+
+.canvas-button--gateway-api:hover {
+  background: rgba(124, 58, 237, 0.12);
+  border-color: rgba(124, 58, 237, 0.55);
+}
+
+/* Gateway API split entry: "+" bundle button + narrow-down chevron */
+.canvas-toolbar__ga-entry {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(124, 58, 237, 0.35);
+  border-radius: var(--radius-sm);
+  /* No overflow hidden — the absolutely-positioned dropdown below (top:100%)
+     must escape the entry's box. The split-button corners are rounded per-side
+     instead so the entry still looks joined. */
+  flex-shrink: 0;
+}
+
+.canvas-toolbar__ga-entry > .canvas-button {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: #a78bfa;
+}
+
+.canvas-toolbar__ga-entry > .canvas-button:first-child {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.canvas-toolbar__ga-entry > .canvas-button--chevron {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.canvas-toolbar__ga-entry > .canvas-button:hover {
+  background: rgba(124, 58, 237, 0.12);
+  border-color: transparent;
+}
+
+.canvas-toolbar__ga-entry > .canvas-button + .canvas-button {
+  border-left: 1px solid rgba(124, 58, 237, 0.25);
+}
+
+.canvas-button--chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 7px;
+}
+
+.canvas-button--chevron svg {
+  transition: transform var(--transition-fast);
+}
+
+.canvas-button--chevron--open svg {
+  transform: rotate(180deg);
+}
+
+/* Gateway API narrow-down dropdown (revealed under the entry) */
+.canvas-toolbar__dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  min-width: 190px;
+  z-index: 100;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  animation: modalIn 140ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+}
+
+.canvas-toolbar__dropdown-item {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.canvas-toolbar__dropdown-item:hover {
+  background: rgba(124, 58, 237, 0.12);
+  border-color: rgba(124, 58, 237, 0.4);
+}
+
+/* Horizontally scrollable kind-button row: only the plain kind buttons scroll,
+   the Gateway API entry and the right-side controls stay pinned. */
+.canvas-toolbar__group--grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.canvas-toolbar__scroll {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex: 1 1 auto;
+  min-width: 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+.canvas-toolbar__scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.canvas-toolbar__scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+.canvas-toolbar__scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.canvas-toolbar__scroll > .canvas-button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Gateway API bundle creation modal */
+.gateway-route-card {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px 12px;
+  margin-bottom: 10px;
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.gateway-route-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.gateway-route-card__title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.gateway-route-card .modal-header__close {
+  position: static;
+}
+
+.gateway-route-card .modal-header__close:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.gateway-backend-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 8px;
+  border: 1px dashed var(--border-muted);
+  border-radius: var(--radius-xs);
+}
+
+.gateway-backend-row .modal-btn {
+  justify-self: start;
+}
+
+/* Gateway API route inspector backend repeater */
+.inspector-backend-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.inspector-backend-row .inspector-field__input {
+  flex: 1;
+}
+
+.inspector-backend-remove {
+  background: transparent;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+  color: var(--text-muted);
+  width: 26px;
+  height: 26px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.inspector-backend-remove:hover {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.4);
 }
 
 .canvas-wrapper {
@@ -680,6 +894,34 @@ body,
 
 .k8s-node--cronjob {
   --kind-color: var(--accent-cronjob);
+}
+
+.k8s-node--gatewayclass {
+  --kind-color: var(--accent-gatewayclass);
+}
+
+.k8s-node--gateway {
+  --kind-color: var(--accent-gateway);
+}
+
+.k8s-node--httproute {
+  --kind-color: var(--accent-httproute);
+}
+
+.k8s-node--grpcroute {
+  --kind-color: var(--accent-grpcroute);
+}
+
+.k8s-node--tcproute {
+  --kind-color: var(--accent-tcproute);
+}
+
+.k8s-node--tlsroute {
+  --kind-color: var(--accent-tlsroute);
+}
+
+.k8s-node--udproute {
+  --kind-color: var(--accent-udproute);
 }
 
 /* CONTAINER NODES (Deployment, ReplicaSet) */
@@ -928,6 +1170,7 @@ body,
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
 }
 
 /* Sync indicator dot */
@@ -1650,6 +1893,12 @@ body,
 
 .modal--compact {
   width: 400px;
+}
+
+/* Gateway API bundle modal can outgrow the viewport — cap its height so the
+   body scrolls while the header/footer stay pinned (flex column + flex-shrink:0). */
+.modal--gateway-api {
+  max-height: calc(100vh - 40px);
 }
 
 @keyframes modalIn {

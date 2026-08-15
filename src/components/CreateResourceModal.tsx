@@ -32,6 +32,13 @@ const KIND_COLORS: Record<string, string> = {
     Job: '#eab308',
     CronJob: '#d946ef',
     VerticalPodAutoscaler: '#0ea5e9',
+    GatewayClass: '#f43f5e',
+    Gateway: '#7c3aed',
+    HTTPRoute: '#0d9488',
+    GRPCRoute: '#65a30d',
+    TCPRoute: '#0284c7',
+    TLSRoute: '#d97706',
+    UDPRoute: '#16a34a',
 };
 
 const KIND_ICONS: Record<string, React.ReactNode> = {
@@ -133,6 +140,60 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
             <path d="M5 12V9M11 8V5M17 4V7" strokeDasharray="2 2" />
         </svg>
     ),
+    GatewayClass: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="5" width="18" height="14" rx="2" />
+            <path d="M3 9h18" />
+            <circle cx="7" cy="16" r="1" />
+            <circle cx="12" cy="16" r="1" />
+            <circle cx="17" cy="16" r="1" />
+        </svg>
+    ),
+    Gateway: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 7h18v10H3z" />
+            <path d="M8 10h4v4H8z" />
+            <path d="M14.5 10h2.5v4h-2.5" />
+        </svg>
+    ),
+    HTTPRoute: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 19V5" />
+            <path d="M4 5l16 6-16 6" />
+            <path d="M13 5h7v4" />
+        </svg>
+    ),
+    GRPCRoute: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 19V5" />
+            <path d="M4 5l16 6-16 6" />
+            <path d="M15 4.5l4.5 1.5L15 7.5" />
+            <path d="M15 16.5l4.5 1.5-4.5 1.5" />
+        </svg>
+    ),
+    TCPRoute: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 19V5" />
+            <path d="M4 5l16 6-16 6" />
+            <circle cx="18" cy="18" r="3" />
+        </svg>
+    ),
+    TLSRoute: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 19V5" />
+            <path d="M4 5l16 6-16 6" />
+            <rect x="14" y="12" width="8" height="6" rx="1" />
+            <path d="M16 12v-1a2 2 0 014 0v1" />
+        </svg>
+    ),
+    UDPRoute: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 19V5" />
+            <path d="M4 5l16 6-16 6" />
+            <circle cx="19" cy="18" r="2" />
+            <path d="M19 8v6" strokeDasharray="2 2" />
+        </svg>
+    ),
 };
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -226,6 +287,14 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     const [schedule, setSchedule] = useState('* * * * *');
     const [shellCommandEnabled, setShellCommandEnabled] = useState(false);
     const [shellCommand, setShellCommand] = useState('');
+    // GatewayClass fields
+    const [gcControllerName, setGcControllerName] = useState('acme.io/gateway-controller');
+    // Gateway fields
+    const [gwClassName, setGwClassName] = useState('');
+    // Route fields (shared by HTTPRoute/GRPCRoute/TCPRoute/TLSRoute)
+    const [routeParentGateway, setRouteParentGateway] = useState('');
+    const [routeBackendService, setRouteBackendService] = useState('');
+    const [routeHostnames, setRouteHostnames] = useState('');
 
     // Cron schedule validation: 5 space-separated fields (minute hour day month
     // weekday), or an @-descriptor like @hourly.
@@ -256,6 +325,25 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
 
     const serviceOptions = useMemo(
         () => nodes.filter((n) => n.data.kind === 'Service').map((n) => n.data.name as string),
+        [nodes]
+    );
+
+    // Gateway API: existing GatewayClasses (for a standalone Gateway's gatewayClassName)
+    // and existing Gateways (for a standalone Route's parentRefs)
+    const gatewayClassOptions = useMemo(
+        () =>
+            nodes
+                .filter((n) => n.data.kind === 'GatewayClass')
+                .map((n) => n.data.name as string)
+                .sort((a, b) => a.localeCompare(b)),
+        [nodes]
+    );
+    const gatewayOptions = useMemo(
+        () =>
+            nodes
+                .filter((n) => n.data.kind === 'Gateway')
+                .map((n) => n.data.name as string)
+                .sort((a, b) => a.localeCompare(b)),
         [nodes]
     );
 
@@ -768,6 +856,54 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                               }
                             : {}),
                     },
+                };
+            }
+            case 'GatewayClass':
+                return {
+                    apiVersion: 'gateway.networking.k8s.io/v1',
+                    kind,
+                    // GatewayClasses are cluster-scoped — no namespace field.
+                    metadata: { name: meta.name },
+                    spec: {
+                        controllerName:
+                            gcControllerName.trim() || 'acme.io/gateway-controller',
+                    },
+                };
+            case 'Gateway':
+                return {
+                    apiVersion: 'gateway.networking.k8s.io/v1',
+                    kind,
+                    metadata: { name: meta.name, namespace: meta.namespace },
+                    spec: {
+                        ...(gwClassName
+                            ? { gatewayClassName: gwClassName }
+                            : { gatewayClassName: '' }),
+                        listeners: [],
+                    },
+                };
+            case 'HTTPRoute':
+            case 'GRPCRoute':
+            case 'TCPRoute':
+            case 'TLSRoute':
+            case 'UDPRoute': {
+                const spec: Record<string, unknown> = {};
+                if (routeParentGateway) {
+                    spec.parentRefs = [{ name: routeParentGateway }];
+                }
+                if (routeHostnames.trim() && kind !== 'TCPRoute' && kind !== 'UDPRoute') {
+                    spec.hostnames = routeHostnames
+                        .split(/[\s,]+/)
+                        .map((h) => h.trim())
+                        .filter(Boolean);
+                }
+                if (routeBackendService) {
+                    spec.backendRefs = [{ name: routeBackendService }];
+                }
+                return {
+                    apiVersion: 'gateway.networking.k8s.io/v1',
+                    kind,
+                    metadata: { name: meta.name, namespace: meta.namespace },
+                    spec,
                 };
             }
         }
@@ -1925,6 +2061,105 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                                     <option>Delete</option>
                                     <option>Retain</option>
                                     <option>Recycle</option>
+                                </select>
+                            </div>
+                        </>
+                    )}
+
+                    {/* GatewayClass: controller name (cluster-scoped) */}
+                    {kind === 'GatewayClass' && (
+                        <div className="modal-field">
+                            <label className="modal-field__label">
+                                Controller Name
+                                <span className="modal-field__hint">
+                                    spec.controllerName — the controller that reconciles
+                                    Gateways of this class.
+                                </span>
+                            </label>
+                            <input
+                                className="modal-field__input"
+                                value={gcControllerName}
+                                onChange={(e) => setGcControllerName(e.target.value)}
+                                placeholder="acme.io/gateway-controller"
+                            />
+                        </div>
+                    )}
+
+                    {/* Gateway: pick its GatewayClass (spec.gatewayClassName) */}
+                    {kind === 'Gateway' && (
+                        <div className="modal-field">
+                            <label className="modal-field__label">
+                                Gateway Class
+                                <span className="modal-field__hint">
+                                    A Gateway is created from exactly one GatewayClass.
+                                </span>
+                            </label>
+                            <select
+                                className="modal-field__input modal-field__input--select"
+                                value={gwClassName}
+                                onChange={(e) => setGwClassName(e.target.value)}
+                            >
+                                <option value="">(no class yet)</option>
+                                {gatewayClassOptions.map((gc) => (
+                                    <option key={gc} value={gc}>{gc}</option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+
+                    {/* Routes (HTTPRoute/GRPCRoute/TCPRoute/TLSRoute/UDPRoute): parent Gateway + backends */}
+                    {(kind === 'HTTPRoute' || kind === 'GRPCRoute' || kind === 'TCPRoute' || kind === 'TLSRoute' || kind === 'UDPRoute') && (
+                        <>
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    Parent Gateway
+                                    <span className="modal-field__hint">
+                                        The Gateway this route attaches to (spec.parentRefs).
+                                    </span>
+                                </label>
+                                <select
+                                    className="modal-field__input modal-field__input--select"
+                                    value={routeParentGateway}
+                                    onChange={(e) => setRouteParentGateway(e.target.value)}
+                                >
+                                    <option value="">(no parent yet)</option>
+                                    {gatewayOptions.map((gw) => (
+                                        <option key={gw} value={gw}>{gw}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            {kind !== 'TCPRoute' && kind !== 'UDPRoute' && (
+                                <div className="modal-field">
+                                    <label className="modal-field__label">
+                                        Hostnames
+                                        <span className="modal-field__hint">
+                                            Comma-separated spec.hostnames (SNI matching for TLSRoute).
+                                        </span>
+                                    </label>
+                                    <input
+                                        className="modal-field__input"
+                                        value={routeHostnames}
+                                        onChange={(e) => setRouteHostnames(e.target.value)}
+                                        placeholder="api.example.com"
+                                    />
+                                </div>
+                            )}
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    Backend Service
+                                    <span className="modal-field__hint">
+                                        A Route only routes to Services (spec.backendRefs).
+                                    </span>
+                                </label>
+                                <select
+                                    className="modal-field__input modal-field__input--select"
+                                    value={routeBackendService}
+                                    onChange={(e) => setRouteBackendService(e.target.value)}
+                                >
+                                    <option value="">(no backend yet)</option>
+                                    {serviceOptions.map((svc) => (
+                                        <option key={svc} value={svc}>{svc}</option>
+                                    ))}
                                 </select>
                             </div>
                         </>

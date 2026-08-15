@@ -54,6 +54,10 @@ import {
   getPvcsBoundToStorageClass,
   getSecretRefs,
   getSecretRefDetails,
+  getGatewaysUsingClass,
+  getRoutesForGateway,
+  getRoutesForService,
+  isGatewayApiKind,
   isSingleNodeAccessMode,
   nodeIdFor,
   parallelismOf,
@@ -63,6 +67,7 @@ import {
 } from "../utils/buildGraph";
 import { resourcesToYaml } from "../utils/serializeYaml";
 import CreateResourceModal from "./CreateResourceModal";
+import CreateGatewayApiModal from "./CreateGatewayApiModal";
 import ConfigMapDataEditor from "./ConfigMapDataEditor";
 import ConfigMapLinkModal from "./ConfigMapLinkModal";
 import PvcLinkModal from "./PvcLinkModal";
@@ -92,6 +97,13 @@ const KIND_COLORS: Record<string, string> = {
   Job: "#eab308",
   CronJob: "#d946ef",
   VerticalPodAutoscaler: "#0ea5e9",
+  GatewayClass: "#f43f5e",
+  Gateway: "#7c3aed",
+  HTTPRoute: "#0d9488",
+  GRPCRoute: "#65a30d",
+  TCPRoute: "#0284c7",
+  TLSRoute: "#d97706",
+  UDPRoute: "#16a34a",
 };
 
 const KIND_ICONS: Record<string, React.ReactNode> = {
@@ -291,6 +303,109 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
       <path d="M5 12V9M11 8V5M17 4V7" strokeDasharray="2 2" />
     </svg>
   ),
+  GatewayClass: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M3 9h18" />
+      <circle cx="7" cy="16" r="1" />
+      <circle cx="12" cy="16" r="1" />
+      <circle cx="17" cy="16" r="1" />
+    </svg>
+  ),
+  Gateway: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3 7h18v10H3z" />
+      <path d="M8 10h4v4H8z" />
+      <path d="M14.5 10h2.5v4h-2.5" />
+    </svg>
+  ),
+  HTTPRoute: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M4 19V5" />
+      <path d="M4 5l16 6-16 6" />
+      <path d="M13 5h7v4" />
+    </svg>
+  ),
+  GRPCRoute: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M4 19V5" />
+      <path d="M4 5l16 6-16 6" />
+      <path d="M15 4.5l4.5 1.5L15 7.5" />
+      <path d="M15 16.5l4.5 1.5-4.5 1.5" />
+    </svg>
+  ),
+  TCPRoute: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M4 19V5" />
+      <path d="M4 5l16 6-16 6" />
+      <circle cx="18" cy="18" r="3" />
+    </svg>
+  ),
+  TLSRoute: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M4 19V5" />
+      <path d="M4 5l16 6-16 6" />
+      <rect x="14" y="12" width="8" height="6" rx="1" />
+      <path d="M16 12v-1a2 2 0 014 0v1" />
+    </svg>
+  ),
+  UDPRoute: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M4 19V5" />
+      <path d="M4 5l16 6-16 6" />
+      <circle cx="19" cy="18" r="2" />
+      <path d="M19 8v6" strokeDasharray="2 2" />
+    </svg>
+  ),
 };
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -332,6 +447,22 @@ export default function Canvas() {
   const hpaOverrides = useVeltraStore((s) => s.hpaOverrides);
 
   const [pendingKind, setPendingKind] = useState<SupportedKind | null>(null);
+  const [gatewayApiModalOpen, setGatewayApiModalOpen] = useState(false);
+  const [gatewayApiDropdownOpen, setGatewayApiDropdownOpen] = useState(false);
+  const gaEntryRef = useRef<HTMLDivElement>(null);
+
+  // Close the Gateway API dropdown on any outside pointerdown. The dropdown is a
+  // DOM descendant of the entry, so clicks on it (and on the "+"/chevron buttons)
+  // are kept — everything else (the canvas, other toolbar controls) closes it.
+  useEffect(() => {
+    if (!gatewayApiDropdownOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (gaEntryRef.current?.contains(e.target as Element | null)) return;
+      setGatewayApiDropdownOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  }, [gatewayApiDropdownOpen]);
   const [yamlPreviewOpen, setYamlPreviewOpen] = useState(false);
   const inspectorContentRef = useRef<HTMLDivElement>(null);
 
@@ -690,6 +821,59 @@ export default function Canvas() {
         .sort((a, b) => a.localeCompare(b)),
     [nodes],
   );
+
+  // Gateway API: GatewayClass names (for a Gateway's gatewayClassName select),
+  // Gateway names (for a Route's parentRefs select) and the live resource list
+  // for the reverse projections below.
+  const gatewayClassOptions = useMemo(
+    () =>
+      nodes
+        .filter((n) => n.data.kind === "GatewayClass")
+        .map((n) => n.data.name as string)
+        .sort((a, b) => a.localeCompare(b)),
+    [nodes],
+  );
+
+  const gatewayOptions = useMemo(
+    () =>
+      nodes
+        .filter((n) => n.data.kind === "Gateway")
+        .map((n) => n.data.name as string)
+        .sort((a, b) => a.localeCompare(b)),
+    [nodes],
+  );
+
+  const realResources = useMemo(
+    () => nodes.filter((n) => !n.data.synthetic).map((n) => n.data.resource),
+    [nodes],
+  );
+
+  // Gateways whose spec.gatewayClassName points at the selected GatewayClass —
+  // read-only "Used by Gateways" projection.
+  const gatewayClassUsedBy = useMemo(() => {
+    if (!selectedNode || selectedNode.data.kind !== "GatewayClass") return [];
+    return getGatewaysUsingClass(realResources, selectedNode.data.name).map(
+      (r) => ({ kind: r.kind, name: r.metadata.name }),
+    );
+  }, [selectedNode, realResources]);
+
+  // Routes whose spec.parentRefs[].name points at the selected Gateway —
+  // read-only "Used by Routes" projection.
+  const gatewayUsedBy = useMemo(() => {
+    if (!selectedNode || selectedNode.data.kind !== "Gateway") return [];
+    return getRoutesForGateway(realResources, selectedNode.data.name).map(
+      (r) => ({ kind: r.kind, name: r.metadata.name }),
+    );
+  }, [selectedNode, realResources]);
+
+  // Routes whose spec.backendRefs[].name points at the selected Service —
+  // read-only "Routed by" projection on the Service inspector.
+  const serviceRoutedBy = useMemo(() => {
+    if (!selectedNode || selectedNode.data.kind !== "Service") return [];
+    return getRoutesForService(realResources, selectedNode.data.name).map(
+      (r) => ({ kind: r.kind, name: r.metadata.name }),
+    );
+  }, [selectedNode, realResources]);
 
   // Edge relationships + containment (nesting) for the selected node
   const relationships = useMemo(() => {
@@ -1267,18 +1451,77 @@ export default function Canvas() {
 
       {/* Quick Actions Toolbar */}
       <div className="canvas-toolbar">
-        <div className="canvas-toolbar__group">
-          {SUPPORTED_KINDS.map((kind) => (
+        <div className="canvas-toolbar__group canvas-toolbar__group--grow">
+          <div className="canvas-toolbar__scroll">
+            {SUPPORTED_KINDS.filter((kind) => !isGatewayApiKind(kind)).map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                className="canvas-button"
+                onClick={() => {
+                  setGatewayApiModalOpen(false);
+                  setPendingKind(kind);
+                }}
+                title={`Add ${kind} resource`}
+              >
+                + {kind}
+              </button>
+            ))}
+          </div>
+          <div className="canvas-toolbar__ga-entry" ref={gaEntryRef}>
             <button
-              key={kind}
               type="button"
               className="canvas-button"
-              onClick={() => setPendingKind(kind)}
-              title={`Add ${kind} resource`}
+              onClick={() => {
+                setGatewayApiDropdownOpen(false);
+                setPendingKind(null);
+                setGatewayApiModalOpen(true);
+              }}
+              title="Create a GatewayClass, Gateway and Routes in one flow"
             >
-              + {kind}
+              + Gateway API
             </button>
-          ))}
+            <button
+              type="button"
+              className={`canvas-button canvas-button--chevron ${
+                gatewayApiDropdownOpen ? "canvas-button--chevron--open" : ""
+              }`}
+              onClick={() => setGatewayApiDropdownOpen((open) => !open)}
+              title="Reveal the Gateway API resources (GatewayClass, Gateway, routes)"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                width="12"
+                height="12"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+            {gatewayApiDropdownOpen && (
+              <div className="canvas-toolbar__dropdown">
+                {SUPPORTED_KINDS.filter((kind) => isGatewayApiKind(kind)).map((kind) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    className="canvas-button canvas-toolbar__dropdown-item"
+                    onClick={() => {
+                      setGatewayApiDropdownOpen(false);
+                      setGatewayApiModalOpen(false);
+                      setPendingKind(kind);
+                    }}
+                    title={`Add ${kind} resource`}
+                  >
+                    + {kind}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
         <div className="canvas-toolbar__group">
           {nsEditMode && (
@@ -4358,6 +4601,435 @@ export default function Canvas() {
                     </div>
                   )}
 
+                {/* ── Section: Controller (GatewayClass) ── */}
+                {!isManaged && draftKind === "GatewayClass" && (
+                  <div className="inspector-section">
+                    <div className="inspector-section__header">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <rect x="3" y="5" width="18" height="14" rx="2" />
+                        <path d="M3 9h18" />
+                        <circle cx="7" cy="16" r="1" />
+                        <circle cx="12" cy="16" r="1" />
+                        <circle cx="17" cy="16" r="1" />
+                      </svg>
+                      Controller
+                    </div>
+                    <div className="inspector-section__body">
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Controller Name
+                        </label>
+                        <input
+                          className="inspector-field__input"
+                          value={String(draftSpec?.controllerName ?? "")}
+                          onChange={(e) =>
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                controllerName: e.target.value || undefined,
+                              },
+                            })
+                          }
+                          placeholder="acme.io/gateway-controller"
+                        />
+                        <span className="inspector-field__hint">
+                          The controller that reconciles Gateways of this class.
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Section: Used by Gateways (GatewayClass) ── */}
+                {inspectorData.kind === "GatewayClass" &&
+                  gatewayClassUsedBy.length > 0 && (
+                    <div className="inspector-section">
+                      <div className="inspector-section__header">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                        >
+                          <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                          <polyline points="15 3 21 3 21 9" />
+                          <line x1="10" y1="14" x2="21" y2="3" />
+                        </svg>
+                        Used by Gateways
+                        <span className="inspector-section__count">
+                          {gatewayClassUsedBy.length}
+                        </span>
+                      </div>
+                      <div className="inspector-section__body">
+                        <div className="inspector-rel-list">
+                          {gatewayClassUsedBy.map((ref) => (
+                            <button
+                              key={`${ref.kind}:${ref.name}`}
+                              type="button"
+                              className="inspector-rel-item inspector-rel-item--link"
+                              title={`Select ${ref.kind} ${ref.name}`}
+                              onClick={() =>
+                                setSelectedResource({
+                                  kind: ref.kind as SupportedKind,
+                                  name: ref.name,
+                                })
+                              }
+                            >
+                              <span className="inspector-rel-arrow inspector-rel-arrow--incoming">
+                                ↑
+                              </span>
+                              <div className="inspector-rel-info">
+                                <span className="inspector-rel-kind">
+                                  {ref.kind}
+                                </span>
+                                <span className="inspector-rel-name">
+                                  {ref.name}
+                                </span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                        <span className="inspector-field__hint">
+                          Gateways whose spec.gatewayClassName references this
+                          class.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                {/* ── Section: Gateway — class ── */}
+                {!isManaged && draftKind === "Gateway" && (
+                  <div className="inspector-section">
+                    <div className="inspector-section__header">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M3 7h18v10H3z" />
+                        <path d="M8 10h4v4H8z" />
+                        <path d="M14.5 10h2.5v4h-2.5" />
+                      </svg>
+                      Gateway Class
+                    </div>
+                    <div className="inspector-section__body">
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Class
+                        </label>
+                        {(() => {
+                          const current = String(draftSpec?.gatewayClassName ?? "");
+                          const known = gatewayClassOptions.includes(current);
+                          return (
+                            <select
+                              className="inspector-field__input inspector-field__input--select"
+                              value={current}
+                              onChange={(e) =>
+                                patchDraft({
+                                  spec: {
+                                    ...draftSpec,
+                                    gatewayClassName: e.target.value || undefined,
+                                  },
+                                })
+                              }
+                            >
+                              <option value="">(no class)</option>
+                              {gatewayClassOptions.map((gc) => (
+                                <option key={gc} value={gc}>
+                                  {gc}
+                                </option>
+                              ))}
+                              {current && !known && (
+                                <option value={current}>{current} (missing)</option>
+                              )}
+                            </select>
+                          );
+                        })()}
+                        <span className="inspector-field__hint">
+                          A Gateway is created from exactly one GatewayClass.
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Section: Used by Routes (Gateway) ── */}
+                {inspectorData.kind === "Gateway" && gatewayUsedBy.length > 0 && (
+                  <div className="inspector-section">
+                    <div className="inspector-section__header">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                        <polyline points="15 3 21 3 21 9" />
+                        <line x1="10" y1="14" x2="21" y2="3" />
+                      </svg>
+                      Used by Routes
+                      <span className="inspector-section__count">
+                        {gatewayUsedBy.length}
+                      </span>
+                    </div>
+                    <div className="inspector-section__body">
+                      <div className="inspector-rel-list">
+                        {gatewayUsedBy.map((ref) => (
+                          <button
+                            key={`${ref.kind}:${ref.name}`}
+                            type="button"
+                            className="inspector-rel-item inspector-rel-item--link"
+                            title={`Select ${ref.kind} ${ref.name}`}
+                            onClick={() =>
+                              setSelectedResource({
+                                kind: ref.kind as SupportedKind,
+                                name: ref.name,
+                              })
+                            }
+                          >
+                            <span className="inspector-rel-arrow inspector-rel-arrow--incoming">
+                              ↑
+                            </span>
+                            <div className="inspector-rel-info">
+                              <span className="inspector-rel-kind">
+                                {ref.kind}
+                              </span>
+                              <span className="inspector-rel-name">
+                                {ref.name}
+                              </span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                      <span className="inspector-field__hint">
+                        Routes whose spec.parentRefs point at this Gateway.
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Section: Routes — parent + backends ── */}
+                {!isManaged &&
+                  (draftKind === "HTTPRoute" ||
+                    draftKind === "GRPCRoute" ||
+                    draftKind === "TCPRoute" ||
+                    draftKind === "TLSRoute" ||
+                    draftKind === "UDPRoute") && (
+                    <div className="inspector-section">
+                      <div className="inspector-section__header">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M4 19V5" />
+                          <path d="M4 5l16 6-16 6" />
+                        </svg>
+                        Routing
+                      </div>
+                      <div className="inspector-section__body">
+                        <div className="inspector-field">
+                          <label className="inspector-field__label">
+                            Parent Gateway
+                          </label>
+                          {(() => {
+                            const refs: any[] = Array.isArray(draftSpec?.parentRefs)
+                              ? draftSpec.parentRefs
+                              : [];
+                            const current = String(refs[0]?.name ?? "");
+                            const known = gatewayOptions.includes(current);
+                            return (
+                              <select
+                                className="inspector-field__input inspector-field__input--select"
+                                value={current}
+                                onChange={(e) =>
+                                  patchDraft({
+                                    spec: {
+                                      ...draftSpec,
+                                      parentRefs: e.target.value
+                                        ? [{ name: e.target.value }]
+                                        : undefined,
+                                    },
+                                  })
+                                }
+                              >
+                                <option value="">(no parent)</option>
+                                {gatewayOptions.map((gw) => (
+                                  <option key={gw} value={gw}>
+                                    {gw}
+                                  </option>
+                                ))}
+                                {current && !known && (
+                                  <option value={current}>{current} (missing)</option>
+                                )}
+                              </select>
+                            );
+                          })()}
+                        </div>
+                        {draftKind !== "TCPRoute" && draftKind !== "UDPRoute" && (
+                          <div className="inspector-field">
+                            <label className="inspector-field__label">
+                              Hostnames
+                            </label>
+                            <input
+                              className="inspector-field__input"
+                              value={(() => {
+                                const hs: any[] = Array.isArray(draftSpec?.hostnames)
+                                  ? draftSpec.hostnames
+                                  : [];
+                                return hs.join(", ");
+                              })()}
+                              onChange={(e) =>
+                                patchDraft({
+                                  spec: {
+                                    ...draftSpec,
+                                    hostnames: e.target.value.trim()
+                                      ? e.target.value
+                                          .split(/[\s,]+/)
+                                          .map((h: string) => h.trim())
+                                          .filter(Boolean)
+                                      : undefined,
+                                  },
+                                })
+                              }
+                              placeholder="api.example.com"
+                            />
+                          </div>
+                        )}
+                        <div className="inspector-field">
+                          <label className="inspector-field__label">
+                            Backend Services
+                          </label>
+                          {(() => {
+                            const refs: any[] = Array.isArray(draftSpec?.backendRefs)
+                              ? draftSpec.backendRefs
+                              : [];
+                            const patchRefs = (next: any[]) =>
+                              patchDraft({
+                                spec: {
+                                  ...draftSpec,
+                                  backendRefs: next.length ? next : undefined,
+                                },
+                              });
+                            return (
+                              <>
+                                {refs.map((ref, i) => (
+                                  <div className="inspector-backend-row" key={i}>
+                                    <select
+                                      className="inspector-field__input inspector-field__input--select"
+                                      value={String(ref?.name ?? "")}
+                                      onChange={(e) => {
+                                        const next = [...refs];
+                                        next[i] = { ...next[i], name: e.target.value };
+                                        patchRefs(next);
+                                      }}
+                                    >
+                                      <option value="">(pick a Service)</option>
+                                      {serviceOptions.map((svc) => (
+                                        <option key={svc} value={svc}>
+                                          {svc}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <button
+                                      type="button"
+                                      className="inspector-backend-remove"
+                                      title="Remove backend"
+                                      onClick={() =>
+                                        patchRefs(refs.filter((_, j) => j !== i))
+                                      }
+                                    >
+                                      ×
+                                    </button>
+                                  </div>
+                                ))}
+                                <button
+                                  type="button"
+                                  className="inspector-rel-item inspector-rel-item--link"
+                                  onClick={() => patchRefs([...refs, { name: "" }])}
+                                >
+                                  + Add backend Service
+                                </button>
+                              </>
+                            );
+                          })()}
+                          <span className="inspector-field__hint">
+                            Routes only route to Services (spec.backendRefs).
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                {/* ── Section: Routed by (Service) ── */}
+                {inspectorData.kind === "Service" && serviceRoutedBy.length > 0 && (
+                  <div className="inspector-section">
+                    <div className="inspector-section__header">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                        <polyline points="15 3 21 3 21 9" />
+                        <line x1="10" y1="14" x2="21" y2="3" />
+                      </svg>
+                      Routed by
+                      <span className="inspector-section__count">
+                        {serviceRoutedBy.length}
+                      </span>
+                    </div>
+                    <div className="inspector-section__body">
+                      <div className="inspector-rel-list">
+                        {serviceRoutedBy.map((ref) => (
+                          <button
+                            key={`${ref.kind}:${ref.name}`}
+                            type="button"
+                            className="inspector-rel-item inspector-rel-item--link"
+                            title={`Select ${ref.kind} ${ref.name}`}
+                            onClick={() =>
+                              setSelectedResource({
+                                kind: ref.kind as SupportedKind,
+                                name: ref.name,
+                              })
+                            }
+                          >
+                            <span className="inspector-rel-arrow inspector-rel-arrow--incoming">
+                              ↑
+                            </span>
+                            <div className="inspector-rel-info">
+                              <span className="inspector-rel-kind">
+                                {ref.kind}
+                              </span>
+                              <span className="inspector-rel-name">
+                                {ref.name}
+                              </span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                      <span className="inspector-field__hint">
+                        Gateway API routes whose spec.backendRefs point at this
+                        Service.
+                      </span>
+                    </div>
+                  </div>
+                )}
+
                 {/* ── Section: Relationships ───────────────── */}
                 {relationships.length > 0 && (
                   <div className="inspector-section">
@@ -4551,6 +5223,11 @@ export default function Canvas() {
           kind={pendingKind}
           onClose={() => setPendingKind(null)}
         />
+      )}
+
+      {/* Gateway API bundle creation modal */}
+      {gatewayApiModalOpen && (
+        <CreateGatewayApiModal onClose={() => setGatewayApiModalOpen(false)} />
       )}
 
       {/* Post-drag mechanism prompt for ConfigMap → workload connections */}

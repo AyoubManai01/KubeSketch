@@ -1,5 +1,5 @@
 import type { K8sResource, SupportedKind } from '../types/types';
-import { getSelector, getWorkloadPodLabels } from './buildGraph';
+import { getSelector, getWorkloadPodLabels, isRouteKind } from './buildGraph';
 
 /**
  * Semantic manual linking.
@@ -89,6 +89,29 @@ export function connectResources(
             byKind('PersistentVolumeClaim'),
             byKind('StorageClass')
         );
+    }
+    if (pair('Gateway', 'GatewayClass')) {
+        return linkGatewayToClass(resources, byKind('Gateway'), byKind('GatewayClass'));
+    }
+    if (
+        pair('Gateway', 'HTTPRoute') ||
+        pair('Gateway', 'GRPCRoute') ||
+        pair('Gateway', 'TCPRoute') ||
+        pair('Gateway', 'TLSRoute') ||
+        pair('Gateway', 'UDPRoute')
+    ) {
+        const routeIdx = source.kind === 'Gateway' ? targetIdx : sourceIdx;
+        return linkRouteToGateway(resources, routeIdx, byKind('Gateway'));
+    }
+    if (
+        pair('Service', 'HTTPRoute') ||
+        pair('Service', 'GRPCRoute') ||
+        pair('Service', 'TCPRoute') ||
+        pair('Service', 'TLSRoute') ||
+        pair('Service', 'UDPRoute')
+    ) {
+        const routeIdx = source.kind === 'Service' ? targetIdx : sourceIdx;
+        return linkRouteToService(resources, routeIdx, byKind('Service'));
     }
     // PVC ↔ Pod/Deployment/ReplicaSet is intercepted by the store (pending
     // volume-name prompt, single-node access-mode guard) and never reaches
@@ -196,6 +219,40 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
             return 'A VPA right-sizes container resource requests, while an HPA scales replica counts — the two are independent.';
         }
         return `A VPA right-sizes a Pod's containers — it has no direct relationship with a ${other}.`;
+    }
+    if (a === 'Gateway' || b === 'Gateway') {
+        const other = (a === 'Gateway' ? b : a) as SupportedKind;
+        if (other === 'GatewayClass') {
+            return 'A Gateway already references this GatewayClass (spec.gatewayClassName).';
+        }
+        if (isRouteKind(other)) {
+            return `A ${other} already attaches to this Gateway via spec.parentRefs.`;
+        }
+        if (other === 'Service') {
+            return 'A Gateway listens for traffic at the namespace edge — it is not routed to Services. Connect the Service to a Route instead.';
+        }
+        return `A Gateway is created from exactly one GatewayClass (spec.gatewayClassName) and is attached by Routes — it has no direct relationship with a ${other}.`;
+    }
+    if (a === 'GatewayClass' || b === 'GatewayClass') {
+        const other = (a === 'GatewayClass' ? b : a) as SupportedKind;
+        if (other === 'Gateway') {
+            return 'A GatewayClass is already referenced by this Gateway (spec.gatewayClassName).';
+        }
+        return `A GatewayClass is the template a Gateway is created from (spec.gatewayClassName) — it has no direct relationship with a ${other}.`;
+    }
+    if (isRouteKind(a) || isRouteKind(b)) {
+        const routeKind = (isRouteKind(a) ? a : b) as SupportedKind;
+        const other = (isRouteKind(a) ? b : a) as SupportedKind;
+        if (other === 'Gateway') {
+            return `A ${routeKind} already attaches to this Gateway via spec.parentRefs.`;
+        }
+        if (other === 'Service') {
+            return `A ${routeKind} already routes to this Service via spec.backendRefs.`;
+        }
+        if (other === 'Deployment' || other === 'ReplicaSet' || other === 'Pod' || other === 'Job' || other === 'CronJob') {
+            return `A ${routeKind} can only route to Services, not a ${other} — expose the workload with a Service first.`;
+        }
+        return `A ${routeKind} attaches to a Gateway (spec.parentRefs) and routes to Services (spec.backendRefs) — it has no direct relationship with a ${other}.`;
     }
     if (a === b) {
         return `Two ${a} resources have no direct relationship in Kubernetes.`;
@@ -702,5 +759,90 @@ export function linkPvcToStorageClass(
     return {
         resources: next,
         description: `PVC ${pvc.metadata.name} now provisions via StorageClass ${sc.metadata.name} (storageClassName set, volumeName cleared)`,
+    };
+}
+
+/**
+ * Attach a Gateway to exactly one GatewayClass by writing `spec.gatewayClassName`
+ * (the class is the template a Gateway is created from — 1:1, existing value replaced).
+ */
+export function linkGatewayToClass(
+    resources: K8sResource[],
+    gatewayIdx: number,
+    classIdx: number
+): { resources: K8sResource[]; description: string } {
+    const next = [...resources];
+    const gatewayClass = resources[classIdx];
+    const gateway = clone(resources[gatewayIdx]);
+    const spec = (gateway.spec ?? {}) as Record<string, any>;
+    spec.gatewayClassName = gatewayClass.metadata.name;
+    gateway.spec = spec;
+    next[gatewayIdx] = gateway;
+
+    return {
+        resources: next,
+        description: `Gateway ${gateway.metadata.name} is now created from GatewayClass ${gatewayClass.metadata.name}`,
+    };
+}
+
+/**
+ * Attach a Route to a Gateway by writing `spec.parentRefs[].name`. A Route can
+ * attach to more than one Gateway, so the ref is appended unless already present.
+ */
+export function linkRouteToGateway(
+    resources: K8sResource[],
+    routeIdx: number,
+    gatewayIdx: number
+): { resources: K8sResource[]; description: string } {
+    const next = [...resources];
+    const gateway = resources[gatewayIdx];
+    const route = clone(resources[routeIdx]);
+    const spec = (route.spec ?? {}) as Record<string, any>;
+    const parentRefs = Array.isArray(spec.parentRefs) ? spec.parentRefs : [];
+    const exists = parentRefs.some((ref: any) => ref?.name === gateway.metadata.name);
+    if (!exists) {
+        const ref: Record<string, any> = { name: gateway.metadata.name };
+        if (gateway.metadata.namespace) ref.namespace = gateway.metadata.namespace;
+        parentRefs.push(ref);
+    }
+    spec.parentRefs = parentRefs;
+    route.spec = spec;
+    next[routeIdx] = route;
+
+    return {
+        resources: next,
+        description: `${route.kind} ${route.metadata.name} now attaches to Gateway ${gateway.metadata.name}`,
+    };
+}
+
+/**
+ * Point a Route at a Service by writing `spec.backendRefs[]` (name + the Service's
+ * first port). Routes only route to Services — one Route can target several.
+ */
+export function linkRouteToService(
+    resources: K8sResource[],
+    routeIdx: number,
+    serviceIdx: number
+): { resources: K8sResource[]; description: string } {
+    const next = [...resources];
+    const service = resources[serviceIdx];
+    const serviceSpec = service.spec as { ports?: Array<{ port?: unknown }> } | undefined;
+    const firstPort = Array.isArray(serviceSpec?.ports) ? serviceSpec.ports[0]?.port : undefined;
+    const route = clone(resources[routeIdx]);
+    const spec = (route.spec ?? {}) as Record<string, any>;
+    const backendRefs = Array.isArray(spec.backendRefs) ? spec.backendRefs : [];
+    const exists = backendRefs.some((ref: any) => ref?.name === service.metadata.name);
+    if (!exists) {
+        const ref: Record<string, any> = { name: service.metadata.name };
+        if (typeof firstPort === 'number') ref.port = firstPort;
+        backendRefs.push(ref);
+    }
+    spec.backendRefs = backendRefs;
+    route.spec = spec;
+    next[routeIdx] = route;
+
+    return {
+        resources: next,
+        description: `${route.kind} ${route.metadata.name} now routes to Service ${service.metadata.name}`,
     };
 }

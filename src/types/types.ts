@@ -18,7 +18,14 @@ export interface K8sResource {
     | 'Secret'
     | 'Job'
     | 'CronJob'
-    | 'VerticalPodAutoscaler';
+    | 'VerticalPodAutoscaler'
+    | 'GatewayClass'
+    | 'Gateway'
+    | 'HTTPRoute'
+    | 'GRPCRoute'
+    | 'TCPRoute'
+    | 'TLSRoute'
+    | 'UDPRoute';
   metadata: {
     name: string;
     namespace?: string;
@@ -44,5 +51,12 @@ export const SUPPORTED_KINDS = [
   'Job',
   'CronJob',
   'VerticalPodAutoscaler',
+  'GatewayClass',
+  'Gateway',
+  'HTTPRoute',
+  'GRPCRoute',
+  'TCPRoute',
+  'TLSRoute',
+  'UDPRoute',
 ] as const;
 export type SupportedKind = (typeof SUPPORTED_KINDS)[number];

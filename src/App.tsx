@@ -18,8 +18,6 @@ function loadSplitRatio(): number {
  * Split-screen layout: YAML editor (left) | Resource canvas (right)
  */
 export default function App() {
-  const isBidirectionalSync = useVeltraStore((s) => s.isBidirectionalSync);
-  const setBidirectionalSync = useVeltraStore((s) => s.setBidirectionalSync);
   const setYaml = useVeltraStore((s) => s.setYaml);
   const clearAll = useVeltraStore((s) => s.clearAll);
   const resetLayout = useVeltraStore((s) => s.resetLayout);
@@ -132,18 +130,6 @@ export default function App() {
             </svg>
             Clear All
           </button>
-        </div>
-
-        <div className="toolbar__right">
-          <label className="toolbar-toggle" title="Sync canvas edits instantly back to YAML">
-            <input
-              type="checkbox"
-              checked={isBidirectionalSync}
-              onChange={(e) => setBidirectionalSync(e.target.checked)}
-            />
-            <span className="toggle-switch"></span>
-            <span className="toggle-label">Bidirectional Sync</span>
-          </label>
         </div>
       </header>
 

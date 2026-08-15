@@ -235,12 +235,6 @@ interface VeltraState {
     /** Merged edges rendered by React Flow (inferred + valid user edges) */
     edges: Edge[];
 
-    /** Toggle that enables canvas -> YAML syncing */
-    isBidirectionalSync: boolean;
-
-    /** True when the canvas changed while sync was paused (YAML is stale) */
-    canvasDirtyWhilePaused: boolean;
-
     /** Currently selected resource — single source of truth for editor highlight + inspector */
     selectedResource: SelectedResource | null;
 
@@ -277,7 +271,6 @@ interface VeltraState {
 
     setNotice: (notice: CanvasNotice | null) => void;
     setYaml: (value: string) => void;
-    setBidirectionalSync: (enabled: boolean) => void;
     /** Structural node changes coming from React Flow (e.g. keyboard delete). */
     setCanvasNodes: (nodes: Node<K8sNodeData>[]) => void;
     /** Position/selection/dimension-only updates during drag — never touches the model or YAML. */
@@ -382,15 +375,10 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
             result.selectedResource = opts.selectedResource ?? null;
         }
 
-        if (state.isBidirectionalSync) {
-            const nextYaml = resourcesToYaml(resources);
-            localStorage.setItem(YAML_KEY, nextYaml);
-            result.yaml = nextYaml;
-            result.yamlError = null;
-            result.canvasDirtyWhilePaused = false;
-        } else {
-            result.canvasDirtyWhilePaused = true;
-        }
+        const nextYaml = resourcesToYaml(resources);
+        localStorage.setItem(YAML_KEY, nextYaml);
+        result.yaml = nextYaml;
+        result.yamlError = null;
         return result;
     };
 
@@ -435,8 +423,6 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         inferredEdges: initialGraph.inferredEdges,
         edges: initialGraph.edges,
         userEdges: userEdgesVal,
-        isBidirectionalSync: true,
-        canvasDirtyWhilePaused: false,
         selectedResource: null,
         yamlError: initialError,
         notice: null,
@@ -469,7 +455,6 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     yaml: nextYaml,
                     ...derived,
                     yamlError: null,
-                    canvasDirtyWhilePaused: false,
                     selectedResource: selectionStillExists ? sel : null,
                     hpaOverrides,
                 });
@@ -478,23 +463,6 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 set({ yaml: value, yamlError: err.message || String(err) });
             }
         },
-
-        setBidirectionalSync: (enabled: boolean) =>
-            set((state) => {
-                // Only rewrite YAML if the canvas actually diverged while sync was paused —
-                // never clobber the user's hand-written YAML (comments, formatting) for nothing.
-                if (enabled && state.canvasDirtyWhilePaused) {
-                    const nextYaml = resourcesToYaml(toResources(state.nodes));
-                    localStorage.setItem(YAML_KEY, nextYaml);
-                    return {
-                        isBidirectionalSync: true,
-                        yaml: nextYaml,
-                        yamlError: null,
-                        canvasDirtyWhilePaused: false,
-                    };
-                }
-                return { isBidirectionalSync: enabled };
-            }),
 
         setCanvasNodes: (nodes: Node<K8sNodeData>[]) =>
             set((state) => {
@@ -1225,7 +1193,6 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 pendingPvcLink: null,
                 pendingSecretLink: null,
                 pendingIngressTlsLink: null,
-                canvasDirtyWhilePaused: false,
                 nsEditMode: false,
                 nsLayout: null,
             });

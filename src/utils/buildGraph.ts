@@ -68,6 +68,24 @@ export function isGatewayApiKind(kind: string): boolean {
     );
 }
 
+/** Presentational grouping of resource kinds for the canvas toolbar. */
+export function kindGroupLabel(kind: string): string {
+    if (kind === 'Deployment' || kind === 'Pod' || kind === 'ReplicaSet' || kind === 'HPA' ||
+        kind === 'VerticalPodAutoscaler' || kind === 'Job' || kind === 'CronJob') {
+        return 'Workload';
+    }
+    if (kind === 'Service' || kind === 'Ingress' || isGatewayApiKind(kind)) {
+        return 'Network';
+    }
+    if (kind === 'PersistentVolume' || kind === 'PersistentVolumeClaim' || kind === 'StorageClass') {
+        return 'Storage';
+    }
+    if (kind === 'ConfigMap' || kind === 'Secret') {
+        return 'Configuration';
+    }
+    return 'Other';
+}
+
 /** True for Gateway API route kinds (HTTPRoute / GRPCRoute / TCPRoute / TLSRoute / UDPRoute). */
 export function isRouteKind(kind: string): boolean {
     return (

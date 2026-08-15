@@ -86,19 +86,6 @@ describe('Canvas', () => {
             fireEvent.click(dom.getByText('close-modal'));
             expect(dom.queryByTestId('create-modal-mock')).toBeNull();
         });
-
-        it('reflects isBidirectionalSync as an active/paused indicator', () => {
-            setMockStoreState({ isBidirectionalSync: true });
-            const active = render(<Canvas />);
-            expect(active.container.querySelector('.canvas-sync-dot--active')).toBeInTheDocument();
-            expect(dom.getByText('Sync active')).toBeInTheDocument();
-            active.unmount();
-
-            setMockStoreState({ isBidirectionalSync: false });
-            const paused = render(<Canvas />);
-            expect(paused.container.querySelector('.canvas-sync-dot--inactive')).toBeInTheDocument();
-            expect(dom.getByText('Sync paused')).toBeInTheDocument();
-        });
     });
 
     // ── Invariant: dragging never touches YAML (onNodesChange split) ──────────

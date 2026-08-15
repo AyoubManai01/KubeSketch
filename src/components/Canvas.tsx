@@ -13,6 +13,7 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import {
+  Fragment,
   useCallback,
   useEffect,
   useId,
@@ -58,6 +59,7 @@ import {
   getRoutesForGateway,
   getRoutesForService,
   isGatewayApiKind,
+  kindGroupLabel,
   isSingleNodeAccessMode,
   nodeIdFor,
   parallelismOf,
@@ -79,6 +81,19 @@ import NamespaceModal from "./NamespaceModal";
 const nodeTypes: NodeTypes = {
   k8sNode: K8sNode,
 };
+
+/** Presentational kind groups for the canvas toolbar (left → right). */
+const RESOURCE_GROUPS: { label: string; kinds: SupportedKind[] }[] = [
+  "Workload",
+  "Network",
+  "Storage",
+  "Configuration",
+].map((label) => ({
+  label,
+  kinds: SUPPORTED_KINDS.filter(
+    (kind) => !isGatewayApiKind(kind) && kindGroupLabel(kind) === label,
+  ),
+}));
 const DEFAULT_NAMESPACES = ["default", "kube-system", "kube-public"];
 const SERVICE_TYPES = ["ClusterIP", "NodePort", "LoadBalancer", "ExternalName"];
 
@@ -432,7 +447,6 @@ export default function Canvas() {
     (s) => s.setCanvasNodesPositionOnly,
   );
   const persistNodePositions = useVeltraStore((s) => s.persistNodePositions);
-  const isBidirectionalSync = useVeltraStore((s) => s.isBidirectionalSync);
   const selectedResource = useVeltraStore((s) => s.selectedResource);
   const setSelectedResource = useVeltraStore((s) => s.setSelectedResource);
   const addCanvasEdge = useVeltraStore((s) => s.addCanvasEdge);
@@ -449,20 +463,46 @@ export default function Canvas() {
   const [pendingKind, setPendingKind] = useState<SupportedKind | null>(null);
   const [gatewayApiModalOpen, setGatewayApiModalOpen] = useState(false);
   const [gatewayApiDropdownOpen, setGatewayApiDropdownOpen] = useState(false);
+  const [gaDropdownPos, setGaDropdownPos] = useState({ top: 0, left: 0 });
   const gaEntryRef = useRef<HTMLDivElement>(null);
+  const gaDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Close the Gateway API dropdown on any outside pointerdown. The dropdown is a
-  // DOM descendant of the entry, so clicks on it (and on the "+"/chevron buttons)
-  // are kept — everything else (the canvas, other toolbar controls) closes it.
+  // Close the Gateway API dropdown on any outside pointerdown. The dropdown is
+  // rendered outside the scrollable row (so the toolbar's overflow can't clip
+  // it), so both the entry and the dropdown itself count as "inside".
   useEffect(() => {
     if (!gatewayApiDropdownOpen) return;
     const onPointerDown = (e: PointerEvent) => {
-      if (gaEntryRef.current?.contains(e.target as Element | null)) return;
+      const target = e.target as Element | null;
+      if (gaEntryRef.current?.contains(target)) return;
+      if (gaDropdownRef.current?.contains(target)) return;
       setGatewayApiDropdownOpen(false);
     };
     window.addEventListener("pointerdown", onPointerDown, true);
     return () => window.removeEventListener("pointerdown", onPointerDown, true);
   }, [gatewayApiDropdownOpen]);
+
+  // Anchor the dropdown under the entry. The toolbar forms the containing
+  // block (position: relative), so coordinates are computed relative to it —
+  // getBoundingClientRect() viewport coords are converted by subtracting the
+  // toolbar's own rect.
+  const toggleGatewayApiDropdown = () => {
+    const next = !gatewayApiDropdownOpen;
+    if (next) {
+      const entry = gaEntryRef.current;
+      const toolbar = entry?.closest(".canvas-toolbar");
+      if (entry && toolbar) {
+        const entryRect = entry.getBoundingClientRect();
+        const toolbarRect = toolbar.getBoundingClientRect();
+        setGaDropdownPos({
+          top: entryRect.bottom - toolbarRect.top + 6,
+          left: entryRect.left - toolbarRect.left,
+        });
+      }
+    }
+    setGatewayApiDropdownOpen(next);
+  };
+
   const [yamlPreviewOpen, setYamlPreviewOpen] = useState(false);
   const inspectorContentRef = useRef<HTMLDivElement>(null);
 
@@ -1452,65 +1492,22 @@ export default function Canvas() {
       {/* Quick Actions Toolbar */}
       <div className="canvas-toolbar">
         <div className="canvas-toolbar__group canvas-toolbar__group--grow">
-          <div className="canvas-toolbar__scroll">
-            {SUPPORTED_KINDS.filter((kind) => !isGatewayApiKind(kind)).map((kind) => (
-              <button
-                key={kind}
-                type="button"
-                className="canvas-button"
-                onClick={() => {
-                  setGatewayApiModalOpen(false);
-                  setPendingKind(kind);
-                }}
-                title={`Add ${kind} resource`}
-              >
-                + {kind}
-              </button>
-            ))}
-          </div>
-          <div className="canvas-toolbar__ga-entry" ref={gaEntryRef}>
-            <button
-              type="button"
-              className="canvas-button"
-              onClick={() => {
-                setGatewayApiDropdownOpen(false);
-                setPendingKind(null);
-                setGatewayApiModalOpen(true);
-              }}
-              title="Create a GatewayClass, Gateway and Routes in one flow"
-            >
-              + Gateway API
-            </button>
-            <button
-              type="button"
-              className={`canvas-button canvas-button--chevron ${
-                gatewayApiDropdownOpen ? "canvas-button--chevron--open" : ""
-              }`}
-              onClick={() => setGatewayApiDropdownOpen((open) => !open)}
-              title="Reveal the Gateway API resources (GatewayClass, Gateway, routes)"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                width="12"
-                height="12"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-            </button>
-            {gatewayApiDropdownOpen && (
-              <div className="canvas-toolbar__dropdown">
-                {SUPPORTED_KINDS.filter((kind) => isGatewayApiKind(kind)).map((kind) => (
+          <div
+            className="canvas-toolbar__scroll"
+            onScroll={() => setGatewayApiDropdownOpen(false)}
+          >
+            {RESOURCE_GROUPS.map((group, gi) => (
+              <Fragment key={group.label}>
+                {gi > 0 && (
+                  <span className="canvas-toolbar__group-divider" aria-hidden="true" />
+                )}
+                <span className="canvas-toolbar__group-label">{group.label}</span>
+                {group.kinds.map((kind) => (
                   <button
                     key={kind}
                     type="button"
-                    className="canvas-button canvas-toolbar__dropdown-item"
+                    className="canvas-button"
                     onClick={() => {
-                      setGatewayApiDropdownOpen(false);
                       setGatewayApiModalOpen(false);
                       setPendingKind(kind);
                     }}
@@ -1519,9 +1516,69 @@ export default function Canvas() {
                     + {kind}
                   </button>
                 ))}
-              </div>
-            )}
+                {group.label === "Network" && (
+                  <div className="canvas-toolbar__ga-entry" ref={gaEntryRef}>
+                    <button
+                      type="button"
+                      className="canvas-button"
+                      onClick={() => {
+                        setGatewayApiDropdownOpen(false);
+                        setPendingKind(null);
+                        setGatewayApiModalOpen(true);
+                      }}
+                      title="Create a GatewayClass, Gateway and Routes in one flow"
+                    >
+                      + Gateway API
+                    </button>
+                    <button
+                      type="button"
+                      className={`canvas-button canvas-button--chevron ${
+                        gatewayApiDropdownOpen ? "canvas-button--chevron--open" : ""
+                      }`}
+                      onClick={toggleGatewayApiDropdown}
+                      title="Reveal the Gateway API resources (GatewayClass, Gateway, routes)"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        width="12"
+                        height="12"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
+              </Fragment>
+            ))}
           </div>
+          {gatewayApiDropdownOpen && (
+            <div
+              className="canvas-toolbar__dropdown"
+              ref={gaDropdownRef}
+              style={{ top: gaDropdownPos.top, left: gaDropdownPos.left }}
+            >
+              {SUPPORTED_KINDS.filter((kind) => isGatewayApiKind(kind)).map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  className="canvas-button canvas-toolbar__dropdown-item"
+                  onClick={() => {
+                    setGatewayApiDropdownOpen(false);
+                    setGatewayApiModalOpen(false);
+                    setPendingKind(kind);
+                  }}
+                  title={`Add ${kind} resource`}
+                >
+                  + {kind}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <div className="canvas-toolbar__group">
           {nsEditMode && (
@@ -1559,12 +1616,6 @@ export default function Canvas() {
             </svg>
             {nsEditMode ? "Done" : "Namespaces"}
           </button>
-          <span className="canvas-toolbar__hint">
-            <span
-              className={`canvas-sync-dot canvas-sync-dot--${isBidirectionalSync ? "active" : "inactive"}`}
-            />
-            {isBidirectionalSync ? "Sync active" : "Sync paused"}
-          </span>
         </div>
       </div>
 

@@ -201,57 +201,6 @@ body,
   color: #ef4444;
 }
 
-/* Sync Toggle Switch */
-.toolbar-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  cursor: pointer;
-  user-select: none;
-}
-
-.toolbar-toggle input {
-  display: none;
-}
-
-.toggle-switch {
-  width: 34px;
-  height: 18px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 99px;
-  position: relative;
-  transition: background var(--transition-fast);
-  border: 1px solid var(--border-default);
-}
-
-.toggle-switch::after {
-  content: '';
-  width: 12px;
-  height: 12px;
-  background: #ffffff;
-  border-radius: 50%;
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  transition: transform var(--transition-fast);
-}
-
-.toolbar-toggle input:checked + .toggle-switch {
-  background: var(--accent-service);
-  border-color: rgba(59, 130, 246, 0.4);
-}
-
-.toolbar-toggle input:checked + .toggle-switch::after {
-  transform: translateX(16px);
-}
-
-.toggle-label {
-  letter-spacing: 0.1px;
-}
-
 /* ---------- Panels Grid ---------- */
 .panels {
   display: flex;
@@ -455,13 +404,23 @@ body,
   z-index: 50;
 }
 
-.canvas-toolbar__hint {
-  font-size: 11px;
-  font-weight: 500;
+/* Grouped kind sections inside the scrollable toolbar row */
+.canvas-toolbar__group-label {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--text-muted);
-  display: flex;
-  align-items: center;
   white-space: nowrap;
+}
+
+.canvas-toolbar__group-divider {
+  flex-shrink: 0;
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .canvas-button {
@@ -573,12 +532,10 @@ body,
   transform: rotate(180deg);
 }
 
-/* Gateway API narrow-down dropdown (revealed under the entry) */
+/* Gateway API narrow-down dropdown (revealed under the entry — anchored to the
+   toolbar with inline top/left, outside the scroll row so it can't be clipped) */
 .canvas-toolbar__dropdown {
   position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 6px;
   min-width: 190px;
   z-index: 100;
   background: var(--bg-elevated);
@@ -604,11 +561,18 @@ body,
   border-color: rgba(124, 58, 237, 0.4);
 }
 
-/* Horizontally scrollable kind-button row: only the plain kind buttons scroll,
-   the Gateway API entry and the right-side controls stay pinned. */
-.canvas-toolbar__group--grow {
+/* Horizontally scrollable grouped kind-button row: the kind sections (and the
+   Gateway API entry inside the Network group) scroll together, while the
+   right-side controls stay pinned. The row fills the toolbar height so the
+   native horizontal scrollbar paints at the bottom of the navbar.
+   NOTE: the compound selector is required — the base .canvas-toolbar__group
+   rule later in the file sets flex-shrink: 0, which would otherwise override
+   this rule's flex: 1 1 auto shorthand (equal specificity, later wins) and
+   prevent the row from ever shrinking to the toolbar width. */
+.canvas-toolbar__group.canvas-toolbar__group--grow {
   flex: 1 1 auto;
   min-width: 0;
+  height: 100%;
 }
 
 .canvas-toolbar__scroll {
@@ -619,8 +583,9 @@ body,
   overflow-y: hidden;
   flex: 1 1 auto;
   min-width: 0;
+  height: 100%;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+  scrollbar-color: var(--bg-primary) transparent;
 }
 
 .canvas-toolbar__scroll::-webkit-scrollbar {
@@ -628,7 +593,7 @@ body,
 }
 
 .canvas-toolbar__scroll::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--bg-primary);
   border-radius: 3px;
 }
 
@@ -1171,32 +1136,6 @@ body,
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
-}
-
-/* Sync indicator dot */
-.canvas-sync-dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  margin-right: 5px;
-  flex-shrink: 0;
-}
-
-.canvas-sync-dot--active {
-  background: #22c55e;
-  box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
-  animation: pulseDot 2s ease-in-out infinite;
-}
-
-.canvas-sync-dot--inactive {
-  background: #eab308;
-  box-shadow: 0 0 4px rgba(234, 179, 8, 0.4);
-}
-
-@keyframes pulseDot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
 }
 
 /* ---------- Node Inspector Drawer ---------- */

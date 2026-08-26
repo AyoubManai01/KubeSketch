@@ -1964,6 +1964,84 @@ body,
   cursor: pointer;
 }
 
+/* Namespace picker: text input + chevron + DOM listbox. Rendered as a real
+   listbox instead of a native datalist — Chromium mis-renders datalist popups
+   inside the modal's transformed/filtered ancestors. */
+.namespace-field {
+  position: relative;
+}
+
+.namespace-field__input {
+  padding-right: 26px;
+}
+
+.namespace-field__chevron {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+}
+
+.namespace-field__chevron:hover {
+  color: var(--text-primary);
+}
+
+.namespace-field__chevron svg {
+  transition: transform var(--transition-fast);
+}
+
+.namespace-field__chevron--open svg {
+  transform: rotate(180deg);
+}
+
+.namespace-field__list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 2100;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.namespace-field__option {
+  padding: 6px 8px;
+  border-radius: var(--radius-xs);
+  font-size: 12.5px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.namespace-field__option--active {
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.namespace-field__empty {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .modal-field__textarea {
   min-height: 64px;
   resize: vertical;

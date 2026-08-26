@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import type { K8sResource } from '../types/types';
 import { useVeltraStore } from '../store/store';
+import NamespaceField from './NamespaceField';
 
 interface Props {
     onClose: () => void;
@@ -390,16 +391,11 @@ export default function CreateGatewayApiModal({ onClose }: Props) {
                         </div>
                         <div className="modal-field">
                             <label className="modal-field__label">Namespace</label>
-                            <input
-                                className="modal-field__input"
+                            <NamespaceField
                                 value={gwNamespace}
-                                list="gateway-modal-ns-list"
-                                onChange={(e) => setGwNamespace(e.target.value)}
-                                placeholder="default"
+                                onChange={setGwNamespace}
+                                options={namespaceOptions}
                             />
-                            <datalist id="gateway-modal-ns-list">
-                                {namespaceOptions.map((ns) => <option key={ns} value={ns} />)}
-                            </datalist>
                         </div>
                     </div>
 

@@ -11,6 +11,7 @@ import {
     type IngressTlsPayload,
 } from '../store/store';
 import ConfigMapDataEditor from './ConfigMapDataEditor';
+import NamespaceField from './NamespaceField';
 
 interface Props {
     kind: SupportedKind;
@@ -1018,16 +1019,11 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                         {!isClusterScoped(kind) && (
                             <div className="modal-field">
                                 <label className="modal-field__label">Namespace</label>
-                                <input
-                                    className="modal-field__input"
+                                <NamespaceField
                                     value={namespace}
-                                    list="modal-ns-list"
-                                    onChange={(e) => setNamespace(e.target.value)}
-                                    placeholder="default"
+                                    onChange={setNamespace}
+                                    options={namespaceOptions}
                                 />
-                                <datalist id="modal-ns-list">
-                                    {namespaceOptions.map((ns) => <option key={ns} value={ns} />)}
-                                </datalist>
                             </div>
                         )}
                     </div>

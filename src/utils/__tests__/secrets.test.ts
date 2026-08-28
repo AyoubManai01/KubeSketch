@@ -228,7 +228,7 @@ describe('secret link semantics', () => {
 
     it('explainInvalidLink rejects non-Pod-spec Secret pairs with guidance', () => {
         expect(explainInvalidLink('Secret', 'Service')).toContain('Pod spec');
-        expect(explainInvalidLink('Secret', 'HPA')).toContain('HPA');
+        expect(explainInvalidLink('Secret', 'HorizontalPodAutoscaler')).toContain('HorizontalPodAutoscaler');
         expect(explainInvalidLink('Secret', 'ConfigMap')).toContain('Pod spec');
         expect(explainInvalidLink('Secret', 'Secret')).toContain('Pod spec');
     });

@@ -14,7 +14,7 @@ function dep(name: string, replicas: number): K8sResource {
 function hpa(name: string, targetKind: string, targetName: string, min?: number, max?: number): K8sResource {
     return {
         apiVersion: 'autoscaling/v2',
-        kind: 'HPA',
+        kind: 'HorizontalPodAutoscaler',
         metadata: { name },
         spec: {
             scaleTargetRef: { apiVersion: 'apps/v1', kind: targetKind, name: targetName },
@@ -24,7 +24,7 @@ function hpa(name: string, targetKind: string, targetName: string, min?: number,
     };
 }
 
-describe('HPA replica priority', () => {
+describe('HorizontalPodAutoscaler replica priority', () => {
     it('clamps Deployment replicas up to minReplicas and writes back', () => {
         const resources = [dep('web', 3), hpa('web-hpa', 'Deployment', 'web', 4, 10)];
         const overrides = applyHpaReplicaOverrides(resources);
@@ -69,7 +69,7 @@ describe('HPA replica priority', () => {
         expect(overrides[1]).toMatchObject({ kind: 'ReplicaSet', name: 'web-abc12', viaDeployment: 'web' });
     });
 
-    it('clamps a ReplicaSet targeted directly by its own HPA', () => {
+    it('clamps a ReplicaSet targeted directly by its own HorizontalPodAutoscaler', () => {
         const rs: K8sResource = {
             apiVersion: 'apps/v1',
             kind: 'ReplicaSet',
@@ -83,7 +83,7 @@ describe('HPA replica priority', () => {
         expect(overrides[0].viaDeployment).toBeUndefined();
     });
 
-    it('first matching HPA wins per workload', () => {
+    it('first matching HorizontalPodAutoscaler wins per workload', () => {
         const resources = [
             dep('web', 3),
             hpa('hpa-a', 'Deployment', 'web', 4, 10),
@@ -94,7 +94,7 @@ describe('HPA replica priority', () => {
         expect(overrides[0].hpaName).toBe('hpa-a');
     });
 
-    it('materializes pods at the HPA-forced count on the canvas', () => {
+    it('materializes pods at the HorizontalPodAutoscaler-forced count on the canvas', () => {
         const resources = [dep('web', 3), hpa('web-hpa', 'Deployment', 'web', 4, 10)];
         applyHpaReplicaOverrides(resources);
         const { nodes } = buildGraph(resources, []);

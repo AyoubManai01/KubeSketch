@@ -48,7 +48,7 @@ const NS_LAYOUT_KEY = 'veltra_ns_layout';
 
 /** Default YAML shown when the app first loads */
 export const DEFAULT_YAML = `# Paste your Kubernetes YAML here (multi-document with ---)
-# Recognized resources: Deployment, Service, Ingress, ReplicaSet, Pod, HPA,
+# Recognized resources: Deployment, Service, Ingress, ReplicaSet, Pod, HorizontalPodAutoscaler,
 # ConfigMap, PersistentVolumeClaim, PersistentVolume, StorageClass, Secret, Job,
 # CronJob, VerticalPodAutoscaler, GatewayClass, Gateway, HTTPRoute, GRPCRoute,
 # TCPRoute, TLSRoute, UDPRoute
@@ -106,7 +106,7 @@ spec:
                   number: 80
 ---
 apiVersion: autoscaling/v2
-kind: HPA
+kind: HorizontalPodAutoscaler
 metadata:
   name: my-app-hpa
 spec:
@@ -244,7 +244,7 @@ interface VeltraState {
     /** Latest transient feedback message (auto-dismissed by the canvas toast). */
     notice: CanvasNotice | null;
 
-    /** Active HPA replica clamps from the last commit — drives the bottom status bar. */
+    /** Active HorizontalPodAutoscaler replica clamps from the last commit — drives the bottom status bar. */
     hpaOverrides: HpaReplicaOverride[];
 
     /** A ConfigMap→workload drag awaiting the mechanism choice in the post-drag prompt. */
@@ -361,7 +361,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         if (opts.userEdges) {
             persistUserEdges(userEdges);
         }
-        // HPA priority: clamp each targeted workload's spec.replicas into the HPA's
+        // HorizontalPodAutoscaler priority: clamp each targeted workload's spec.replicas into the autoscaler's
         // [minReplicas, maxReplicas] window and write the clamped value back, so the
         // derived graph, the YAML serialization and the badges all agree.
         const hpaOverrides = applyHpaReplicaOverrides(resources);
@@ -401,7 +401,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
 
     try {
         const resources = parseYaml(yamlVal);
-        // HPA priority also corrects pasted/saved YAML on load: the clamped value
+        // HorizontalPodAutoscaler priority also corrects pasted/saved YAML on load: the clamped value
         // is written back into the model AND the editor so nothing disagrees.
         const overrides = applyHpaReplicaOverrides(resources);
         if (overrides.length) {
@@ -439,7 +439,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         setYaml: (value: string) => {
             try {
                 const resources = parseYaml(value);
-                // HPA priority: clamp + write back the corrected YAML to the editor
+                // HorizontalPodAutoscaler priority: clamp + write back the corrected YAML to the editor
                 // (a targeted workload's replicas can never stay below minReplicas).
                 const hpaOverrides = applyHpaReplicaOverrides(resources);
                 const nextYaml = hpaOverrides.length ? resourcesToYaml(resources) : value;
@@ -544,7 +544,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 });
 
                 // Cascade rename into name-based references: Ingress backends point at
-                // Services by name, HPA scaleTargetRefs at Deployments/ReplicaSets by
+                // Services by name, HorizontalPodAutoscaler scaleTargetRefs at Deployments/ReplicaSets by
                 // name (label selectors are unaffected by renames)
                 if (node.data.kind === 'Service' && kind === 'Service' && name !== node.data.name) {
                     updatedNodes = renameServiceReferences(updatedNodes, node.data.name, name);
@@ -1160,7 +1160,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
             localStorage.removeItem(NS_LAYOUT_KEY);
             set((state) => {
                 // Rebuild with no previous coordinates so every node returns to auto-layout.
-                // HPA clamps are already written into the node resources; re-run the
+                // HorizontalPodAutoscaler clamps are already written into the node resources; re-run the
                 // override pass so the status bar reflects the current state.
                 const resources = toResources(state.nodes);
                 const hpaOverrides = applyHpaReplicaOverrides(resources);
@@ -1399,7 +1399,7 @@ function toResources(nodes: Node<K8sNodeData>[]): K8sResource[] {
 export function apiVersionForKind(kind: SupportedKind): string {
     if (kind === 'Deployment' || kind === 'ReplicaSet') return 'apps/v1';
     if (kind === 'Ingress') return 'networking.k8s.io/v1';
-    if (kind === 'HPA') return 'autoscaling/v2';
+    if (kind === 'HorizontalPodAutoscaler') return 'autoscaling/v2';
     if (kind === 'VerticalPodAutoscaler') return 'autoscaling.k8s.io/v1';
     if (kind === 'StorageClass') return 'storage.k8s.io/v1';
     if (kind === 'Job' || kind === 'CronJob') return 'batch/v1';
@@ -1447,7 +1447,7 @@ function renameServiceReferences(
     });
 }
 
-/** Rewrite HPA scaleTargetRef names when a Deployment/ReplicaSet is renamed. */
+/** Rewrite HorizontalPodAutoscaler scaleTargetRef names when a Deployment/ReplicaSet is renamed. */
 function renameWorkloadReferences(
     nodes: Node<K8sNodeData>[],
     kind: 'Deployment' | 'ReplicaSet',
@@ -1455,7 +1455,7 @@ function renameWorkloadReferences(
     newName: string
 ): Node<K8sNodeData>[] {
     return nodes.map((n) => {
-        if (n.data.kind !== 'HPA') return n;
+        if (n.data.kind !== 'HorizontalPodAutoscaler') return n;
         const spec = n.data.resource.spec as
             | { scaleTargetRef?: { kind?: string; name?: string } }
             | undefined;

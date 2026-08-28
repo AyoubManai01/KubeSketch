@@ -24,7 +24,7 @@ const KIND_COLORS: Record<string, string> = {
     Pod: '#14b8a6',
     Service: '#3b82f6',
     Ingress: '#8b5cf6',
-    HPA: '#f59e0b',
+    HorizontalPodAutoscaler: '#f59e0b',
     ConfigMap: '#06b6d4',
     PersistentVolumeClaim: '#ec4899',
     PersistentVolume: '#84cc16',
@@ -79,7 +79,7 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
             <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" />
         </svg>
     ),
-    HPA: (
+    HorizontalPodAutoscaler: (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 20V10M12 6V4" />
             <path d="M12 16l3-3-3-3-3 3 3 3z" />
@@ -348,7 +348,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         [nodes]
     );
 
-    // HPA scale targets: Deployments and ReplicaSets on the canvas
+    // HorizontalPodAutoscaler scale targets: Deployments and ReplicaSets on the canvas
     const workloadOptions = useMemo(
         () =>
             nodes
@@ -639,7 +639,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                         ],
                     },
                 };
-            case 'HPA': {
+            case 'HorizontalPodAutoscaler': {
                 const minNum = parseInt(minReplicas, 10);
                 const maxNum = parseInt(maxReplicas, 10);
                 const cpuNum = parseInt(cpuTarget, 10);
@@ -1445,14 +1445,14 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                         </>
                     )}
 
-                    {/* HPA: scale target + replica bounds */}
-                    {kind === 'HPA' && (
+                    {/* HorizontalPodAutoscaler: scale target + replica bounds */}
+                    {kind === 'HorizontalPodAutoscaler' && (
                         <>
                             <div className="modal-field">
                                 <label className="modal-field__label">
                                     Scale target
                                     <span className="modal-field__hint">
-                                        Sets spec.scaleTargetRef — the Deployment or ReplicaSet this HPA scales.
+                                        Sets spec.scaleTargetRef — the Deployment or ReplicaSet this HorizontalPodAutoscaler scales.
                                     </span>
                                 </label>
                                 <select

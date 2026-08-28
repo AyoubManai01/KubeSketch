@@ -10,7 +10,7 @@ export interface K8sResource {
     | 'Ingress'
     | 'Pod'
     | 'ReplicaSet'
-    | 'HPA'
+    | 'HorizontalPodAutoscaler'
     | 'ConfigMap'
     | 'PersistentVolumeClaim'
     | 'PersistentVolume'
@@ -42,7 +42,7 @@ export const SUPPORTED_KINDS = [
   'Ingress',
   'Pod',
   'ReplicaSet',
-  'HPA',
+  'HorizontalPodAutoscaler',
   'ConfigMap',
   'PersistentVolumeClaim',
   'PersistentVolume',

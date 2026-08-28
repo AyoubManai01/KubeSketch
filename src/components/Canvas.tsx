@@ -68,6 +68,7 @@ import {
   type K8sNodeData,
 } from "../utils/buildGraph";
 import { resourcesToYaml } from "../utils/serializeYaml";
+import { setRfInstance } from "../utils/exportCanvas";
 import CreateResourceModal from "./CreateResourceModal";
 import CreateGatewayApiModal from "./CreateGatewayApiModal";
 import ConfigMapDataEditor from "./ConfigMapDataEditor";
@@ -103,7 +104,7 @@ const KIND_COLORS: Record<string, string> = {
   Pod: "#14b8a6",
   Service: "#3b82f6",
   Ingress: "#8b5cf6",
-  HPA: "#f59e0b",
+  HorizontalPodAutoscaler: "#f59e0b",
   ConfigMap: "#06b6d4",
   PersistentVolumeClaim: "#ec4899",
   PersistentVolume: "#84cc16",
@@ -193,7 +194,7 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
       <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" />
     </svg>
   ),
-  HPA: (
+  HorizontalPodAutoscaler: (
     <svg
       viewBox="0 0 24 24"
       fill="none"
@@ -600,7 +601,7 @@ export default function Canvas() {
     [nodes],
   );
 
-  // HPA scale targets: Deployments and ReplicaSets on the canvas
+  // HorizontalPodAutoscaler scale targets: Deployments and ReplicaSets on the canvas
   const workloadOptions = useMemo(
     () =>
       nodes
@@ -668,7 +669,7 @@ export default function Canvas() {
       .map((n) => ({ kind: n.data.kind, name: n.data.name }));
   }, [nodes, selectedNode]);
 
-  // When the selected workload is scaled by an HPA, replicas are clamped into
+  // When the selected workload is scaled by a HorizontalPodAutoscaler, replicas are clamped into
   // [minReplicas, maxReplicas] — surface that priority right at the input.
   const hpaConstraint = useMemo(() => {
     if (
@@ -680,7 +681,7 @@ export default function Canvas() {
     }
     const hpa = nodes.find(
       (n) =>
-        n.data.kind === "HPA" &&
+        n.data.kind === "HorizontalPodAutoscaler" &&
         getHpaTarget(n.data.resource)?.kind === selectedNode.data.kind &&
         getHpaTarget(n.data.resource)?.name === selectedNode.data.name,
     );
@@ -1121,7 +1122,7 @@ export default function Canvas() {
 
   // Re-initialize the draft when a different resource is selected or when the
   // committed resource changed without pending edits (external sync, e.g. YAML
-  // edits or HPA replica clamps). Never clobber in-progress typing.
+  // edits or HorizontalPodAutoscaler replica clamps). Never clobber in-progress typing.
   if (selectedNode && !isManaged) {
     const sig = JSON.stringify(selectedNode.data.resource);
     const needsInit =
@@ -1244,7 +1245,7 @@ export default function Canvas() {
     };
 
     // Renames go through the identity path so reference cascades run
-    // (Ingress backends, HPA scaleTargetRefs, ConfigMap/PVC/PV/SC refs) and
+    // (Ingress backends, HorizontalPodAutoscaler scaleTargetRefs, ConfigMap/PVC/PV/SC refs) and
     // manual edges + stored positions are remapped.
     let nodeId = selectedNode.id;
     if (name !== committed.metadata?.name) {
@@ -1474,6 +1475,7 @@ export default function Canvas() {
 
   const onFlowInit = useCallback(
     (instance: ReactFlowInstance<Node<K8sNodeData>>) => {
+      setRfInstance(instance);
       if (nodes.length > 0) {
         void instance.fitView({ padding: 0.35, maxZoom: 0.95 });
       }
@@ -1664,7 +1666,7 @@ export default function Canvas() {
                     Ingress route
                   </span>
                   <span className="canvas-legend__item canvas-legend__item--hpa">
-                    HPA scales
+                    HorizontalPodAutoscaler scales
                   </span>
                   <span className="canvas-legend__item canvas-legend__item--vpa">
                     VPA right-sizes
@@ -1769,7 +1771,7 @@ export default function Canvas() {
               </div>
             )}
 
-            {/* Persistent HPA-priority warnings: an HPA overrode a workload's
+            {/* Persistent HPA-priority warnings: a HorizontalPodAutoscaler overrode a workload's
                 spec.replicas this commit (clamped into [minReplicas, maxReplicas]). */}
             {hpaOverrides.length > 0 && (
               <div className="canvas-statusbar" role="status">
@@ -1788,13 +1790,13 @@ export default function Canvas() {
                       <path d="M7 14l4-4 3 3 5-6" />
                     </svg>
                     <span>
-                      HPA {o.hpaName} has more priority — {o.kind} {o.name}{" "}
+                      HorizontalPodAutoscaler {o.hpaName} has more priority — {o.kind} {o.name}{" "}
                       {o.viaDeployment
                         ? `(via Deployment ${o.viaDeployment}) `
                         : ""}
                       replicas forced {o.original} → {o.effective} ({o.reason}=
-                      {o.bound}). Make sure that the HPA's min/max replicas are
-                      set correctly.
+                      {o.bound}). Make sure that the HorizontalPodAutoscaler's
+                      min/max replicas are set correctly.
                     </span>
                   </div>
                 ))}
@@ -2219,7 +2221,7 @@ export default function Canvas() {
                           </span>
                           {hpaConstraint && (
                             <span className="inspector-field__hint inspector-field__hint--hpa">
-                              HPA {hpaConstraint.name} has priority — replicas
+                              HorizontalPodAutoscaler {hpaConstraint.name} has priority — replicas
                               are clamped to {hpaConstraint.min ?? 1}–
                               {hpaConstraint.max ?? "∞"} and written back to
                               YAML.
@@ -3898,8 +3900,8 @@ export default function Canvas() {
                   </div>
                 )}
 
-                {/* ── Section: Autoscaling (HPA) ─────────── */}
-                {!isManaged && draftKind === "HPA" && (
+                {/* ── Section: Autoscaling (HorizontalPodAutoscaler) ─────────── */}
+                {!isManaged && draftKind === "HorizontalPodAutoscaler" && (
                   <div className="inspector-section">
                     <div className="inspector-section__header">
                       <svg

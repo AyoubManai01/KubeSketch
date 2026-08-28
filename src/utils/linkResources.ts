@@ -60,11 +60,11 @@ export function connectResources(
             description: `${podName} adopted by ${depName}'s ReplicaSet (Deployments own Pods via ReplicaSets)`,
         };
     }
-    if (pair('HPA', 'Deployment') || pair('HPA', 'ReplicaSet')) {
+    if (pair('HorizontalPodAutoscaler', 'Deployment') || pair('HorizontalPodAutoscaler', 'ReplicaSet')) {
         return linkHpaToWorkload(
             resources,
-            byKind('HPA'),
-            source.kind === 'HPA' ? targetIdx : sourceIdx
+            byKind('HorizontalPodAutoscaler'),
+            source.kind === 'HorizontalPodAutoscaler' ? targetIdx : sourceIdx
         );
     }
     if (
@@ -173,8 +173,8 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
         if (other === 'Ingress') {
             return 'An Ingress consumes a Secret via spec.tls[].secretName — drag an Ingress onto a Secret to configure TLS.';
         }
-        if (other === 'HPA') {
-            return 'An HPA scales Deployments/ReplicaSets, not Secrets.';
+        if (other === 'HorizontalPodAutoscaler') {
+            return 'A HorizontalPodAutoscaler scales Deployments/ReplicaSets, not Secrets.';
         }
         return `A Secret is consumed by a Pod spec (envFrom, env.valueFrom or volumes) or referenced by Ingress TLS, not linked to a ${other} directly.`;
     }
@@ -195,17 +195,17 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
         if (other === 'Ingress') {
             return 'An Ingress cannot route to a CronJob — expose its Pods with a Service first.';
         }
-        if (other === 'HPA') {
-            return 'An HPA scales Deployments/ReplicaSets, not CronJobs.';
+        if (other === 'HorizontalPodAutoscaler') {
+            return 'A HorizontalPodAutoscaler scales Deployments/ReplicaSets, not CronJobs.';
         }
         return `A CronJob runs batch Jobs on a schedule — it has no direct relationship with a ${other}.`;
     }
     if (pair('Ingress', 'Deployment') || pair('Ingress', 'ReplicaSet') || pair('Ingress', 'Job')) {
         return `An Ingress cannot route to a ${a === 'Ingress' ? b : a} — expose the workload with a Service first, then route the Ingress to it.`;
     }
-    if (pair('HPA', 'Service') || pair('HPA', 'Ingress') || pair('HPA', 'Pod') || pair('HPA', 'Job')) {
-        const other = a === 'HPA' ? b : a;
-        return `An HPA can only scale a Deployment or ReplicaSet, not a ${other}.`;
+    if (pair('HorizontalPodAutoscaler', 'Service') || pair('HorizontalPodAutoscaler', 'Ingress') || pair('HorizontalPodAutoscaler', 'Pod') || pair('HorizontalPodAutoscaler', 'Job')) {
+        const other = a === 'HorizontalPodAutoscaler' ? b : a;
+        return `A HorizontalPodAutoscaler can only scale a Deployment or ReplicaSet, not a ${other}.`;
     }
     if (a === 'VerticalPodAutoscaler' || b === 'VerticalPodAutoscaler') {
         const other = a === 'VerticalPodAutoscaler' ? b : a;
@@ -215,8 +215,8 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
         if (other === 'Ingress') {
             return 'A VPA right-sizes Pods, not Ingresses.';
         }
-        if (other === 'HPA') {
-            return 'A VPA right-sizes container resource requests, while an HPA scales replica counts — the two are independent.';
+        if (other === 'HorizontalPodAutoscaler') {
+            return 'A VPA right-sizes container resource requests, while a HorizontalPodAutoscaler scales replica counts — the two are independent.';
         }
         return `A VPA right-sizes a Pod's containers — it has no direct relationship with a ${other}.`;
     }
@@ -387,7 +387,7 @@ function linkOwnership(
     };
 }
 
-/** Point the HPA's scaleTargetRef at the workload. */
+/** Point the HorizontalPodAutoscaler's scaleTargetRef at the workload. */
 function linkHpaToWorkload(
     resources: K8sResource[],
     hpaIdx: number,

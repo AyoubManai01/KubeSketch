@@ -1,7 +1,8 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import YamlEditor from './components/YamlEditor';
 import Canvas from './components/Canvas';
 import { useVeltraStore, DEFAULT_YAML } from './store/store';
+import { exportCanvasImage } from './utils/exportCanvas';
 
 const SPLIT_KEY = 'veltra_panel_split';
 const MIN_SPLIT = 20;
@@ -27,6 +28,30 @@ export default function App() {
   const panelsRef = useRef<HTMLDivElement>(null);
   const [splitRatio, setSplitRatio] = useState(loadSplitRatio);
   const [isResizing, setIsResizing] = useState(false);
+
+  // Export Graph dropdown (port of the Gateway API split-button pattern in Canvas)
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportBtnRef = useRef<HTMLDivElement>(null);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+
+  const toggleExportDropdown = () => setExportOpen(!exportOpen);
+
+  useEffect(() => {
+    if (!exportOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Element | null;
+      if (exportBtnRef.current?.contains(target)) return;
+      if (exportMenuRef.current?.contains(target)) return;
+      setExportOpen(false);
+    };
+    window.addEventListener('pointerdown', onPointerDown, true);
+    return () => window.removeEventListener('pointerdown', onPointerDown, true);
+  }, [exportOpen]);
+
+  const handleExport = (format: 'png' | 'svg') => {
+    setExportOpen(false);
+    void exportCanvasImage(format);
+  };
 
   // Pointer capture on the splitter itself keeps drag events flowing even
   // when the cursor moves over Monaco or the React Flow canvas underneath.
@@ -130,6 +155,44 @@ export default function App() {
             </svg>
             Clear All
           </button>
+          <div className="toolbar-export" ref={exportBtnRef}>
+            <button 
+              type="button" 
+              className={`toolbar-btn toolbar-btn--export${exportOpen ? " toolbar-btn--export--open" : ""}`} 
+              onClick={toggleExportDropdown}
+              title="Export the canvas graph to an image file"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              Export Graph
+              <svg className="toolbar-btn__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+            {exportOpen && (
+              <div className="toolbar-dropdown" ref={exportMenuRef}>
+                <button
+                  type="button"
+                  className="toolbar-dropdown__item"
+                  onClick={() => handleExport('png')}
+                  title="Download the canvas as a PNG image"
+                >
+                  PNG image
+                </button>
+                <button
+                  type="button"
+                  className="toolbar-dropdown__item"
+                  onClick={() => handleExport('svg')}
+                  title="Download the canvas as an SVG vector image"
+                >
+                  SVG vector
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 

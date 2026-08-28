@@ -39,7 +39,7 @@ const ICONS: Record<string, React.ReactNode> = {
             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
         </svg>
     ),
-    HPA: (
+    HorizontalPodAutoscaler: (
         <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 20V10M12 6V4" />
             <path d="M12 16l3-3-3-3-3 3 3 3z" />
@@ -163,7 +163,7 @@ const KIND_COLORS: Record<string, string> = {
     Pod: '#14b8a6',        // Teal
     Service: '#3b82f6',    // Blue
     Ingress: '#8b5cf6',    // Purple
-    HPA: '#f59e0b',        // Amber
+    HorizontalPodAutoscaler: '#f59e0b',        // Amber
     ConfigMap: '#06b6d4',  // Cyan
     PersistentVolumeClaim: '#ec4899', // Pink
     PersistentVolume: '#84cc16',      // Lime
@@ -234,7 +234,7 @@ function K8sNodeComponent({ data }: NodeProps) {
                         ×{spec.replicas} Pods
                     </div>
                 )}
-                {kind === 'HPA' && typeof spec.maxReplicas === 'number' && (
+                {kind === 'HorizontalPodAutoscaler' && typeof spec.maxReplicas === 'number' && (
                     <div className="k8s-node__badge" title="Max replicas">
                         ≤ {spec.maxReplicas}
                     </div>
@@ -354,7 +354,7 @@ function buildResourceDetails(nodeData: K8sNodeData): DetailPair[] {
             details.push({ key: 'path', val: path });
         }
     }
-    if (nodeData.kind === 'HPA') {
+    if (nodeData.kind === 'HorizontalPodAutoscaler') {
         const target = spec.scaleTargetRef;
         if (target?.kind && target.name) {
             details.push({ key: 'scales', val: `${target.kind} ${target.name}` });

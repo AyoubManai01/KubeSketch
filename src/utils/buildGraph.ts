@@ -70,7 +70,7 @@ export function isGatewayApiKind(kind: string): boolean {
 
 /** Presentational grouping of resource kinds for the canvas toolbar. */
 export function kindGroupLabel(kind: string): string {
-    if (kind === 'Deployment' || kind === 'Pod' || kind === 'ReplicaSet' || kind === 'HPA' ||
+    if (kind === 'Deployment' || kind === 'Pod' || kind === 'ReplicaSet' || kind === 'HorizontalPodAutoscaler' ||
         kind === 'VerticalPodAutoscaler' || kind === 'Job' || kind === 'CronJob') {
         return 'Workload';
     }
@@ -214,7 +214,7 @@ export function isSingleNodeAccessMode(pvc: K8sResource): boolean {
     return typeof first === 'string' && SINGLE_NODE_ACCESS_MODES.has(first);
 }
 
-/** One HPA-enforced replica clamp on a workload (or on a ReplicaSet inherited from its Deployment). */
+/** One HorizontalPodAutoscaler-enforced replica clamp on a workload (or on a ReplicaSet inherited from its Deployment). */
 export interface HpaReplicaOverride {
     kind: 'Deployment' | 'ReplicaSet';
     name: string;
@@ -224,11 +224,11 @@ export interface HpaReplicaOverride {
     /** Which bound forced the change (for the warning text). */
     reason: 'minReplicas' | 'maxReplicas';
     bound: number;
-    /** Set when a ReplicaSet inherited the count from its Deployment's HPA. */
+    /** Set when a ReplicaSet inherited the count from its Deployment's HorizontalPodAutoscaler. */
     viaDeployment?: string;
 }
 
-/** The lower/upper bounds an HPA enforces on a workload (min defaults to 1, max to Infinity). */
+/** The lower/upper bounds a HorizontalPodAutoscaler enforces on a workload (min defaults to 1, max to Infinity). */
 function hpaBounds(hpa: K8sResource): { min: number; max: number } | undefined {
     const spec = hpa.spec as { minReplicas?: unknown; maxReplicas?: unknown } | undefined;
     const minRaw = spec?.minReplicas;
@@ -244,13 +244,13 @@ function hpaBounds(hpa: K8sResource): { min: number; max: number } | undefined {
     return { min, max: Math.max(max, min) };
 }
 
-/** True when the HPA's scaleTargetRef points at this exact workload. */
+/** True when the HorizontalPodAutoscaler's scaleTargetRef points at this exact workload. */
 function hpaTargets(hpa: K8sResource, resource: K8sResource): boolean {
     const target = getHpaTarget(hpa);
     return !!target && target.kind === resource.kind && target.name === resource.metadata.name;
 }
 
-/** The effective replica count an HPA forces onto a workload: clamp(spec.replicas, [min, max]). */
+/** The effective replica count a HorizontalPodAutoscaler forces onto a workload: clamp(spec.replicas, [min, max]). */
 export function effectiveReplicas(hpa: K8sResource, resource: K8sResource): number | undefined {
     const bounds = hpaBounds(hpa);
     if (!bounds || !hpaTargets(hpa, resource)) return undefined;
@@ -258,18 +258,18 @@ export function effectiveReplicas(hpa: K8sResource, resource: K8sResource): numb
 }
 
 /**
- * HPA priority over `spec.replicas` (HorizontalPodAutoscalers win over Deployments
- * and ReplicaSets). Clamps every targeted workload's replicas into the HPA's
+ * HorizontalPodAutoscaler priority over `spec.replicas` (HorizontalPodAutoscalers win over Deployments
+ * and ReplicaSets). Clamps every targeted workload's replicas into the autoscaler's
  * [minReplicas, maxReplicas] window and WRITES the clamped value back into the
  * workload's spec — YAML, canvas pod count and badges all agree afterwards.
  *
- * A Deployment's HPA also propagates the effective count to the ReplicaSets it
+ * A Deployment's HorizontalPodAutoscaler also propagates the effective count to the ReplicaSets it
  * owns (the Deployment controller drives its ReplicaSets' scale). The first
- * matching HPA wins per workload. Returns the clamps that actually changed a
+ * matching HorizontalPodAutoscaler wins per workload. Returns the clamps that actually changed a
  * count (used for the persistent bottom status-bar warning).
  */
 export function applyHpaReplicaOverrides(resources: K8sResource[]): HpaReplicaOverride[] {
-    const hpas = resources.filter((r) => r.kind === 'HPA');
+    const hpas = resources.filter((r) => r.kind === 'HorizontalPodAutoscaler');
     if (hpas.length === 0) return [];
     const overrides: HpaReplicaOverride[] = [];
 
@@ -312,7 +312,7 @@ export function applyHpaReplicaOverrides(resources: K8sResource[]): HpaReplicaOv
                     clampTo(rs, hpa, depEffective, resource.metadata.name);
                 });
             }
-            break; // first matching HPA wins
+            break; // first matching HorizontalPodAutoscaler wins
         }
     });
     return overrides;
@@ -415,11 +415,11 @@ function getSavedPosition(kind: string, name: string): { x: number; y: number } 
  * 2. ReplicaSets are nested inside Deployments. Lay out horizontally in a row. Compute Deployment size.
  * 3. Services are placed in a lane above workloads (Y = 175). Auto-align horizontally above the Pods they select.
  * 4. Ingresses are placed in the top lane (Y = 25). Auto-align horizontally above the Services they target.
- * 5. HPAs and VPAs share an autoscaler lane below workloads (Y = 520) with a
+ * 5. HorizontalPodAutoscalers and VPAs share an autoscaler lane below workloads (Y = 520) with a
  *    single collision pass so the two kinds never overlap. Auto-align
  *    horizontally above the resource they scale (VPA via spec.targetRef, which
  *    may also point at a Pod/Job/CronJob).
- * 6. ConfigMaps are placed in a lane below HPAs (Y = 680). They receive inferred
+ * 6. ConfigMaps are placed in a lane below HorizontalPodAutoscalers (Y = 680). They receive inferred
  *    "uses" edges from every workload whose Pod spec references them.
  * 7. PVCs are placed in a lane below ConfigMaps (Y = 840). They receive inferred
  *    "mounts" edges from every workload whose Pod spec claims them, plus a "binds"
@@ -466,7 +466,7 @@ export function buildGraph(
     const deployments = resources.filter((r) => r.kind === 'Deployment');
     const replicaSets = resources.filter((r) => r.kind === 'ReplicaSet');
     const pods = resources.filter((r) => r.kind === 'Pod');
-    const hpas = resources.filter((r) => r.kind === 'HPA');
+    const hpas = resources.filter((r) => r.kind === 'HorizontalPodAutoscaler');
     const vpas = resources.filter((r) => r.kind === 'VerticalPodAutoscaler');
     const configmaps = resources.filter((r) => r.kind === 'ConfigMap');
     const pvcs = resources.filter((r) => r.kind === 'PersistentVolumeClaim');
@@ -503,8 +503,8 @@ export function buildGraph(
     const syntheticOwner = new Map<K8sResource, { kind: SupportedKind; name: string }>();
 
     /**
-     * The effective replica count of a workload under HPA priority:
-     * clamp(spec.replicas, [minReplicas, maxReplicas]) of the first HPA that
+     * The effective replica count of a workload under HorizontalPodAutoscaler priority:
+     * clamp(spec.replicas, [minReplicas, maxReplicas]) of the first HorizontalPodAutoscaler that
      * targets it. The store has already written the clamped value back into
      * spec.replicas, so this mostly returns replicasOf() — the fallback keeps
      * materialization correct even when buildGraph runs pre-override.
@@ -517,7 +517,7 @@ export function buildGraph(
         return replicasOf(resource);
     };
 
-    /** A ReplicaSet inside an HPA-scaled Deployment materializes to the Deployment's
+    /** A ReplicaSet inside a HorizontalPodAutoscaler-scaled Deployment materializes to the Deployment's
      *  effective count (the Deployment controller drives its ReplicaSets' scale). */
     const desiredReplicasFor = (rs: K8sResource): number => {
         const ownerDep = deployments.find((dep) => depToRs.get(dep)?.includes(rs));
@@ -1202,15 +1202,15 @@ export function buildGraph(
         });
     });
 
-    // 4. LAY OUT AUTOSCALERS (HPAs + VPAs) — shared lane at Y = 520, resolved
+    // 4. LAY OUT AUTOSCALERS (HorizontalPodAutoscalers + VPAs) — shared lane at Y = 520, resolved
     //    in ONE collision pass so the two kinds never overlap in X.
     const hpaLayoutInfo: Array<{ id: string; x: number; width: number; node: K8sResource }> = [];
     let hpaXCursor = 50;
 
     hpas.forEach((hpa) => {
         const hpaId = allocateId(hpa);
-        const key = `HPA:${hpa.metadata.name}`;
-        const savedPos = getSavedPosition('HPA', hpa.metadata.name);
+        const key = `HorizontalPodAutoscaler:${hpa.metadata.name}`;
+        const savedPos = getSavedPosition('HorizontalPodAutoscaler', hpa.metadata.name);
         const prevPos = prevCoords.get(key);
 
         let preferredX = 0;
@@ -1303,8 +1303,8 @@ export function buildGraph(
             type: 'k8sNode',
             position: pos,
             style: {
-                width: aInfo.node.kind === 'HPA' ? HPA_WIDTH : VPA_WIDTH,
-                height: aInfo.node.kind === 'HPA' ? HPA_HEIGHT : VPA_HEIGHT,
+                width: aInfo.node.kind === 'HorizontalPodAutoscaler' ? HPA_WIDTH : VPA_WIDTH,
+                height: aInfo.node.kind === 'HorizontalPodAutoscaler' ? HPA_HEIGHT : VPA_HEIGHT,
             },
             data: {
                 kind: aInfo.node.kind,
@@ -1897,7 +1897,7 @@ export function buildGraph(
         });
     });
 
-    // HPA → scale target (Deployment/ReplicaSet)
+    // HorizontalPodAutoscaler → scale target (Deployment/ReplicaSet)
     const workloadIdByName = new Map<string, string>();
     nodes.forEach((n) => {
         if (n.data.kind === 'Deployment' || n.data.kind === 'ReplicaSet') {
@@ -2090,9 +2090,9 @@ export function buildGraph(
     return { nodes, edges };
 }
 
-/** Inferred edge stroke color by source kind: HPA scaling (amber), Ingress routes (purple), Jobs (yellow), CronJobs (fuchsia), everything else (blue). */
+/** Inferred edge stroke color by source kind: HorizontalPodAutoscaler scaling (amber), Ingress routes (purple), Jobs (yellow), CronJobs (fuchsia), everything else (blue). */
 function edgeColorFor(kind: string): string {
-    if (kind === 'HPA') return '#f59e0b';
+    if (kind === 'HorizontalPodAutoscaler') return '#f59e0b';
     if (kind === 'VerticalPodAutoscaler') return '#0ea5e9';
     if (kind === 'Ingress') return '#a78bfa';
     if (kind === 'Job') return '#eab308';

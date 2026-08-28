@@ -132,10 +132,10 @@ describe('VPA graph edges', () => {
         expect(labelsOf('v-cron')).toContain('right-sizes');
     });
 
-    it('shares the autoscaler lane with HPA without overlapping', () => {
+    it('shares the autoscaler lane with a HorizontalPodAutoscaler without overlapping', () => {
         const h: K8sResource = {
             apiVersion: 'autoscaling/v2',
-            kind: 'HPA',
+            kind: 'HorizontalPodAutoscaler',
             metadata: { name: 'a-hpa' },
             spec: {
                 scaleTargetRef: { apiVersion: 'apps/v1', kind: 'Deployment', name: 'a' },
@@ -144,7 +144,7 @@ describe('VPA graph edges', () => {
             },
         };
         const { nodes } = buildGraph([dep('a', 1), h, vpa('a-vpa', 'Deployment', 'a')], []);
-        const hpaNode = nodes.find((n) => n.data.kind === 'HPA')!;
+        const hpaNode = nodes.find((n) => n.data.kind === 'HorizontalPodAutoscaler')!;
         const vpaNode = nodes.find((n) => n.data.kind === 'VerticalPodAutoscaler')!;
         expect(hpaNode.position.y).toBe(vpaNode.position.y);
         const hpaW = typeof hpaNode.style?.width === 'number' ? hpaNode.style.width : 175;

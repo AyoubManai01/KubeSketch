@@ -114,7 +114,7 @@ body,
   border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
   position: relative;
-  z-index: 50;
+  z-index: 1100;
   box-shadow: var(--shadow-sm);
 }
 
@@ -199,6 +199,67 @@ body,
   background: rgba(239, 68, 68, 0.1);
   border-color: rgba(239, 68, 68, 0.4);
   color: #ef4444;
+}
+
+/* Export Graph split-button (anchors the dropdown below it) */
+.toolbar-export {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.toolbar-btn--export--open {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.toolbar-btn__chevron {
+  transition: transform var(--transition-fast);
+}
+
+.toolbar-btn--export--open .toolbar-btn__chevron {
+  transform: rotate(180deg);
+}
+
+/* The export dropdown panel (mirrors .canvas-toolbar__dropdown) */
+.toolbar-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 150px;
+  z-index: 100;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  animation: modalIn 140ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+}
+
+.toolbar-dropdown__item {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  white-space: nowrap;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.toolbar-dropdown__item:hover {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.4);
+  color: var(--text-primary);
 }
 
 /* ---------- Panels Grid ---------- */
@@ -2255,7 +2316,7 @@ body,
 .canvas-toast--info { border-color: rgba(96, 165, 250, 0.45); }
 .canvas-toast--info svg { color: #60a5fa; }
 
-/* ---------- Persistent HPA-priority status bar ---------- */
+/* ---------- Persistent HorizontalPodAutoscaler-priority status bar ---------- */
 .canvas-statusbar {
   position: absolute;
   left: 50%;
@@ -2391,4 +2452,97 @@ body,
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+/* ---------- Export-only light theme ----------
+   Applied to the offscreen render host built for a PNG/SVG export, so the
+   exported image uses a white background with black text while the live canvas
+   keeps its dark theme. The host is discarded right after the snapshot, so the
+   visible canvas is never modified. */
+.react-flow.veltra-export-light {
+  --xy-edge-label-background-color: #ffffff;
+  --xy-edge-label-color: #000000;
+}
+
+.react-flow.veltra-export-light .k8s-node {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+}
+
+.react-flow.veltra-export-light .k8s-node__header {
+  border-bottom-color: rgba(15, 23, 42, 0.08);
+}
+
+/* Keep the kind-colored borders exactly as on the live canvas */
+.react-flow.veltra-export-light .k8s-node--leaf {
+  border-left-color: var(--kind-color);
+}
+
+.react-flow.veltra-export-light .k8s-node--deployment {
+  border-color: rgba(16, 185, 129, 0.25);
+}
+
+.react-flow.veltra-export-light .k8s-node--deployment .k8s-node__header {
+  border-bottom-color: rgba(16, 185, 129, 0.15);
+}
+
+.react-flow.veltra-export-light .k8s-node--replicaset {
+  border-color: rgba(249, 115, 22, 0.22);
+}
+
+.react-flow.veltra-export-light .k8s-node--replicaset .k8s-node__header {
+  border-bottom-color: rgba(249, 115, 22, 0.12);
+}
+
+.react-flow.veltra-export-light .k8s-node--managed {
+  border-color: rgba(148, 163, 184, 0.28);
+}
+
+.react-flow.veltra-export-light .k8s-node__kind-label {
+  color: #64748b;
+}
+
+.react-flow.veltra-export-light .k8s-node__title {
+  color: #0f172a;
+}
+
+.react-flow.veltra-export-light .k8s-node__badge {
+  background: rgba(15, 23, 42, 0.06);
+  color: #334155;
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+.react-flow.veltra-export-light .k8s-node__info-key {
+  color: #64748b;
+}
+
+.react-flow.veltra-export-light .k8s-node__info-val {
+  color: #1e293b;
+}
+
+.react-flow.veltra-export-light .k8s-node--container,
+.react-flow.veltra-export-light .k8s-node--deployment,
+.react-flow.veltra-export-light .k8s-node--replicaset {
+  background: #ffffff;
+}
+
+.react-flow.veltra-export-light .k8s-node__container-grid-overlay {
+  background-image: radial-gradient(rgba(15, 23, 42, 0.05) 1px, transparent 0);
+}
+
+.react-flow.veltra-export-light .k8s-node--managed > .k8s-node__header .k8s-node__title {
+  color: #475569;
+}
+
+.react-flow.veltra-export-light .k8s-node__badge--managed {
+  background: rgba(148, 163, 184, 0.15);
+  color: #475569;
+  border-color: rgba(100, 116, 139, 0.45);
+}
+
+.react-flow.veltra-export-light .teaching-frame__title {
+  background: #ffffff;
+  color: #0f172a;
+  border-color: rgba(15, 23, 42, 0.12);
 }

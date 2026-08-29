@@ -552,13 +552,22 @@ export default function Canvas() {
     [nsLayout, nodes],
   );
   // In namespace editing mode cluster-scoped kinds (PV/StorageClass) are fixed —
-  // they can't be reassigned, so they must not be draggable at all.
+  // they can't be reassigned, so they must not be draggable at all. The React Flow
+  // `selected` flag follows the store selection (single source of truth), so the
+  // visual highlight also lands on nodes selected from the file explorer.
   const displayNodes = useMemo(() => {
-    if (!nsEditMode) return nodes;
-    return nodes.map((n) =>
-      isClusterScoped(n.data.kind) ? { ...n, draggable: false } : n,
-    );
-  }, [nodes, nsEditMode]);
+    const selKey = selectedResource
+      ? `${selectedResource.kind}:${selectedResource.name}`
+      : "";
+    return nodes.map((n) => {
+      const node =
+        nsEditMode && isClusterScoped(n.data.kind)
+          ? { ...n, draggable: false }
+          : n;
+      const selected = selKey !== "" && `${n.data.kind}:${n.data.name}` === selKey;
+      return node.selected === selected ? node : { ...node, selected };
+    });
+  }, [nodes, nsEditMode, selectedResource]);
 
   const namespaceOptions = useMemo(() => {
     const discovered = new Set<string>(DEFAULT_NAMESPACES);

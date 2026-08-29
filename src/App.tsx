@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import YamlEditor from './components/YamlEditor';
+import FileExplorerView from './components/FileExplorerView';
 import Canvas from './components/Canvas';
 import { useVeltraStore, DEFAULT_YAML } from './store/store';
 import { exportCanvasImage } from './utils/exportCanvas';
@@ -22,6 +23,8 @@ export default function App() {
   const setYaml = useVeltraStore((s) => s.setYaml);
   const clearAll = useVeltraStore((s) => s.clearAll);
   const resetLayout = useVeltraStore((s) => s.resetLayout);
+  const fileExplorerMode = useVeltraStore((s) => s.fileExplorerMode);
+  const setFileExplorerMode = useVeltraStore((s) => s.setFileExplorerMode);
 
   // User-resizable editor/canvas split — purely presentational, so it lives
   // outside the resource-model store and is persisted directly to localStorage.
@@ -193,12 +196,27 @@ export default function App() {
               </div>
             )}
           </div>
+          <button 
+            type="button" 
+            className={`toolbar-btn${fileExplorerMode ? ' toolbar-btn--active' : ''}`} 
+            onClick={() => setFileExplorerMode(!fileExplorerMode)}
+            title="Toggle the VSCode-style file explorer view"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+            </svg>
+            Files
+          </button>
         </div>
       </header>
 
       {/* Split-screen panels */}
       <main className={`panels ${isResizing ? 'panels--resizing' : ''}`} ref={panelsRef}>
-        <YamlEditor style={{ width: `${splitRatio}%` }} />
+        {fileExplorerMode ? (
+          <FileExplorerView style={{ width: `${splitRatio}%` }} />
+        ) : (
+          <YamlEditor style={{ width: `${splitRatio}%` }} />
+        )}
         <div
           className="panel-splitter"
           onPointerDown={handleSplitterPointerDown}

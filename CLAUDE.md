@@ -36,7 +36,45 @@ YAML text ──parseYaml──▶ K8sResource[] ──buildGraph──▶ nodes
 - [src/components/NsFrame.tsx](src/components/NsFrame.tsx) — renders the frames inside a `ViewportPortal`; in NS editing mode they get pointer drag/resize surfaces (8 handles each). Drag deltas are cumulative and events bubble through the outer frame, so only the pointer-captured element may apply a move (guard: `drag.el === e.currentTarget`), and the store diffs absolute rects against its own layout instead of adding deltas.
 - [src/components/Canvas.tsx](src/components/Canvas.tsx) — canvas + node inspector. [src/components/YamlEditor.tsx](src/components/YamlEditor.tsx) — Monaco + selected-resource highlight. [src/components/CreateResourceModal.tsx](src/components/CreateResourceModal.tsx) — resource creation with validation.
 
-localStorage keys: `veltra_yaml`, `veltra_user_edges`, `veltra_node_positions`, `veltra_ns_layout`.
+localStorage keys: `veltra_yaml`, `veltra_user_edges`, `veltra_node_positions`, `veltra_ns_layout`, `veltra_file_explorer`, `veltra_active_file`, `veltra_explorer_split`.
+
+## File explorer mode
+
+The toolbar's "Files" toggle swaps the editor pane for a VSCode-style explorer
+sidebar + a per-file Monaco editor. **The manifest stays ONE YAML document**
+(`veltra_yaml`) — the file tree is a pure projection ([src/utils/fileTree.ts](src/utils/fileTree.ts)):
+`buildFileExplorer(nodes)` → `{ tree, fileOf }` where `fileOf` maps every real
+resource to its virtual path, computed from the reference graph (same helpers
+`buildGraph` uses). App-centric layout:
+
+- `cluster/<storage-classes|persistent-volumes|gateway-classes>/<name>.yaml` —
+  cluster-scoped kinds, one file per resource.
+- `<namespace>/<app>/` — an app is a workload (Deployment/ReplicaSet/Pod/Job/
+  CronJob) sharing `labels.app` (fallback `app.kubernetes.io/name`, then its
+  name) plus everything its reference graph pulls in (Service selector match,
+  Ingress backends + TLS Secrets, HPA/VPA targets, ConfigMap/Secret/PVC pod-spec
+  refs, Gateway API Routes backing its Services). Files are one resource kind:
+  `deployment.yaml` bundles the Deployment + its HPA + VPA, etc.
+- `<namespace>/_gateway/<name>.yaml` — Gateways (shared infra, never app-bound).
+- `<namespace>/_misc/<kind>.yaml` — orphans grouped by kind.
+
+Assignment is **single and deterministic** (first app wins in sorted
+(namespace, app) order; workloads are pre-claimed so they never fall to `_misc`).
+A Secret used by a pod spec goes to `secret.yaml`; a TLS-only Secret stays with
+its Ingress in `ingress.yaml`. Reusing these rules keeps the tree stable across
+commits.
+
+Sync: `setActiveFile`/`setFileYaml` in the store. `setFileYaml` re-parses only
+the file's slice, removes its current members (via `fileOf`), merges the result
+back into the manifest and commits through `commitResources` — so invariants 2,
+9 (invalid file YAML → `fileYamlError`, canvas untouched), 10 and 13 all hold
+scoped. `commitResources`/`setYaml`/`resetLayout` re-validate `activeFile`
+against the new tree and re-serialize `activeFileText` (the file view follows
+canvas/inspector edits); `setFileYaml` keeps the raw typed text in the editor
+while typing. Selecting a canvas node opens its containing file (effect in
+FileExplorerView). Renames typed in a file keep the same delete+add semantics
+as the full-manifest editor. `veltra_active_file`/`veltra_file_explorer` persist
+the mode and last-opened file; `veltra_explorer_split` is the sidebar width %.
 
 ## Namespace editing mode
 

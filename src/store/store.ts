@@ -27,6 +27,7 @@ import {
     type SecretMechanism,
 } from '../utils/linkResources';
 import { isClusterScoped } from '../utils/k8sScope';
+import { computeFileOf, fileViewOf, resourceKeyOf } from '../utils/fileTree';
 import {
     buildTeachingFrame,
     DEFAULT_CLUSTER_RECT,
@@ -45,6 +46,8 @@ const YAML_KEY = 'veltra_yaml';
 const USER_EDGES_KEY = 'veltra_user_edges';
 const POSITIONS_KEY = 'veltra_node_positions';
 const NS_LAYOUT_KEY = 'veltra_ns_layout';
+const FILE_EXPLORER_KEY = 'veltra_file_explorer';
+const ACTIVE_FILE_KEY = 'veltra_active_file';
 
 /** Default YAML shown when the app first loads */
 export const DEFAULT_YAML = `# Paste your Kubernetes YAML here (multi-document with ---)
@@ -269,6 +272,21 @@ interface VeltraState {
      *  time. Persisted on exit of namespace editing. */
     nsLayout: NsLayout | null;
 
+    /** VSCode-style file explorer mode: the editor pane becomes an explorer
+     *  sidebar + a per-file editor (a projection of the single YAML manifest). */
+    fileExplorerMode: boolean;
+
+    /** The active virtual file path (e.g. `default/my-app/deployment.yaml`). */
+    activeFile: string | null;
+
+    /** Raw editor text of the active file — the file view is a scoped editor, so
+     *  unlike `yaml` this is only re-serialized when the model changes externally. */
+    activeFileText: string;
+
+    /** Syntax/validation error from the scoped file editor (invalid YAML keeps
+     *  the last good model and the canvas untouched). */
+    fileYamlError: string | null;
+
     setNotice: (notice: CanvasNotice | null) => void;
     setYaml: (value: string) => void;
     /** Structural node changes coming from React Flow (e.g. keyboard delete). */
@@ -334,6 +352,15 @@ interface VeltraState {
     resizeClusterRect: (rect: Rect) => void;
     /** Add an empty namespace rectangle with the given position/size. */
     addNamespace: (name: string, rect?: Rect) => void;
+    /** Enter/exit VSCode-style file explorer mode (persisted). Entering picks a
+     *  sensible active file (the selected resource's, else the first one). */
+    setFileExplorerMode: (on: boolean) => void;
+    /** Open a virtual file in the scoped editor (validated against the live tree). */
+    setActiveFile: (path: string | null) => void;
+    /** Scoped editor commit: re-parse just this file's slice, merge it back into
+     *  the single manifest and rebuild the graph via commitResources. Invalid
+     *  YAML sets `fileYamlError` and never touches the model/canvas. */
+    setFileYaml: (path: string, value: string) => void;
 }
 
 export const useVeltraStore = create<VeltraState>((set, get) => {
@@ -373,6 +400,13 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         const result: Partial<VeltraState> = { ...derived, userEdges, hpaOverrides };
         if ('selectedResource' in opts) {
             result.selectedResource = opts.selectedResource ?? null;
+        }
+        // The file-explorer view follows external model changes (canvas/inspector
+        // commits): re-validate the active file against the new tree and re-serialize
+        // its canonical text. setFileYaml overrides activeFileText with the raw typed
+        // text afterwards.
+        if (state.fileExplorerMode) {
+            Object.assign(result, fileViewOf(resources, state.activeFile));
         }
 
         const nextYaml = resourcesToYaml(resources);
@@ -417,6 +451,21 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         initialError = e.message || String(e);
     }
 
+    // File-explorer mode is persisted; the active file is re-validated against the
+    // restored manifest (falling back to the first virtual file when it's gone).
+    const savedFileExplorerMode = localStorage.getItem(FILE_EXPLORER_KEY) === '1';
+    const savedActiveFile = localStorage.getItem(ACTIVE_FILE_KEY);
+    let initialFileView = { activeFile: null as string | null, activeFileText: '' };
+    if (savedFileExplorerMode) {
+        const bootResources = toResources(initialGraph.nodes);
+        const bootFileOf = computeFileOf(bootResources);
+        let path = savedActiveFile && new Set(bootFileOf.values()).has(savedActiveFile)
+            ? savedActiveFile
+            : null;
+        if (path === null) path = bootFileOf.values().next().value ?? null;
+        initialFileView = fileViewOf(bootResources, path);
+    }
+
     return {
         yaml: yamlVal,
         nodes: initialGraph.nodes,
@@ -433,6 +482,10 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         pendingIngressTlsLink: null,
         nsEditMode: false,
         nsLayout: savedNsLayout,
+        fileExplorerMode: savedFileExplorerMode,
+        activeFile: initialFileView.activeFile,
+        activeFileText: initialFileView.activeFileText,
+        fileYamlError: null,
 
         setNotice: (notice) => set({ notice }),
 
@@ -457,6 +510,9 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     yamlError: null,
                     selectedResource: selectionStillExists ? sel : null,
                     hpaOverrides,
+                    // Load Sample / YAML imports can change the tree while file mode
+                    // is on — re-validate the active file against the new manifest.
+                    ...(state.fileExplorerMode ? fileViewOf(resources, state.activeFile) : {}),
                 });
             } catch (err: any) {
                 // Graceful error: update raw text and store the error, but do NOT wipe/flicker the graph
@@ -1170,6 +1226,8 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     hpaOverrides,
                     // Namespace/cluster frames re-derive from the fresh auto-layout.
                     nsLayout: null,
+                    // Re-validate the active file after the layout reset rebuild.
+                    ...(state.fileExplorerMode ? fileViewOf(resources, state.activeFile) : {}),
                 };
             });
         },
@@ -1195,6 +1253,9 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 pendingIngressTlsLink: null,
                 nsEditMode: false,
                 nsLayout: null,
+                activeFile: null,
+                activeFileText: '',
+                fileYamlError: null,
             });
         },
 
@@ -1337,6 +1398,55 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                         `Namespace “${trimmed}” added — drag resources onto it to assign them.`
                     ),
                 };
+            }),
+
+        setFileExplorerMode: (on) => {
+            localStorage.setItem(FILE_EXPLORER_KEY, on ? '1' : '0');
+            set((state) => {
+                if (!on) {
+                    return { fileExplorerMode: false, fileYamlError: null };
+                }
+                const resources = toResources(state.nodes);
+                const fileOf = computeFileOf(resources);
+                let path = state.activeFile;
+                if (path === null || !new Set(fileOf.values()).has(path)) {
+                    // Prefer the file containing the selected resource, then the first file.
+                    if (state.selectedResource) {
+                        path = fileOf.get(`${state.selectedResource.kind}:${state.selectedResource.name}`) ?? null;
+                    }
+                    if (path === null) path = fileOf.values().next().value ?? null;
+                }
+                return { fileExplorerMode: true, ...fileViewOf(resources, path), fileYamlError: null };
+            });
+        },
+
+        setActiveFile: (path) => {
+            localStorage.setItem(ACTIVE_FILE_KEY, path ?? '');
+            set((state) => fileViewOf(toResources(state.nodes), path));
+        },
+
+        setFileYaml: (path, value) =>
+            set((state) => {
+                if (!state.fileExplorerMode || !path) return {};
+                let newFileResources: K8sResource[];
+                try {
+                    newFileResources = parseYaml(value);
+                } catch (err: any) {
+                    // Scoped version of invariant 9: an invalid file never wipes the
+                    // model/canvas — the editor keeps the raw text and shows the error.
+                    return { fileYamlError: err.message || String(err) };
+                }
+                // Remove the resources that currently live in this file, then merge the
+                // re-parsed slice back into the single manifest and commit as usual.
+                const all = toResources(state.nodes);
+                const fileOf = computeFileOf(all);
+                const rest = all.filter((r) => fileOf.get(resourceKeyOf(r)) !== path);
+                const result = commitResources(state, [...rest, ...newFileResources], state.nodes);
+                // Keep the raw typed text in the editor (commitResources re-serializes
+                // the canonical form; the user's formatting wins while typing).
+                result.activeFileText = value;
+                result.fileYamlError = null;
+                return result;
             }),
     };
 });

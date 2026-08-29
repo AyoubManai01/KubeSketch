@@ -316,6 +316,43 @@ body,
   color: var(--text-secondary);
 }
 
+.panel-header__right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Compact panel-header action buttons (Import / Export) */
+.panel-header__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.panel-header__btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.panel-header__btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.yaml-import-input {
+  display: none;
+}
+
 /* ---------- Monaco Editor Panel ---------- */
 .editor-panel {
   width: 42%;

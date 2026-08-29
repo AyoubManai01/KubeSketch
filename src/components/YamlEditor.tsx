@@ -9,11 +9,68 @@ import { useVeltraStore } from '../store/store';
 export default function YamlEditor({ style }: { style?: React.CSSProperties }) {
     const yaml = useVeltraStore((s) => s.yaml);
     const setYaml = useVeltraStore((s) => s.setYaml);
+    const setNotice = useVeltraStore((s) => s.setNotice);
     const yamlError = useVeltraStore((s) => s.yamlError);
     const selectedResource = useVeltraStore((s) => s.selectedResource);
     const editorRef = useRef<any>(null);
     const monacoRef = useRef<any>(null);
     const decorationIdsRef = useRef<string[]>([]);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const handleImportClick = () => {
+        fileInputRef.current?.click();
+    };
+
+    const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file) return;
+        if (!/\.ya?ml$/i.test(file.name)) {
+            setNotice({
+                id: Date.now(),
+                tone: 'error',
+                text: 'Only .yaml and .yml files can be imported.',
+            });
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+            setYaml(String(reader.result ?? ''));
+            setNotice({
+                id: Date.now(),
+                tone: 'success',
+                text: `Imported ${file.name}.`,
+            });
+        };
+        reader.onerror = () => {
+            setNotice({
+                id: Date.now(),
+                tone: 'error',
+                text: `Could not read ${file.name}.`,
+            });
+        };
+        reader.readAsText(file);
+    };
+
+    const handleExport = () => {
+        if (!yaml.trim()) {
+            setNotice({
+                id: Date.now(),
+                tone: 'error',
+                text: 'Nothing to export — the editor is empty.',
+            });
+            return;
+        }
+        const blob = new Blob([yaml], { type: 'text/yaml' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'veltra-manifest.yaml';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    };
 
     useEffect(() => {
         const editor = editorRef.current;
@@ -56,16 +113,51 @@ export default function YamlEditor({ style }: { style?: React.CSSProperties }) {
                     <span className="panel-header__accent" />
                     <span className="panel-header__title">YAML Editor</span>
                 </div>
-                {yamlError && (
-                    <span className="yaml-error-badge" title={yamlError}>
-                        <svg className="yaml-error-badge__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                            <line x1="12" y1="9" x2="12" y2="13" />
-                            <line x1="12" y1="17" x2="12.01" y2="17" />
+                <div className="panel-header__right">
+                    {yamlError && (
+                        <span className="yaml-error-badge" title={yamlError}>
+                            <svg className="yaml-error-badge__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                                <line x1="12" y1="9" x2="12" y2="13" />
+                                <line x1="12" y1="17" x2="12.01" y2="17" />
+                            </svg>
+                            Invalid YAML
+                        </span>
+                    )}
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".yaml,.yml"
+                        className="yaml-import-input"
+                        onChange={handleImportFile}
+                    />
+                    <button
+                        type="button"
+                        className="panel-header__btn"
+                        onClick={handleImportClick}
+                        title="Import a YAML file, replacing the current manifest"
+                    >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                            <polyline points="17 8 12 3 7 8" />
+                            <line x1="12" y1="3" x2="12" y2="15" />
                         </svg>
-                        Invalid YAML
-                    </span>
-                )}
+                        Import
+                    </button>
+                    <button
+                        type="button"
+                        className="panel-header__btn"
+                        onClick={handleExport}
+                        title="Export the current manifest as a YAML file"
+                    >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                            <polyline points="7 10 12 15 17 10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                        Export
+                    </button>
+                </div>
             </div>
             <div className="editor-content-wrapper">
                 <div className="editor-wrapper">

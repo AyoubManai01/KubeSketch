@@ -77,6 +77,7 @@ import PvcLinkModal from "./PvcLinkModal";
 import SecretLinkModal from "./SecretLinkModal";
 import IngressTlsLinkModal from "./IngressTlsLinkModal";
 import NamespaceModal from "./NamespaceModal";
+import DeleteNamespaceModal from "./DeleteNamespaceModal";
 
 /** Register our custom node type so React Flow can render it */
 const nodeTypes: NodeTypes = {
@@ -545,6 +546,7 @@ export default function Canvas() {
   const nsLayout = useVeltraStore((s) => s.nsLayout);
   const nsEditMode = useVeltraStore((s) => s.nsEditMode);
   const setNsEditMode = useVeltraStore((s) => s.setNsEditMode);
+  const deleteNamespace = useVeltraStore((s) => s.deleteNamespace);
   // Persisted + auto-discovered cluster/namespace rectangles — the drop targets
   // for namespace reassignment and the frames NsFrame renders.
   const effectiveLayout = useMemo(
@@ -1482,6 +1484,33 @@ export default function Canvas() {
   // and re-checked by the store.
   const [namespaceModalOpen, setNamespaceModalOpen] = useState(false);
 
+  // Namespace awaiting cascade-delete confirmation (only opened when it has
+  // resources — empty boxes are deleted immediately).
+  const [deleteNsTarget, setDeleteNsTarget] = useState<{
+    name: string;
+    count: number;
+  } | null>(null);
+
+  // × on a namespace frame: empty boxes vanish right away; boxes holding
+  // resources pause in a confirmation before the cascade.
+  const onDeleteNamespace = useCallback(
+    (name: string) => {
+      const count = nodes.filter(
+        (n) =>
+          !n.parentId &&
+          !n.data.synthetic &&
+          !isClusterScoped(n.data.kind) &&
+          (n.data.namespace ?? "default") === name,
+      ).length;
+      if (count === 0) {
+        deleteNamespace(name);
+      } else {
+        setDeleteNsTarget({ name, count });
+      }
+    },
+    [nodes, deleteNamespace],
+  );
+
   const onFlowInit = useCallback(
     (instance: ReactFlowInstance<Node<K8sNodeData>>) => {
       setRfInstance(instance);
@@ -1662,7 +1691,7 @@ export default function Canvas() {
               proOptions={{ hideAttribution: true }}
             >
               {/* Cluster/namespace bounding frames — editable in namespace editing mode */}
-              <NsFrame layout={effectiveLayout} nodes={nodes} />
+              <NsFrame layout={effectiveLayout} nodes={nodes} onDeleteNamespace={onDeleteNamespace} />
               <Panel position="top-left">
                 <div className="canvas-legend">
                   <span className="canvas-legend__item canvas-legend__item--own">
@@ -5307,6 +5336,19 @@ export default function Canvas() {
       {/* New-namespace prompt (namespace editing mode) */}
       {namespaceModalOpen && (
         <NamespaceModal onClose={() => setNamespaceModalOpen(false)} />
+      )}
+
+      {/* Cascade-delete confirmation (non-empty namespace) */}
+      {deleteNsTarget && (
+        <DeleteNamespaceModal
+          name={deleteNsTarget.name}
+          count={deleteNsTarget.count}
+          onCancel={() => setDeleteNsTarget(null)}
+          onConfirm={() => {
+            deleteNamespace(deleteNsTarget.name);
+            setDeleteNsTarget(null);
+          }}
+        />
       )}
     </div>
   );

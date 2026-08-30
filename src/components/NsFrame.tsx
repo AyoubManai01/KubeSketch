@@ -3,7 +3,7 @@ import { ViewportPortal, useReactFlow } from '@xyflow/react';
 import type { Node } from '@xyflow/react';
 import { useVeltraStore } from '../store/store';
 import { isClusterScoped } from '../utils/k8sScope';
-import { NAMESPACE_MIN_RECT, type NsLayout, type Rect } from '../utils/teachingFrame';
+import { NAMESPACE_MIN_RECT, PROTECTED_NAMESPACES, type NsLayout, type Rect } from '../utils/teachingFrame';
 import type { K8sNodeData } from '../utils/buildGraph';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 
@@ -14,6 +14,8 @@ interface NsFrameProps {
     /** Effective (persisted + auto-discovered) cluster/namespace rectangles. */
     layout: NsLayout | null;
     nodes: Node<K8sNodeData>[];
+    /** User clicked the × on a namespace frame (never fired for protected ones). */
+    onDeleteNamespace: (name: string) => void;
 }
 
 interface DragOptions {
@@ -35,7 +37,7 @@ interface DragState {
  * - dragging the cluster rectangle translates everything,
  * - 8 resize handles shrink/expand either rectangle (nodes never move).
  */
-export default function NsFrame({ layout, nodes }: NsFrameProps) {
+export default function NsFrame({ layout, nodes, onDeleteNamespace }: NsFrameProps) {
     const nsEditMode = useVeltraStore((s) => s.nsEditMode);
     const moveNamespace = useVeltraStore((s) => s.moveNamespace);
     const moveClusterRect = useVeltraStore((s) => s.moveClusterRect);
@@ -169,6 +171,34 @@ export default function NsFrame({ layout, nodes }: NsFrameProps) {
                         onPointerCancel={onPointerEnd}
                     >
                         <div className="teaching-frame__title">ns: {ns.name}</div>
+                        {nsEditMode && !PROTECTED_NAMESPACES.has(ns.name) && (
+                            <button
+                                type="button"
+                                className="teaching-frame__delete"
+                                title={`Delete namespace “${ns.name}” and everything in it`}
+                                onPointerDown={(e) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                }}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onDeleteNamespace(ns.name);
+                                }}
+                            >
+                                <span>Delete</span>
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="2.5"
+                                    width="9"
+                                    height="9"
+                                >
+                                    <line x1="18" y1="6" x2="6" y2="18" />
+                                    <line x1="6" y1="6" x2="18" y2="18" />
+                                </svg>
+                            </button>
+                        )}
                         {nsEditMode && (
                             <FrameHandles
                                 onHandle={(dir, e) =>

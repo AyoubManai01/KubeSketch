@@ -30,6 +30,9 @@ export const FALLBACK_NODE_HEIGHT = 130;
 /** Smallest a namespace rectangle may be shrunk to (resize handles). */
 export const NAMESPACE_MIN_RECT = 80;
 
+/** Namespaces that can never be deleted (K8s built-ins, no × button shown). */
+export const PROTECTED_NAMESPACES = new Set(['default', 'kube-system']);
+
 /**
  * Compute the Cluster/namespace guide frames from the *top-level* nodes only,
  * using each node's real width/height. Child nodes have parent-relative

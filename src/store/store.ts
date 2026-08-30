@@ -28,6 +28,7 @@ import {
 } from '../utils/linkResources';
 import { isClusterScoped } from '../utils/k8sScope';
 import { computeFileOf, fileViewOf, resourceKeyOf } from '../utils/fileTree';
+import { repairPlacements, placeNewNamespaceRect } from '../utils/placement';
 import {
     buildTeachingFrame,
     DEFAULT_CLUSTER_RECT,
@@ -368,14 +369,24 @@ interface VeltraState {
 }
 
 export const useVeltraStore = create<VeltraState>((set, get) => {
-    /** Rebuild nodes/edges from resources and merge in the user's manual edges. */
+    /** Rebuild nodes/edges from resources and merge in the user's manual edges.
+     *  Auto-placed nodes are then repaired into their namespace/cluster boxes,
+     *  overlap-free, growing persisted boxes when they don't fit. */
     const deriveGraph = (
         resources: K8sResource[],
         prevNodes: Node<K8sNodeData>[],
-        userEdges: Edge[]
+        userEdges: Edge[],
+        nsLayout: NsLayout | null
     ) => {
-        const { nodes, edges: inferredEdges } = buildGraph(resources, prevNodes);
-        return { nodes, inferredEdges, edges: mergeEdges(inferredEdges, userEdges, nodes) };
+        const { nodes, edges: inferredEdges, autoPlacedIds } = buildGraph(resources, prevNodes);
+        const placed = repairPlacements(nodes, autoPlacedIds, nsLayout);
+        return {
+            nodes: placed.nodes,
+            inferredEdges,
+            edges: mergeEdges(inferredEdges, userEdges, placed.nodes),
+            ...(placed.layoutChanged ? { nsLayout: placed.nsLayout } : {}),
+            layoutChanged: placed.layoutChanged,
+        };
     };
 
     /**
@@ -399,9 +410,15 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         // Note: positions are only persisted when the user drags a node —
         // pinning auto-layout positions here would permanently disable
         // alignment and collision handling for every node after the first edit.
-        const derived = deriveGraph(resources, prevNodes, userEdges);
+        const derived = deriveGraph(resources, prevNodes, userEdges, state.nsLayout);
+        // A repair that grew a persisted namespace/cluster box is written back so
+        // NS-mode edits start from the grown layout (auto layouts stay null).
+        const { layoutChanged, ...derivedRest } = derived;
+        if (layoutChanged && derived.nsLayout) {
+            persistNsLayout(derived.nsLayout);
+        }
 
-        const result: Partial<VeltraState> = { ...derived, userEdges, hpaOverrides };
+        const result: Partial<VeltraState> = { ...derivedRest, userEdges, hpaOverrides };
         if ('selectedResource' in opts) {
             result.selectedResource = opts.selectedResource ?? null;
         }
@@ -425,10 +442,16 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
     let yamlVal = savedYaml !== null ? savedYaml : DEFAULT_YAML;
     const userEdgesVal = readUserEdges();
 
-    let initialGraph = {
-        nodes: [] as Node<K8sNodeData>[],
-        inferredEdges: [] as Edge[],
-        edges: [] as Edge[],
+    let initialGraph: {
+        nodes: Node<K8sNodeData>[];
+        inferredEdges: Edge[];
+        edges: Edge[];
+        nsLayout?: NsLayout | null;
+    } = {
+        nodes: [],
+        inferredEdges: [],
+        edges: [],
+        nsLayout: undefined,
     };
     let initialHpaOverrides: HpaReplicaOverride[] = [];
     let initialError: string | null = null;
@@ -448,7 +471,8 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
             yamlVal = nextYaml;
             initialHpaOverrides = overrides;
         }
-        initialGraph = deriveGraph(resources, [], userEdgesVal);
+        initialGraph = deriveGraph(resources, [], userEdgesVal, savedNsLayout);
+        initialGraph.nsLayout = initialGraph.nsLayout ?? savedNsLayout;
     } catch (e: any) {
         // Keep the editor content (with error surfaced) and an empty canvas —
         // never render a graph that doesn't correspond to the visible YAML.
@@ -485,7 +509,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         pendingSecretLink: null,
         pendingIngressTlsLink: null,
         nsEditMode: false,
-        nsLayout: savedNsLayout,
+        nsLayout: initialGraph.nsLayout ?? savedNsLayout,
         fileExplorerMode: savedFileExplorerMode,
         activeFile: initialFileView.activeFile,
         activeFileText: initialFileView.activeFileText,
@@ -504,7 +528,20 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     localStorage.setItem(YAML_KEY, nextYaml);
                 }
                 const state = get();
-                const derived = deriveGraph(resources, state.nodes, state.userEdges);
+                // Fresh placement for resources added through the editor: a stale
+                // pinned position from a previously deleted resource with the same
+                // kind+name would bypass the lane layout AND the placement repair.
+                const liveKeys = new Set(state.nodes.map((n) => `${n.data.kind}:${n.data.name}`));
+                clearSavedPositions(
+                    resources
+                        .map((r) => `${r.kind}:${r.metadata?.name}`)
+                        .filter((key) => !liveKeys.has(key))
+                );
+                const derivedResult = deriveGraph(resources, state.nodes, state.userEdges, state.nsLayout);
+                const { layoutChanged, ...derived } = derivedResult;
+                if (layoutChanged && derived.nsLayout) {
+                    persistNsLayout(derived.nsLayout);
+                }
                 const sel = state.selectedResource;
                 const selectionStillExists =
                     sel && derived.nodes.some((n) => n.data.kind === sel.kind && n.data.name === sel.name);
@@ -528,6 +565,13 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
             set((state) => {
                 const removed = state.nodes.filter((n) => !nodes.some((m) => m.id === n.id));
                 const removedIds = new Set(removed.map((n) => n.id));
+                // Real deleted resources leave no position pin behind (synthetic
+                // ones keep theirs — the rebuild re-materializes them in place).
+                clearSavedPositions(
+                    removed
+                        .filter((n) => !n.data.synthetic)
+                        .map((n) => `${n.data.kind}:${n.data.name}`)
+                );
                 const userEdges = removedIds.size
                     ? state.userEdges.filter((e) => !removedIds.has(e.source) && !removedIds.has(e.target))
                     : state.userEdges;
@@ -694,7 +738,24 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
 
                 const sel = state.selectedResource;
                 const wasSelected = sel && sel.kind === node.data.kind && sel.name === node.data.name;
-                return commitResources(state, toResources(updatedNodes), updatedNodes, {
+                // A pure namespace change (same kind+name, different namespace) is
+                // a reassignment: the placement engine re-positions the node inside
+                // the target namespace — fresh, overlap-free, growing the box when
+                // the resource doesn't fit. Its saved position is cleared and its
+                // old position is not inherited (it never belonged to this box).
+                const isNsReassignment =
+                    kind === node.data.kind &&
+                    name === node.data.name &&
+                    !isClusterScoped(kind) &&
+                    namespace !== undefined &&
+                    namespace !== (node.data.namespace ?? 'default');
+                const prevNodes = isNsReassignment
+                    ? updatedNodes.filter((n) => n.id !== nodeId)
+                    : updatedNodes;
+                if (isNsReassignment) {
+                    clearSavedPositions([`${kind}:${name}`]);
+                }
+                return commitResources(state, toResources(updatedNodes), prevNodes, {
                     userEdges,
                     selectedResource: wasSelected ? { kind, name } : sel,
                 });
@@ -760,6 +821,13 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     collectGatewayApiFamily(state.nodes, nodeId).forEach((id) => doomed.add(id));
                 }
                 if (doomed.size === 0) return {};
+                // Deleted resources leave no trace in the position store — a future
+                // re-create with the same kind+name must get fresh placement.
+                clearSavedPositions(
+                    state.nodes
+                        .filter((n) => doomed.has(n.id))
+                        .map((n) => `${n.data.kind}:${n.data.name}`)
+                );
 
                 const remaining = state.nodes.filter((n) => !doomed.has(n.id));
                 const userEdges = state.userEdges.filter(
@@ -1102,7 +1170,11 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 if (state.nodes.some((n) => n.data.kind === kind && n.data.name === name)) {
                     return {}; // modal validates and surfaces this
                 }
-                // Let buildGraph auto-place the new resource (lane/cursor layout)
+                // Let buildGraph auto-place the new resource (lane/cursor layout).
+                // A stale saved position from a previously deleted resource with
+                // the same kind+name would bypass the lane AND the placement
+                // repair — clear it so the node lands fresh, inside its box.
+                clearSavedPositions([`${kind}:${name}`]);
                 let resources = [...toResources(state.nodes), resource];
                 const newIdx = resources.length - 1;
                 // Create-modal ConfigMap link: also write the reference into the target
@@ -1206,6 +1278,9 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     if (existing.some((r) => r.kind === resource.kind && r.metadata.name === name)) {
                         return {};
                     }
+                    // Fresh placement: never inherit a stale pin from a previously
+                    // deleted resource with the same kind+name.
+                    clearSavedPositions([key]);
                 }
                 // The batch is already cross-referenced (gatewayClassName / parentRefs /
                 // backendRefs are baked in by the modal) — commit everything at once so
@@ -1224,7 +1299,13 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 // override pass so the status bar reflects the current state.
                 const resources = toResources(state.nodes);
                 const hpaOverrides = applyHpaReplicaOverrides(resources);
-                const derived = deriveGraph(resources, [], state.userEdges);
+                // resetLayout discards the layout entirely (nsLayout: null below),
+                // so the repair pass runs in pure auto mode — no layout to grow.
+                const derivedResult = deriveGraph(resources, [], state.userEdges, null);
+                const { layoutChanged, ...derived } = derivedResult;
+                if (layoutChanged && derived.nsLayout) {
+                    persistNsLayout(derived.nsLayout);
+                }
                 return {
                     ...derived,
                     hpaOverrides,
@@ -1390,12 +1471,26 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                         ),
                     };
                 }
-                const fallback: Rect = { x: 40, y: 40, width: 320, height: 240 };
-                const placed = resolveMoveCollision(rect ?? fallback, layout.namespaces);
+                // The new rect always lands INSIDE the cluster (first free pocket);
+                // when there is no room, the cluster grows to fit it — exactly like
+                // repairPlacements grows boxes for new resources.
+                const placed = placeNewNamespaceRect(
+                    layout,
+                    rect?.width ?? 320,
+                    rect?.height ?? 240,
+                    {
+                        x: rect?.x ?? layout.cluster.x + 20,
+                        y: rect?.y ?? layout.cluster.y + 20,
+                    }
+                );
                 return {
                     nsLayout: {
                         ...layout,
-                        namespaces: [...layout.namespaces, { name: trimmed, ...placed }],
+                        cluster: placed.cluster,
+                        namespaces: [
+                            ...layout.namespaces,
+                            { name: trimmed, ...placed.rect },
+                        ],
                     },
                     notice: makeNotice(
                         'success',
@@ -1447,6 +1542,12 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 }
 
                 const remaining = state.nodes.filter((n) => !doomed.has(n.id));
+                // Namespace deletion takes its resources' position pins with it.
+                clearSavedPositions(
+                    state.nodes
+                        .filter((n) => doomed.has(n.id))
+                        .map((n) => `${n.data.kind}:${n.data.name}`)
+                );
                 const userEdges = state.userEdges.filter(
                     (e) => !doomed.has(e.source) && !doomed.has(e.target)
                 );
@@ -1511,6 +1612,14 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 const all = toResources(state.nodes);
                 const fileOf = computeFileOf(all);
                 const rest = all.filter((r) => fileOf.get(resourceKeyOf(r)) !== path);
+                // Resources newly added through the file editor get fresh placement —
+                // never a stale pin from a previously deleted resource (see setYaml).
+                const liveKeys = new Set(state.nodes.map((n) => `${n.data.kind}:${n.data.name}`));
+                clearSavedPositions(
+                    newFileResources
+                        .map((r) => `${r.kind}:${r.metadata?.name}`)
+                        .filter((key) => !liveKeys.has(key))
+                );
                 const result = commitResources(state, [...rest, ...newFileResources], state.nodes);
                 // Keep the raw typed text in the editor (commitResources re-serializes
                 // the canonical form; the user's formatting wins while typing).
@@ -2038,6 +2147,27 @@ function renameStoredPosition(oldKey: string, newKey: string) {
             delete positions[oldKey];
             localStorage.setItem(POSITIONS_KEY, JSON.stringify(positions));
         }
+    } catch {}
+}
+
+/** Remove saved positions for the given `Kind:name` keys. Used so a re-created
+ *  resource never inherits a stale pinned position from a previously deleted
+ *  one — creation and namespace reassignment always get fresh, repaired
+ *  placement (inside the namespace box, overlap-free, with growth). */
+function clearSavedPositions(keys: string[]) {
+    if (!keys.length) return;
+    try {
+        const saved = localStorage.getItem(POSITIONS_KEY);
+        if (!saved) return;
+        const positions = JSON.parse(saved);
+        let changed = false;
+        keys.forEach((key) => {
+            if (positions[key]) {
+                delete positions[key];
+                changed = true;
+            }
+        });
+        if (changed) localStorage.setItem(POSITIONS_KEY, JSON.stringify(positions));
     } catch {}
 }
 

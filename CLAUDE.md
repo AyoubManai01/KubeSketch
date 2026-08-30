@@ -98,20 +98,25 @@ Cluster/`ns:` bounding frames become editable:
   (`resizeClusterRect` clamps the namespace rects as content).
 - **"+ Namespace"** opens a modal (like the resource creation prompts, not a
   native alert) — inline validation for empty/duplicate names (against both
-  persisted rects and namespaces discovered from the graph) and a default-size
-  empty rect dropped below the cluster on confirm.
+  persisted rects and namespaces discovered from the graph). The new rect is
+  placed INSIDE the cluster (`placeNewNamespaceRect` in placement.ts — a free
+  pocket sweep avoiding every existing rect); when there is no room, it is
+  appended below the cluster's content and the cluster GROWS to fit it, exactly
+  like `repairPlacements` grows boxes for new resources.
 - **Resources are fixed in place**: a node drag is a *reassignment attempt* —
   on drop the node snaps back to its pre-drag position and, if the **pointer**
   (not the node centroid — large workloads dwarf their target rects) is inside
-  another namespace rect, `updateNodeFromCanvas({namespace})` reassigns it.
-  When a reassignment happens the node is repositioned **inside the target
-  rect** (pointer-anchored, clamped to its interior) and that position is
-  pinned, so the move is visible on the canvas instead of snapping back. The
-  drop target is the SMALLEST rect containing the pointer (auto-derived rects
-  can overlap when one namespace's workload surrounds another's). Synthetic
-  nodes and cluster-scoped kinds can't be reassigned. Dragging is disabled
-  per-node for cluster-scoped kinds in NS mode, and `autoPanOnNodeDrag` is off
-  so the view never shifts mid-drop.
+  another namespace rect, `updateNodeFromCanvas({namespace})` reassigns it. A
+  pure namespace change (same kind+name) is treated as **engine placement**: the
+  store clears the node's saved pin and commits without its old position, so the
+  rebuild auto-places it and `repairPlacements` lands it at a free spot inside
+  the target rect — growing the rect (and cluster) when it doesn't fit, exactly
+  like creation (nothing is pointer-anchored or pinned). The drop target is the
+  SMALLEST rect containing the pointer (auto-derived rects can overlap when one
+  namespace's workload surrounds another's). Synthetic nodes and cluster-scoped
+  kinds can't be reassigned. Dragging is disabled per-node for cluster-scoped
+  kinds in NS mode, and `autoPanOnNodeDrag` is off so the view never shifts
+  mid-drop.
 - **Normal mode is boundary-enforcing**: while dragging, namespaced nodes are
   clamped inside their namespace box and cluster-scoped kinds are pushed out of
   every namespace box (`clampDraggedNode` in Canvas, run live in `onNodeDrag`
@@ -119,7 +124,9 @@ Cluster/`ns:` bounding frames become editable:
   after the last `onNodeDrag`, so the drop re-clamps against the layout
   captured at drag start; all reads go through `useVeltraStore.getState()`
   because React batches re-renders and the render-scope nodes are one frame
-  stale during a drag).
+  stale during a drag). On drop a node is additionally pushed out of any
+  resource it overlaps (`resolveNodeCollision` — a dropped node never sits on
+  top of another one).
 - **Persistence**: `veltra_ns_layout` is written only when leaving NS mode AND
   the layout was actually edited. `nsLayout` starts `null` — `effectiveNsLayout`
   then derives everything from the live graph, so YAML changes always re-hug
@@ -150,6 +157,7 @@ They each encode a fixed bug; regressing one reintroduces it.
 14. **Storage is explicit-only, single-binding, mount-aware**: PVCs/PVs/StorageClasses get lanes below ConfigMaps and never synthesize (no controller simulation — a missing PVC/PV/StorageClass target draws no edge). A PVC binds to exactly ONE target: `spec.volumeName` → PV or `spec.storageClassName` → StorageClass (volumeName wins for edge drawing). Every write of one field clears the other (`linkPvcToPv`/`linkPvcToStorageClass`, the PVC inspector's two binding selects, and the create modal's bind picker) so the model never holds both. PVCs mount into Pods **or workloads** (`volumes[].persistentVolumeClaim.claimName`; Deployments/ReplicaSets get the reference in `spec.template.spec` via `linkPvcToWorkload`): PVC↔Pod/Deployment/ReplicaSet drags pause in a volume-name prompt (`pendingPvcLink`/`confirmPvcLink`/`PvcLinkModal`) and the create modal's "Mount into" picker lists all three kinds (synthetic Pods resolve to their workload owner). A **single-node** claim (ReadWriteOnce/ReadWriteOncePod — `isSingleNodeAccessMode`) is DENIED for workloads running more than one replica (`replicasOf`), in the store's drag interceptor, the create modal, **and the PVC inspector's Access Modes select (inline error, commit blocked via `pvcAccessModeViolation` in Canvas)** — identical replicas can't share a single-node volume. The same guard covers Job `parallelism` and CronJob `jobTemplate` parallelism (`parallelismOf`/`cronParallelismOf`). PV/StorageClass↔anything-but-PVC is rejected. Renaming a PVC cascades into Pod-spec and workload pod-template claims, renaming a PV into `pvc.spec.volumeName`, renaming a StorageClass into `pvc.spec.storageClassName`. Inferred edges: pod→PVC "mounts" (pink, target-colored), PVC→PV "binds" (lime), PVC→SC "binds" (indigo).
 15. **CronJobs own their Jobs single-assignment** (`synthesizeJob` in buildGraph): a CronJob always synthesizes exactly ONE Job (named `<name>-<hash>`) from `spec.jobTemplate.spec`, and that synthetic Job materializes Pods up to the template's `parallelism` — it NEVER claims existing Jobs or explicit Pods (real Jobs stay standalone). The Job and its Pods are top-level siblings of the CronJob (never nested) linked by inferred edges (`triggers` CronJob→Job, `owns` Job→Pod), all with `managedBy` pointing at the nearest REAL owner (the CronJob), so canvas links to them redirect to the CronJob and delete/rename guards behave like the Deployment's synthetic RS/Pods. They are **draggable like a real Job and its Pods** (positions persist and a pinned synthetic Job clears auto-placed workloads), but remain display-only — edits/deletes are still guarded. CronJob↔Job manual connections are rejected.
 16. **VPAs target the pod controller, not its Pods** (`getVpaTarget` reads `spec.targetRef` — allowed kinds Deployment/ReplicaSet/Pod/Job/CronJob; a target whose Pods are nested inside a Deployment/ReplicaSet is addressed via the workload, never the nested Pods). The inferred edge is VPA→targetRef node labeled "right-sizes" (sky `#0ea5e9`), never to nested Pods. Manual VPA↔workload/Pod connections write `targetRef` via `linkVpaToTarget` — 1:1, an existing targetRef is replaced; synthetic targets redirect to their real owner. VPA↔Service/Ingress/HPA/ConfigMap/Secret/PVC/PV/StorageClass pairs are rejected with a toast. Renaming a Deployment/ReplicaSet/Pod/Job/CronJob cascades into VPA `targetRef.name` (`renameVpaTargetReferences` in the store). VPAs share HPA's lane (Y=520) with a SINGLE combined collision pass so the two autoscaler kinds never overlap. VPA has **no controller simulation**: it never rewrites container resources or replica counts on the canvas — the VPA inspector (`targetRef`, `updatePolicy.updateMode`, min/max cpu+memory via `resourcePolicy.containerPolicies[0]`) and the target's read-only "Vertical scaled by" projection (driven by `getVpaTarget`) stay in sync with the model. Kind token is the FULL `VerticalPodAutoscaler` (like PersistentVolumeClaim, unlike the short HPA token), `apiVersion: autoscaling.k8s.io/v1`.
+17. **New resources land inside their box, overlap-free** (`repairPlacements` in [src/utils/placement.ts](src/utils/placement.ts), run inside `deriveGraph`). buildGraph's lane layout is namespace-blind, so after every rebuild the repair pass re-positions exactly the *auto-placed* top-level nodes (buildGraph reports them in `autoPlacedIds`; pinned/user-dragged nodes are never touched — invariants 3/4) that are outside their namespace/cluster rect, on top of another resource, or inside a foreign namespace box. Smaller nodes yield to bigger ones when lane spots collide (an HPA auto-aligned under a tall Deployment slides aside, the Deployment keeps its spot). The lane position is kept when valid, else the pass sweeps for a free spot inside the box (a namespace with no rect yet sweeps inside the cluster, never below it), else appends below/right of the box's content. A persisted box that can't fit the node **grows** (down, else right), pushing any blocking sibling namespace rect (and its resources) out of the way when both directions are blocked, and the cluster rect grows to the hull of its content — siblings are only pushed when a *namespace* rect grows, never when the cluster grows (it contains them); grown layouts are written back (`layoutChanged` → `persistNsLayout`). Pure auto layouts (`nsLayout: null`) need no growth — the frames re-hug. Manual drags obey the same rule: on drop a node is pushed out of any resource it overlaps (the normal-mode drop) while staying inside its box. **Creation never inherits stale pins**: `clearSavedPositions` wipes `veltra_node_positions` entries for every newly created resource (`addConfiguredNode`/`addConfiguredNodes`), for resources typed into the YAML/file editors that aren't already on the canvas (`setYaml`/`setFileYaml`), for deleted resources (`deleteNodeFromCanvas`/`setCanvasNodes`/`deleteNamespace`), and for pure namespace reassignments (a same-kind+name namespace change commits with `prevNodes` minus the node, so the rebuild re-places it inside the target box with growth — a stale pin from a dragged-then-deleted resource otherwise bypasses both the lane layout AND the repair, which is what used to strand recreated resources outside their namespace until a click (zero-distance drag) clamped them back).
 
 ## Conventions
 

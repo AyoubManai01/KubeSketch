@@ -451,6 +451,9 @@ export function buildGraph(
 ): {
     nodes: Node<K8sNodeData>[];
     edges: Edge[];
+    /** IDs of top-level nodes positioned by auto-layout this pass (no previous or
+     *  saved position). The placement repair pass may re-position exactly these. */
+    autoPlacedIds: Set<string>;
 } {
     // Map previous node coordinates by key
     const prevCoords = new Map<string, { x: number; y: number }>();
@@ -2087,7 +2090,19 @@ export function buildGraph(
         });
     });
 
-    return { nodes, edges };
+    // Which top-level nodes were placed by auto-layout this pass (no previous or
+    // saved position for them) — the placement repair pass may re-position exactly
+    // these, never user-dragged/pinned nodes.
+    const autoPlacedIds = new Set<string>();
+    nodes.forEach((n) => {
+        if (n.parentId) return;
+        const key = `${n.data.kind}:${n.data.name}`;
+        if (!prevCoords.has(key) && !getSavedPosition(n.data.kind, n.data.name)) {
+            autoPlacedIds.add(n.id);
+        }
+    });
+
+    return { nodes, edges, autoPlacedIds };
 }
 
 /** Inferred edge stroke color by source kind: HorizontalPodAutoscaler scaling (amber), Ingress routes (purple), Jobs (yellow), CronJobs (fuchsia), everything else (blue). */

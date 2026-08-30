@@ -10,7 +10,8 @@ interface Props {
 /**
  * Prompt for creating a new namespace rectangle (namespace editing mode). A modal
  * like the resource creation prompts — inline validation for empty/duplicate
- * names, and a default-size rectangle dropped below the cluster on confirm.
+ * names, and a default-size rectangle placed inside the cluster on confirm
+ * (growing the cluster when there is no room).
  */
 export default function NamespaceModal({ onClose }: Props) {
     const nodes = useVeltraStore((s) => s.nodes);
@@ -53,7 +54,7 @@ export default function NamespaceModal({ onClose }: Props) {
         const cluster = layout.cluster ?? { ...DEFAULT_CLUSTER_RECT };
         addNamespace(trimmed, {
             x: cluster.x + 20,
-            y: cluster.y + cluster.height + 40,
+            y: cluster.y + 20,
             width: 320,
             height: 240,
         });
@@ -95,8 +96,9 @@ export default function NamespaceModal({ onClose }: Props) {
                         <label className="modal-field__label">
                             Namespace name
                             <span className="modal-field__hint">
-                                An empty rectangle is added below the cluster — drag
-                                resources onto it to assign them.
+                                An empty rectangle is added inside the cluster (the
+                                cluster grows when there's no room) — drag resources
+                                onto it to assign them.
                             </span>
                         </label>
                         <input

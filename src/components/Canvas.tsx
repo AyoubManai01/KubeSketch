@@ -1383,15 +1383,67 @@ export default function Canvas() {
       // of its box at the end of the gesture.
       if (layout) {
         const current = useVeltraStore.getState().nodes;
-        const clamped = current.map((n) => {
+        const draggedIds = new Set(moved.map((mn) => mn.id));
+        const nodeRect = (o: Node<K8sNodeData>) => ({
+          x: o.position.x,
+          y: o.position.y,
+          width:
+            typeof o.style?.width === "number"
+              ? o.style.width
+              : FALLBACK_NODE_WIDTH,
+          height:
+            typeof o.style?.height === "number"
+              ? o.style.height
+              : FALLBACK_NODE_HEIGHT,
+        });
+        // React Flow emits one last unclamped position change on drop, after the
+        // final onNodeDrag — re-apply the constraint so the node doesn't jump out
+        // of its box at the end of the gesture, then push the dropped node out of
+        // any resource it overlaps (node-vs-node collision — a dropped node never
+        // sits on top of another resource, matching the auto-placement rules).
+        const resolved = current.map((n) => {
           const m = moved.find((mn) => mn.id === n.id);
           if (!m || n.parentId) return n;
-          const c = clampDraggedNode(n, layout);
-          if (c.x === n.position.x && c.y === n.position.y) return n;
-          return { ...n, position: c };
+          const clamped = clampDraggedNode(n, layout);
+          const width =
+            typeof n.style?.width === "number"
+              ? n.style.width
+              : FALLBACK_NODE_WIDTH;
+          const height =
+            typeof n.style?.height === "number"
+              ? n.style.height
+              : FALLBACK_NODE_HEIGHT;
+          const blockers = current
+            .filter((o) => o.id !== n.id && !o.parentId && !draggedIds.has(o.id))
+            .map(nodeRect);
+          let pos;
+          if (isClusterScoped(n.data.kind)) {
+            pos = resolveNodeCollision(
+              clamped.x,
+              clamped.y,
+              width,
+              height,
+              null,
+              [...blockers, ...layout.namespaces],
+            );
+          } else {
+            const nsRect = layout.namespaces.find(
+              (ns) => ns.name === (n.data.namespace ?? "default"),
+            );
+            pos = resolveNodeCollision(
+              clamped.x,
+              clamped.y,
+              width,
+              height,
+              nsRect ?? layout.cluster,
+              blockers,
+            );
+          }
+          if (pos.x === n.position.x && pos.y === n.position.y) return n;
+          return { ...n, position: pos };
         });
-        if (clamped.some((n, i) => n !== current[i])) {
-          setCanvasNodesPositionOnly(clamped);
+        if (resolved.some((n, i) => n !== current[i])) {
+          setCanvasNodesPositionOnly(resolved);
         }
       }
       persistNodePositions(moved.map((n) => n.id));
@@ -1399,9 +1451,12 @@ export default function Canvas() {
     }
     // Namespace editing: resources are fixed — snap every dragged node back to
     // its pre-drag position, then interpret the drop as a reassignment attempt.
-    // A node that lands in ANOTHER namespace is repositioned *inside* that box
-    // (pointer-anchored), so the reassignment is visible on the canvas instead
-    // of leaving the node stranded at its old spot.
+    // A node dropped in ANOTHER namespace is reassigned by the placement engine
+    // (store `updateNodeFromCanvas`): it lands at a free spot inside the target
+    // box, which grows when the resource doesn't fit — same guarantees as
+    // creation. The drop anchor is the POINTER position (in flow coordinates),
+    // not the node center — large workloads dwarf their target rectangles, and
+    // the user aims at the rectangle with the cursor, not the node's centroid.
     const origins = dragOriginRef.current;
     const pointer = flowPointFromScreen(
       event as { clientX?: number; clientY?: number },
@@ -1418,12 +1473,12 @@ export default function Canvas() {
         .filter((ns) => rectContains(ns, point))
         .sort((a, b) => a.width * a.height - b.width * b.height)[0];
     const reassignedIds: string[] = [];
-    const current = useVeltraStore.getState().nodes;
-    const nextNodes = current.map((n) => {
+    const storeNodes = useVeltraStore.getState().nodes;
+    const nextNodes = storeNodes.map((n) => {
       const origin = origins.get(n.id);
       if (!origin) return n;
       // Synthetic nodes belong to their owner's namespace; cluster-scoped kinds
-      // never have a namespace — neither can be reassigned.
+      // never have a namespace — neither can be reassigned. Both snap back.
       if (n.data.synthetic || isClusterScoped(n.data.kind)) {
         return { ...n, position: origin };
       }
@@ -1434,29 +1489,13 @@ export default function Canvas() {
       const center = { x: n.position.x + width / 2, y: n.position.y + height / 2 };
       const target = findDropTarget(pointer ?? center);
       const current = n.data.namespace ?? "default";
-      if (!target || target.name === current) {
-        return { ...n, position: origin };
+      if (target && target.name !== current) {
+        reassignedIds.push(n.id);
       }
-      // Land the node where the pointer dropped, clamped inside the target box.
-      const pad = 8;
-      const x = clampValue(
-        pointer?.x ?? center.x - width / 2 - pad,
-        target.x + pad,
-        target.x + target.width - width - pad,
-      );
-      const y = clampValue(
-        pointer?.y ?? center.y - height / 2 - pad,
-        target.y + pad,
-        target.y + target.height - height - pad,
-      );
-      reassignedIds.push(n.id);
-      return { ...n, position: { x, y } };
+      return { ...n, position: origin };
     });
     dragOriginRef.current = new Map();
     setCanvasNodesPositionOnly(nextNodes);
-    // The drop anchor is the POINTER position (in flow coordinates), not the node
-    // center — large workloads (Deployments) dwarf their target rectangles, and
-    // the user aims at the rectangle with the cursor, not the node's centroid.
     reassignedIds.forEach((id) => {
       const n = nextNodes.find((nn) => nn.id === id);
       if (!n) return;
@@ -1466,6 +1505,9 @@ export default function Canvas() {
       if (!target) return;
       const current = n.data.namespace ?? "default";
       if (target.name === current) return;
+      // The store re-places the node inside the target namespace (fresh, overlap-
+      // free, growing the box when needed) — no pinning here, that placement is
+      // deterministic across reloads (invariant 4).
       updateNodeFromCanvas(n.id, { namespace: target.name });
       setNotice({
         id: Date.now() + Math.random(),
@@ -1473,9 +1515,6 @@ export default function Canvas() {
         text: `Moved ${n.data.name} to namespace “${target.name}”.`,
       });
     });
-    // The reassigned nodes got new (user-placed) positions — pin them like any
-    // other drag so a later commit doesn't auto-layout them back away.
-    if (reassignedIds.length) persistNodePositions(reassignedIds);
     dragLayoutRef.current = null;
   };
 
@@ -5421,11 +5460,6 @@ function cronScheduleError(schedule: string): string {
   return trimmed.split(/\s+/).length === 5
     ? ""
     : "A cron schedule has 5 fields: minute hour day month weekday (e.g. \"* * * * *\").";
-}
-
-/** Clamp `v` into [min, max], tolerating inverted ranges (item bigger than the box). */
-function clampValue(v: number, min: number, max: number): number {
-  return Math.min(Math.max(v, min), Math.max(min, max));
 }
 
 function parseKeyValueString(

@@ -1305,6 +1305,35 @@ body,
   letter-spacing: 0.8px;
 }
 
+/* Delete button on a namespace frame (namespace editing mode only) */
+.teaching-frame__delete {
+  position: absolute;
+  top: -13px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 16px;
+  padding: 0 5px;
+  font-family: 'Outfit', sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #ef4444;
+  background: var(--bg-primary);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: 4px;
+  cursor: pointer;
+  z-index: 6;
+}
+
+.teaching-frame__delete:hover {
+  color: #fff;
+  background: #ef4444;
+  border-color: #ef4444;
+}
+
 /* Namespace editing mode: the frames become draggable/resizeable surfaces */
 .teaching-frame--editable {
   pointer-events: auto;

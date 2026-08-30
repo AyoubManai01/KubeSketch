@@ -34,6 +34,7 @@ import {
     FALLBACK_NODE_HEIGHT,
     FALLBACK_NODE_WIDTH,
     NAMESPACE_MIN_RECT,
+    PROTECTED_NAMESPACES,
     resolveMoveCollision,
     resolveResizeCollision,
     type NamespaceRect,
@@ -352,6 +353,9 @@ interface VeltraState {
     resizeClusterRect: (rect: Rect) => void;
     /** Add an empty namespace rectangle with the given position/size. */
     addNamespace: (name: string, rect?: Rect) => void;
+    /** Delete a namespace: removes its rectangle and cascade-deletes every
+     *  resource living in it (K8s-style). `default`/`kube-system` are protected. */
+    deleteNamespace: (name: string) => void;
     /** Enter/exit VSCode-style file explorer mode (persisted). Entering picks a
      *  sensible active file (the selected resource's, else the first one). */
     setFileExplorerMode: (on: boolean) => void;
@@ -1396,6 +1400,72 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     notice: makeNotice(
                         'success',
                         `Namespace “${trimmed}” added — drag resources onto it to assign them.`
+                    ),
+                };
+            }),
+
+        deleteNamespace: (name) =>
+            set((state) => {
+                const trimmed = (name ?? '').trim();
+                if (!trimmed) {
+                    return { notice: makeNotice('error', 'Namespace name cannot be empty.') };
+                }
+                if (PROTECTED_NAMESPACES.has(trimmed)) {
+                    return {
+                        notice: makeNotice(
+                            'error',
+                            `Namespace “${trimmed}” is protected and cannot be deleted.`
+                        ),
+                    };
+                }
+                // Cascade like Kubernetes: every top-level real resource living in
+                // the namespace is deleted, and its nested descendants (Pods under
+                // RS under Deployment) go with it via collectWithDescendants.
+                const topLevelInNs = state.nodes.filter(
+                    (n) =>
+                        !n.parentId &&
+                        !n.data.synthetic &&
+                        !isClusterScoped(n.data.kind) &&
+                        (n.data.namespace ?? 'default') === trimmed
+                );
+                const doomed = new Set<string>();
+                topLevelInNs.forEach((n) => {
+                    collectWithDescendants(state.nodes, n.id).forEach((id) => doomed.add(id));
+                });
+
+                const layout = ensureNsLayout(state);
+                const namespaces = layout.namespaces.filter((ns) => ns.name !== trimmed);
+                const nsLayout: NsLayout = { ...layout, namespaces };
+
+                // Empty namespace: pure layout change — never touch YAML or the
+                // graph (serializing would destroy user comments/formatting).
+                if (doomed.size === 0) {
+                    return {
+                        nsLayout,
+                        notice: makeNotice('success', `Namespace “${trimmed}” deleted.`),
+                    };
+                }
+
+                const remaining = state.nodes.filter((n) => !doomed.has(n.id));
+                const userEdges = state.userEdges.filter(
+                    (e) => !doomed.has(e.source) && !doomed.has(e.target)
+                );
+                const sel = state.selectedResource;
+                const selectionRemoved =
+                    sel &&
+                    !remaining.some(
+                        (n) => n.data.kind === sel.kind && n.data.name === sel.name
+                    );
+
+                return {
+                    ...commitResources(state, toResources(remaining), remaining, {
+                        userEdges,
+                        selectedResource: selectionRemoved ? null : sel,
+                    }),
+                    nsLayout,
+                    notice: makeNotice(
+                        'success',
+                        `Namespace “${trimmed}” deleted with ${doomed.size} resource${doomed.size > 1 ? 's' : ''}.`
                     ),
                 };
             }),

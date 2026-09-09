@@ -3,7 +3,15 @@ import { ViewportPortal, useReactFlow } from '@xyflow/react';
 import type { Node } from '@xyflow/react';
 import { useVeltraStore } from '../store/store';
 import { isClusterScoped } from '../utils/k8sScope';
-import { NAMESPACE_MIN_RECT, PROTECTED_NAMESPACES, type NsLayout, type Rect } from '../utils/teachingFrame';
+import {
+    NAMESPACE_MIN_RECT,
+    NODE_MIN_RECT,
+    PROTECTED_NAMESPACES,
+    nodesOfNamespace,
+    rectContainsRect,
+    type NsLayout,
+    type Rect,
+} from '../utils/teachingFrame';
 import type { K8sNodeData } from '../utils/buildGraph';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 
@@ -30,19 +38,25 @@ interface DragState {
 }
 
 /**
- * The Cluster + namespace bounding rectangles. Decorative in normal mode
- * (pointer-events none, auto-derived bounds); in namespace editing mode they
+ * The Cluster + node + namespace bounding rectangles. Decorative in normal mode
+ * (pointer-events none, auto-derived bounds). In a frame editing mode they
  * become draggable/resizeable surfaces:
- * - dragging a namespace rectangle translates its contained top-level nodes,
- * - dragging the cluster rectangle translates everything,
- * - 8 resize handles shrink/expand either rectangle (nodes never move).
+ * - namespace editing mode: every tier is editable (dragging a namespace
+ *   rectangle translates its contained top-level nodes; dragging the cluster
+ *   translates everything; 8 resize handles shrink/expand any rectangle),
+ * - node editing mode: only the cluster and physical node rectangles are
+ *   editable — namespace rectangles stay decorative.
  */
 export default function NsFrame({ layout, nodes, onDeleteNamespace }: NsFrameProps) {
     const nsEditMode = useVeltraStore((s) => s.nsEditMode);
+    const nodeEditMode = useVeltraStore((s) => s.nodeEditMode);
     const moveNamespace = useVeltraStore((s) => s.moveNamespace);
     const moveClusterRect = useVeltraStore((s) => s.moveClusterRect);
+    const moveNodeRect = useVeltraStore((s) => s.moveNodeRect);
     const resizeNsRect = useVeltraStore((s) => s.resizeNsRect);
+    const resizeNodeRect = useVeltraStore((s) => s.resizeNodeRect);
     const resizeClusterRect = useVeltraStore((s) => s.resizeClusterRect);
+    const deleteNode = useVeltraStore((s) => s.deleteNode);
     const persistNodePositions = useVeltraStore((s) => s.persistNodePositions);
     const { screenToFlowPosition } = useReactFlow();
 
@@ -60,9 +74,24 @@ export default function NsFrame({ layout, nodes, onDeleteNamespace }: NsFramePro
                     (n.data.namespace ?? 'default') === name
             )
             .map((n) => n.id);
+    // The namespaces FULLY contained in a node rect at drag start — only those
+    // ride along when the node moves (straddling ones belong to other nodes).
+    const containedNamespaceNames = (nodeRect: Rect) =>
+        layout.namespaces
+            .filter((ns) => rectContainsRect(ns, nodeRect))
+            .map((ns) => ns.name);
+    const nodeRideAlongNodeIds = (nodeRect: Rect) =>
+        nodes
+            .filter(
+                (n) =>
+                    !n.parentId &&
+                    !isClusterScoped(n.data.kind) &&
+                    containedNamespaceNames(nodeRect).includes(n.data.namespace ?? 'default')
+            )
+            .map((n) => n.id);
 
     const startDragAt = (e: ReactPointerEvent<HTMLElement>, opts: DragOptions) => {
-        if (!nsEditMode) return;
+        if (!nsEditMode && !nodeEditMode) return;
         e.preventDefault();
         e.stopPropagation();
         const el = e.currentTarget;
@@ -92,19 +121,24 @@ export default function NsFrame({ layout, nodes, onDeleteNamespace }: NsFramePro
         drag.opts.onEnd?.();
     };
 
-    const editableClass = nsEditMode ? ' teaching-frame--editable' : '';
+    // Cluster + physical node frames are editable in either frame mode; namespace
+    // frames only in namespace editing mode (the dedicated Nodes mode keeps them
+    // decorative).
+    const framesEditable = nsEditMode || nodeEditMode;
+    const framesEditableClass = framesEditable ? ' teaching-frame--editable' : '';
+    const nsEditableClass = nsEditMode ? ' teaching-frame--editable' : '';
 
     return (
         <ViewportPortal>
             <div
-                className={`teaching-frame teaching-frame--outer${editableClass}`}
+                className={`teaching-frame teaching-frame--outer${framesEditableClass}`}
                 style={{
                     width: layout.cluster.width,
                     height: layout.cluster.height,
                     transform: `translate(${layout.cluster.x}px, ${layout.cluster.y}px)`,
                 }}
                 onPointerDown={
-                    nsEditMode
+                    framesEditable
                         ? (e) =>
                               startDragAt(e, {
                                   // The cluster rect is always part of nsLayout,
@@ -124,12 +158,12 @@ export default function NsFrame({ layout, nodes, onDeleteNamespace }: NsFramePro
                 onPointerCancel={onPointerEnd}
             >
                 <div className="teaching-frame__title">Cluster</div>
-                {nsEditMode && (
+                {framesEditable && (
                     <FrameHandles
                         onHandle={(dir, e) =>
                             startDragAt(e, {
                                 onMove: (dx, dy) =>
-                                    resizeClusterRect(resizeRect(layout.cluster, dx, dy, dir)),
+                                    resizeClusterRect(resizeRect(layout.cluster, dx, dy, dir, NAMESPACE_MIN_RECT)),
                             })
                         }
                         onPointerMove={onPointerMove}
@@ -137,10 +171,84 @@ export default function NsFrame({ layout, nodes, onDeleteNamespace }: NsFramePro
                         onPointerCancel={onPointerEnd}
                     />
                 )}
-                {layout.namespaces.map((ns) => (
+                {layout.nodes.map((nd) => (
+                    <div
+                        key={nd.name}
+                        className={`teaching-frame teaching-frame--node${framesEditableClass}`}
+                        style={{
+                            width: nd.width,
+                            height: nd.height,
+                            transform: `translate(${nd.x - layout.cluster.x}px, ${nd.y - layout.cluster.y}px)`,
+                        }}
+                        onPointerDown={
+                            framesEditable
+                                ? (e) =>
+                                      startDragAt(e, {
+                                          onMove: (dx, dy) =>
+                                              moveNodeRect(nd.name, {
+                                                  ...nd,
+                                                  x: nd.x + dx,
+                                                  y: nd.y + dy,
+                                              }),
+                                          onEnd: () => persistNodePositions(nodeRideAlongNodeIds(nd)),
+                                      })
+                                : undefined
+                        }
+                        onPointerMove={onPointerMove}
+                        onPointerUp={onPointerEnd}
+                        onPointerCancel={onPointerEnd}
+                    >
+                        <div className="teaching-frame__title">node: {nd.name}</div>
+                        {framesEditable && (
+                            <button
+                                type="button"
+                                className="teaching-frame__delete"
+                                title={`Delete node “${nd.name}” (its namespaces stay on the cluster)`}
+                                onPointerDown={(e) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                }}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    deleteNode(nd.name);
+                                }}
+                            >
+                                <span>Delete</span>
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="2.5"
+                                    width="9"
+                                    height="9"
+                                >
+                                    <line x1="18" y1="6" x2="6" y2="18" />
+                                    <line x1="6" y1="6" x2="18" y2="18" />
+                                </svg>
+                            </button>
+                        )}
+                        {framesEditable && (
+                            <FrameHandles
+                                onHandle={(dir, e) =>
+                                    startDragAt(e, {
+                                        onMove: (dx, dy) =>
+                                            resizeNodeRect(nd.name, resizeRect(nd, dx, dy, dir, NODE_MIN_RECT)),
+                                    })
+                                }
+                                onPointerMove={onPointerMove}
+                                onPointerUp={onPointerEnd}
+                                onPointerCancel={onPointerEnd}
+                            />
+                        )}
+                    </div>
+                ))}
+                {layout.namespaces.map((ns) => {
+                    const straddled = nodesOfNamespace(ns, layout.nodes);
+                    const onNodes = straddled.length > 0 ? ` · on: ${straddled.map((nd) => nd.name).join(', ')}` : '';
+                    return (
                     <div
                         key={ns.name}
-                        className={`teaching-frame teaching-frame--inner${editableClass}`}
+                        className={`teaching-frame teaching-frame--inner${nsEditableClass}`}
                         style={{
                             width: ns.width,
                             height: ns.height,
@@ -170,7 +278,7 @@ export default function NsFrame({ layout, nodes, onDeleteNamespace }: NsFramePro
                         onPointerUp={onPointerEnd}
                         onPointerCancel={onPointerEnd}
                     >
-                        <div className="teaching-frame__title">ns: {ns.name}</div>
+                        <div className="teaching-frame__title">ns: {ns.name}{onNodes}</div>
                         {nsEditMode && !PROTECTED_NAMESPACES.has(ns.name) && (
                             <button
                                 type="button"
@@ -204,7 +312,7 @@ export default function NsFrame({ layout, nodes, onDeleteNamespace }: NsFramePro
                                 onHandle={(dir, e) =>
                                     startDragAt(e, {
                                         onMove: (dx, dy) =>
-                                            resizeNsRect(ns.name, resizeRect(ns, dx, dy, dir)),
+                                            resizeNsRect(ns.name, resizeRect(ns, dx, dy, dir, NAMESPACE_MIN_RECT)),
                                     })
                                 }
                                 onPointerMove={onPointerMove}
@@ -213,7 +321,8 @@ export default function NsFrame({ layout, nodes, onDeleteNamespace }: NsFramePro
                             />
                         )}
                     </div>
-                ))}
+                    );
+                })}
             </div>
         </ViewportPortal>
     );
@@ -248,16 +357,16 @@ function FrameHandles({
 }
 
 /** New rectangle for a corner/edge drag starting from `start`. */
-function resizeRect(start: Rect, dx: number, dy: number, dir: ResizeDir): Rect {
+function resizeRect(start: Rect, dx: number, dy: number, dir: ResizeDir, minSize: number): Rect {
     let { x, y, width, height } = start;
-    if (dir.includes('e')) width = Math.max(NAMESPACE_MIN_RECT, start.width + dx);
-    if (dir.includes('s')) height = Math.max(NAMESPACE_MIN_RECT, start.height + dy);
+    if (dir.includes('e')) width = Math.max(minSize, start.width + dx);
+    if (dir.includes('s')) height = Math.max(minSize, start.height + dy);
     if (dir.includes('w')) {
-        width = Math.max(NAMESPACE_MIN_RECT, start.width - dx);
+        width = Math.max(minSize, start.width - dx);
         x = start.x + (start.width - width);
     }
     if (dir.includes('n')) {
-        height = Math.max(NAMESPACE_MIN_RECT, start.height - dy);
+        height = Math.max(minSize, start.height - dy);
         y = start.y + (start.height - height);
     }
     return { x, y, width, height };

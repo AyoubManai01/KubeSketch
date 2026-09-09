@@ -104,6 +104,10 @@ export interface MockStoreState {
     addConfiguredNode: Mock;
     resetLayout: Mock;
     clearAll: Mock;
+    nsEditMode: boolean;
+    nodeEditMode: boolean;
+    setNsEditMode: Mock;
+    setNodeEditMode: Mock;
 }
 
 export function createDefaultStoreState(): MockStoreState {
@@ -129,6 +133,10 @@ export function createDefaultStoreState(): MockStoreState {
         addConfiguredNode: vi.fn(),
         resetLayout: vi.fn(),
         clearAll: vi.fn(),
+        nsEditMode: false,
+        nodeEditMode: false,
+        setNsEditMode: vi.fn(),
+        setNodeEditMode: vi.fn(),
     };
 }
 

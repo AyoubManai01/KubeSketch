@@ -2,6 +2,8 @@
 
 Veltra is a Kubernetes Visual IDE: a split-screen app with a Monaco YAML editor (left) and a React Flow resource canvas (right), kept in bidirectional sync. Supported resource kinds: Deployment, ReplicaSet, Pod, Service, Ingress, HPA (HorizontalPodAutoscaler), ConfigMap, PersistentVolumeClaim (PVC), PersistentVolume (PV), StorageClass, Secret, Job, CronJob, VerticalPodAutoscaler (VPA).
 
+The canvas also renders **physical Node frames** — a canvas-only tier between the Cluster frame and the namespace frames (`cluster → node → namespace`). Nodes represent physical machines: they are never part of the YAML manifest, hold zero or more namespace rects, and a namespace may straddle any number of node rects (the geometric overlap *is* the node membership — a namespace is a logical grouping that can span nodes).
+
 The canvas simulates Kubernetes controllers: a Deployment with no matching ReplicaSet in the manifest gets a **synthetic** RS (named `<name>-<hash>`, deterministic), and every RS (real or synthetic) materializes Pods up to `spec.replicas` on top of any explicit Pods its selector claims. A CronJob always synthesizes exactly one **own** Job (named `<name>-<hash>`) from `spec.jobTemplate.spec`, which materializes Pods up to the template's `parallelism` — CronJobs never claim existing Jobs or Pods. Synthetic nodes carry `data.synthetic: true` + `data.managedBy` (nearest real owner) and are display-only.
 
 ## Commands
@@ -32,11 +34,11 @@ YAML text ──parseYaml──▶ K8sResource[] ──buildGraph──▶ nodes
 - [src/utils/linkResources.ts](src/utils/linkResources.ts) — semantic meaning of manual canvas connections (writes selectors/labels/backends into the model).
 - [src/utils/serializeYaml.ts](src/utils/serializeYaml.ts) — resources → YAML (`skipInvalid: true`).
 - [src/utils/k8sScope.ts](src/utils/k8sScope.ts) — `CLUSTER_SCOPED_KINDS` (PersistentVolume, StorageClass) + `isClusterScoped(kind)`.
-- [src/utils/teachingFrame.ts](src/utils/teachingFrame.ts) — cluster/namespace bounding frames: `buildTeachingFrame` (auto-derive from top-level nodes; cluster-scoped kinds never join a namespace rect), `effectiveNsLayout` (persisted layout ∪ auto-discovered namespaces), `rectContains`.
-- [src/components/NsFrame.tsx](src/components/NsFrame.tsx) — renders the frames inside a `ViewportPortal`; in NS editing mode they get pointer drag/resize surfaces (8 handles each). Drag deltas are cumulative and events bubble through the outer frame, so only the pointer-captured element may apply a move (guard: `drag.el === e.currentTarget`), and the store diffs absolute rects against its own layout instead of adding deltas.
+- [src/utils/teachingFrame.ts](src/utils/teachingFrame.ts) — cluster/node/namespace bounding frames: `buildTeachingFrame` (auto-derive from top-level nodes; cluster-scoped kinds never join a namespace rect; physical nodes are never auto-derived), `effectiveNsLayout` (persisted layout ∪ auto-discovered namespaces), `rectContains`/`rectContainsRect`, `nodesOfNamespace`/`namespacesOfNode`.
+- [src/components/NsFrame.tsx](src/components/NsFrame.tsx) — renders the cluster + node + namespace frames inside a `ViewportPortal`; in a frame editing mode (Namespaces or Nodes) they get pointer drag/resize surfaces (8 handles each). Node rects render as siblings between the cluster and the namespace rects (DOM order puts them beneath); namespace rects are only editable in the Namespaces mode. Drag deltas are cumulative and events bubble through the outer frame, so only the pointer-captured element may apply a move (guard: `drag.el === e.currentTarget`), and the store diffs absolute rects against its own layout instead of adding deltas.
 - [src/components/Canvas.tsx](src/components/Canvas.tsx) — canvas + node inspector. [src/components/YamlEditor.tsx](src/components/YamlEditor.tsx) — Monaco + selected-resource highlight. [src/components/CreateResourceModal.tsx](src/components/CreateResourceModal.tsx) — resource creation with validation.
 
-localStorage keys: `veltra_yaml`, `veltra_user_edges`, `veltra_node_positions`, `veltra_ns_layout`, `veltra_file_explorer`, `veltra_active_file`, `veltra_explorer_split`.
+localStorage keys: `veltra_yaml`, `veltra_user_edges`, `veltra_node_positions`, `veltra_ns_layout` (embeds the cluster + physical node + namespace rects; layouts saved before nodes existed load with an empty node list), `veltra_file_explorer`, `veltra_active_file`, `veltra_explorer_split`.
 
 ## File explorer mode
 
@@ -76,15 +78,19 @@ FileExplorerView). Renames typed in a file keep the same delete+add semantics
 as the full-manifest editor. `veltra_active_file`/`veltra_file_explorer` persist
 the mode and last-opened file; `veltra_explorer_split` is the sidebar width %.
 
-## Namespace editing mode
+## Frame editing modes (Namespaces / Nodes)
 
-The toolbar's "Namespaces" toggle enters NS editing mode, where the decorative
-Cluster/`ns:` bounding frames become editable:
+The toolbar has two mutually exclusive frame-editing toggles (entering one exits
+the other and persists the shared `nsLayout`, exactly like pressing Done):
+
+- **"Namespaces"** enters the combined mode where every tier is editable — the
+  decorative Cluster/`ns:`/node bounding frames become editable surfaces:
+  `+ Namespace` and `+ Node` are both available here.
 
 - **Drag a namespace rect** → its contained top-level nodes translate with it
   (nested children follow via their parent). **Drag the cluster rect** → every
-  top-level node (namespaced AND cluster-scoped) plus all namespace rects move.
-  Resize via the 8 handles on each rect (nodes never move on resize).
+  top-level node (namespaced AND cluster-scoped) plus all node and namespace
+  rects move. Resize via the 8 handles on each rect (nodes never move on resize).
   Rectangles can never overlap each other: the store clamps every move/resize
   (`resolveMoveCollision`/`resolveResizeCollision` — the dragged rect is pushed
   out along the axis of least penetration; growth stops at a neighbor's facing
@@ -94,8 +100,29 @@ Cluster/`ns:` bounding frames become editable:
   namespace box can never extend outside the cluster box (edges are clamped to
   the cluster while the box overlaps it — a west/north clamp re-anchors the
   opposite edge so the box never grows from the wrong side into a neighbor).
-  Symmetrically, the cluster box can't shrink past its namespace boxes
-  (`resizeClusterRect` clamps the namespace rects as content).
+  Symmetrically, the cluster box can't shrink past its node/namespace boxes
+  (`resizeClusterRect` clamps the rects as content).
+- **Physical node rects** ("+ Node" — available in BOTH frame modes — canvas-only
+  chrome, never in YAML) sit between the cluster and the namespaces. They obey
+  their own constraints: node rects never overlap each other (physical
+  exclusivity — `moveNodeRect`/`resizeNodeRect` use sibling node rects as
+  blockers) and never leave the cluster. **Namespaces straddle nodes by
+  design**: a namespace rect may overlap any number of node rects, and that
+  overlap *is* its membership (frame titles show `on: worker-1, worker-2` via
+  `nodesOfNamespace`). A node drag translates only the namespaces *fully
+  contained* in it (and their resources) — straddling namespaces stay put; a
+  resize can never shrink past a namespace it fully contains but cuts straddlers
+  freely. `deleteNode` removes the rect only: namespaces/resources are
+  untouched. Nodes are never auto-derived, never grown by `repairPlacements`,
+  and cluster-scoped kinds (PV/StorageClass) are kept out of node rects exactly
+  like namespace rects. In the dedicated **"Nodes"** mode only the cluster and
+  node rectangles are editable — namespace rectangles stay decorative, resources
+  keep their normal clamped dragging, and `+ Node` is the only add button.
+- **A dragged frame can never leave the cluster**: `moveNamespace`/
+  `moveNodeRect` resolve sibling collisions first, then clamp the result inside
+  the cluster bounds (`clampRectToRect` — containment wins over overlap in the
+  rare full-cluster case). The cluster only ever grows on creation/repair, never
+  on a drag; resize already stops at the cluster edge.
 - **"+ Namespace"** opens a modal (like the resource creation prompts, not a
   native alert) — inline validation for empty/duplicate names (against both
   persisted rects and namespaces discovered from the graph). The new rect is
@@ -127,8 +154,8 @@ Cluster/`ns:` bounding frames become editable:
   stale during a drag). On drop a node is additionally pushed out of any
   resource it overlaps (`resolveNodeCollision` — a dropped node never sits on
   top of another one).
-- **Persistence**: `veltra_ns_layout` is written only when leaving NS mode AND
-  the layout was actually edited. `nsLayout` starts `null` — `effectiveNsLayout`
+- **Persistence**: `veltra_ns_layout` is written when leaving EITHER frame mode
+  AND the layout was actually edited. `nsLayout` starts `null` — `effectiveNsLayout`
   then derives everything from the live graph, so YAML changes always re-hug
   the frames; edit actions lazily seed `nsLayout` from the graph via
   `ensureNsLayout` in the store.
@@ -158,6 +185,7 @@ They each encode a fixed bug; regressing one reintroduces it.
 15. **CronJobs own their Jobs single-assignment** (`synthesizeJob` in buildGraph): a CronJob always synthesizes exactly ONE Job (named `<name>-<hash>`) from `spec.jobTemplate.spec`, and that synthetic Job materializes Pods up to the template's `parallelism` — it NEVER claims existing Jobs or explicit Pods (real Jobs stay standalone). The Job and its Pods are top-level siblings of the CronJob (never nested) linked by inferred edges (`triggers` CronJob→Job, `owns` Job→Pod), all with `managedBy` pointing at the nearest REAL owner (the CronJob), so canvas links to them redirect to the CronJob and delete/rename guards behave like the Deployment's synthetic RS/Pods. They are **draggable like a real Job and its Pods** (positions persist and a pinned synthetic Job clears auto-placed workloads), but remain display-only — edits/deletes are still guarded. CronJob↔Job manual connections are rejected.
 16. **VPAs target the pod controller, not its Pods** (`getVpaTarget` reads `spec.targetRef` — allowed kinds Deployment/ReplicaSet/Pod/Job/CronJob; a target whose Pods are nested inside a Deployment/ReplicaSet is addressed via the workload, never the nested Pods). The inferred edge is VPA→targetRef node labeled "right-sizes" (sky `#0ea5e9`), never to nested Pods. Manual VPA↔workload/Pod connections write `targetRef` via `linkVpaToTarget` — 1:1, an existing targetRef is replaced; synthetic targets redirect to their real owner. VPA↔Service/Ingress/HPA/ConfigMap/Secret/PVC/PV/StorageClass pairs are rejected with a toast. Renaming a Deployment/ReplicaSet/Pod/Job/CronJob cascades into VPA `targetRef.name` (`renameVpaTargetReferences` in the store). VPAs share HPA's lane (Y=520) with a SINGLE combined collision pass so the two autoscaler kinds never overlap. VPA has **no controller simulation**: it never rewrites container resources or replica counts on the canvas — the VPA inspector (`targetRef`, `updatePolicy.updateMode`, min/max cpu+memory via `resourcePolicy.containerPolicies[0]`) and the target's read-only "Vertical scaled by" projection (driven by `getVpaTarget`) stay in sync with the model. Kind token is the FULL `VerticalPodAutoscaler` (like PersistentVolumeClaim, unlike the short HPA token), `apiVersion: autoscaling.k8s.io/v1`.
 17. **New resources land inside their box, overlap-free** (`repairPlacements` in [src/utils/placement.ts](src/utils/placement.ts), run inside `deriveGraph`). buildGraph's lane layout is namespace-blind, so after every rebuild the repair pass re-positions exactly the *auto-placed* top-level nodes (buildGraph reports them in `autoPlacedIds`; pinned/user-dragged nodes are never touched — invariants 3/4) that are outside their namespace/cluster rect, on top of another resource, or inside a foreign namespace box. Smaller nodes yield to bigger ones when lane spots collide (an HPA auto-aligned under a tall Deployment slides aside, the Deployment keeps its spot). The lane position is kept when valid, else the pass sweeps for a free spot inside the box (a namespace with no rect yet sweeps inside the cluster, never below it), else appends below/right of the box's content. A persisted box that can't fit the node **grows** (down, else right), pushing any blocking sibling namespace rect (and its resources) out of the way when both directions are blocked, and the cluster rect grows to the hull of its content — siblings are only pushed when a *namespace* rect grows, never when the cluster grows (it contains them); grown layouts are written back (`layoutChanged` → `persistNsLayout`). Pure auto layouts (`nsLayout: null`) need no growth — the frames re-hug. Manual drags obey the same rule: on drop a node is pushed out of any resource it overlaps (the normal-mode drop) while staying inside its box. **Creation never inherits stale pins**: `clearSavedPositions` wipes `veltra_node_positions` entries for every newly created resource (`addConfiguredNode`/`addConfiguredNodes`), for resources typed into the YAML/file editors that aren't already on the canvas (`setYaml`/`setFileYaml`), for deleted resources (`deleteNodeFromCanvas`/`setCanvasNodes`/`deleteNamespace`), and for pure namespace reassignments (a same-kind+name namespace change commits with `prevNodes` minus the node, so the rebuild re-places it inside the target box with growth — a stale pin from a dragged-then-deleted resource otherwise bypasses both the lane layout AND the repair, which is what used to strand recreated resources outside their namespace until a click (zero-distance drag) clamped them back).
+18. **Nodes are canvas-only physical chrome** (`NodeRect` in `NsLayout.nodes`, persisted in `veltra_ns_layout` — `readNsLayout` back-compat loads old layouts without a `nodes` key as an empty list). A Node frame is a third tier between the cluster and the namespace rects (`cluster → node → namespace`) that is never a resource: `parseYaml`/`serializeYaml`/`toResources`/`KIND_COLORS` never see it, and it is never auto-derived (`buildTeachingFrame`/`effectiveNsLayout`/`repairPlacements` only carry the persisted copies; an unedited layout has none). Node rects never overlap each other (physical exclusivity — `moveNodeRect`/`resizeNodeRect` use sibling node rects as blockers) and never leave the cluster; a namespace rect may straddle any number of node rects and that geometric overlap *is* its membership (frame titles show `on: worker-1, worker-2` via `nodesOfNamespace`). Moving a node translates only the namespaces *fully contained* in it (and their top-level resources) — straddling namespaces stay put; resizing can't shrink past a fully-contained namespace but cuts straddlers freely; `deleteNode` removes the rect only, never namespaces/resources. **A dragged node or namespace rect can never leave the cluster** (`clampRectToRect` after sibling collision resolution — the cluster only grows on creation/repair, never on a drag). Cluster-scoped kinds (PV/StorageClass) are pushed out of node rects exactly like namespace rects (`clampDraggedNode`/drop blockers/hardValid). `placeNewNodeRect` sweeps the first free pocket avoiding node **and** namespace rects (a fresh node starts empty) and grows the cluster when full. `repairPlacements` never grows or pushes node rects, but the cluster hull expands over them. The inspector's `node: <name>` row is a read-only derivation from geometry (top-level ancestor center hit-tested against the node rects), never part of the model. There are **two mutually exclusive frame-editing modes** (`nsEditMode`/`nodeEditMode`, entering one exits the other and persists the shared layout): "Namespaces" edits every tier and shows `+ Namespace` + `+ Node`; "Nodes" edits only the cluster + node rects (`+ Node` is the only add button) while namespaces stay decorative and resources keep normal clamped dragging.
 
 ## Conventions
 

@@ -82,7 +82,7 @@ export default function CreateGatewayApiModal({ onClose }: Props) {
     );
 
     const namespaceOptions = useMemo(() => {
-        const vals = new Set<string>(['default', 'kube-system']);
+        const vals = new Set<string>(['default']);
         nodes.forEach((n) => {
             if (n.data.namespace) vals.add(n.data.namespace);
         });

@@ -34,6 +34,78 @@ export interface NamespaceRectPlacement {
 }
 
 /**
+ * Place a NEW physical node rectangle inside the cluster — the node analogue
+ * of `placeNewNamespaceRect`: swept into the first free pocket that avoids
+ * every existing node rect AND namespace rect (a fresh node starts empty — it
+ * must not silently swallow namespaces it happens to cover), and when the
+ * cluster has no room the rectangle is appended below its content and the
+ * cluster GROWS to contain it (grow-only). Never returns a rect outside the
+ * cluster.
+ */
+export function placeNewNodeRect(
+    layout: NsLayout,
+    width: number,
+    height: number,
+    preferred: { x: number; y: number }
+): NamespaceRectPlacement {
+    const cluster = { ...layout.cluster };
+    const others = [...layout.nodes, ...layout.namespaces];
+    const overlapsOthers = (r: Rect) => others.some((o) => rectsOverlap(r, o));
+    const clampX = (x: number) =>
+        Math.min(
+            Math.max(x, cluster.x + NS_GAP),
+            cluster.x + cluster.width - width - NS_GAP
+        );
+    const trySpot = (x: number, y: number): Rect | null => {
+        const r = { x, y, width, height };
+        if (r.x < cluster.x || r.y < cluster.y) return null;
+        if (
+            r.x + r.width > cluster.x + cluster.width ||
+            r.y + r.height > cluster.y + cluster.height
+        ) {
+            return null;
+        }
+        if (overlapsOthers(r)) return null;
+        return r;
+    };
+
+    // 1. Free-pocket sweep inside the cluster: rows step downward from the
+    //    preferred y; x candidates are the preferred x, the cluster's left
+    //    edge and each existing rect's right edge (+ gap).
+    const maxRows = Math.ceil(cluster.height / NS_SWEEP_STEP) + 8;
+    for (let i = 0; i < maxRows; i++) {
+        const y = Math.max(preferred.y, cluster.y + NS_GAP) + i * NS_SWEEP_STEP;
+        if (y > cluster.y + cluster.height - height) break;
+        const xs = new Set<number>([
+            clampX(preferred.x),
+            cluster.x + NS_GAP,
+            ...others.map((o) => clampX(o.x + o.width + NS_GAP)),
+        ]);
+        for (const x of xs) {
+            const spot = trySpot(x, y);
+            if (spot) return { rect: spot, cluster };
+        }
+    }
+
+    // 2. No pocket inside: append below the cluster's content and grow the
+    //    cluster to fit (grow-only). resolveMoveCollision keeps the rect clear
+    //    of any stray node/namespace rectangle.
+    const rect = resolveMoveCollision(
+        { x: cluster.x + NS_GAP, y: cluster.y + cluster.height + 40, width, height },
+        others
+    );
+    return {
+        rect,
+        cluster: {
+            x: cluster.x,
+            y: cluster.y,
+            width: Math.max(cluster.width, rect.x + rect.width - cluster.x + 40),
+            height: Math.max(cluster.height, rect.y + rect.height - cluster.y + 40),
+        },
+    };
+}
+
+/**
  * Place a NEW namespace rectangle inside the cluster — mirroring
  * `repairPlacements` for resources: swept into the first free pocket that
  * avoids every existing namespace rect, and when the cluster has no room the
@@ -153,6 +225,7 @@ export function repairPlacements(
     const persisted = persistedMode
         ? {
               cluster: { ...nsLayout!.cluster },
+              nodes: nsLayout!.nodes.map((n) => ({ ...n })),
               namespaces: nsLayout!.namespaces.map((ns) => ({ ...ns })),
           }
         : null;
@@ -166,6 +239,8 @@ export function repairPlacements(
         cluster: persisted
             ? { ...persisted.cluster }
             : auto?.cluster ?? { ...DEFAULT_CLUSTER_RECT },
+        // Physical nodes are never auto-derived — only the persisted copies.
+        nodes: persisted?.nodes.map((n) => ({ ...n })) ?? [],
         namespaces: [
             ...(persisted?.namespaces.map((ns) => ({ ...ns })) ?? []),
             ...(auto?.namespaces
@@ -253,7 +328,9 @@ export function repairPlacements(
         const own = namespaced ? layout.namespaces.find((ns) => ns.name === nsName) : undefined;
         const foreignRects = namespaced
             ? layout.namespaces.filter((ns) => ns.name !== nsName)
-            : layout.namespaces;
+            : // Cluster-scoped kinds also steer clear of physical node rects —
+              // storage/gateway infra never sits "on" a node box.
+              [...layout.namespaces, ...layout.nodes];
         const container = namespaced ? own : layout.cluster;
         // Rect-less namespaces (the first resource in a new box) still sweep
         // INSIDE the cluster in persisted mode — the cluster edges give the
@@ -274,8 +351,13 @@ export function repairPlacements(
                 } else {
                     if (!inside(r, layout.cluster)) return false;
                     if (layout.namespaces.some((ns) => rectsOverlap(r, ns))) return false;
+                    if (layout.nodes.some((nd) => rectsOverlap(r, nd))) return false;
                 }
-            } else if (!namespaced && layout.namespaces.some((ns) => rectsOverlap(r, ns))) {
+            } else if (
+                !namespaced &&
+                (layout.namespaces.some((ns) => rectsOverlap(r, ns)) ||
+                    layout.nodes.some((nd) => rectsOverlap(r, nd)))
+            ) {
                 return false;
             }
             return true;
@@ -390,8 +472,9 @@ export function repairPlacements(
 
     if (!persistedMode) return { nodes: nodesOut, nsLayout, layoutChanged: false };
 
-    // Cluster box grows to the hull of every namespace box and cluster-scoped
-    // resource it contains (grow-only — it never shrinks on removal).
+    // Cluster box grows to the hull of every node box, namespace box and
+    // cluster-scoped resource it contains (grow-only — it never shrinks on
+    // removal).
     const sameRect = (a: Rect, b: Rect) =>
         a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
     const hull = { ...layout.cluster };
@@ -401,6 +484,7 @@ export function repairPlacements(
         if (right > hull.x + hull.width) hull.width = right - hull.x;
         if (bottom > hull.y + hull.height) hull.height = bottom - hull.y;
     };
+    layout.nodes.forEach(expand);
     layout.namespaces.forEach(expand);
     topLevel.forEach((n) => {
         if (isClusterScoped(n.data.kind)) expand(rectById.get(n.id)!);
@@ -419,7 +503,11 @@ export function repairPlacements(
     if (changed) {
         return {
             nodes: nodesOut,
-            nsLayout: { cluster: { ...layout.cluster }, namespaces },
+            nsLayout: {
+                cluster: { ...layout.cluster },
+                nodes: layout.nodes.map((n) => ({ ...n })),
+                namespaces,
+            },
             layoutChanged: true,
         };
     }

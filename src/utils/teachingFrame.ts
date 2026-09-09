@@ -15,9 +15,21 @@ export interface NamespaceRect extends Rect {
     name: string;
 }
 
-/** The cluster rectangle + all namespace rectangles (user-editable layout). */
+/**
+ * A canvas-only physical k8s node rectangle: `name` is the unique key.
+ * Node rects live inside the cluster, never overlap each other, and hold
+ * namespace rectangles — but namespaces may straddle any number of node
+ * rects (the geometric overlap IS the node membership).
+ */
+export interface NodeRect extends Rect {
+    name: string;
+}
+
+/** The cluster rectangle + all node/namespace rectangles (user-editable layout). */
 export interface NsLayout {
     cluster: Rect;
+    /** Physical nodes — never auto-derived, present only once the user creates them. */
+    nodes: NodeRect[];
     namespaces: NamespaceRect[];
 }
 
@@ -30,8 +42,11 @@ export const FALLBACK_NODE_HEIGHT = 130;
 /** Smallest a namespace rectangle may be shrunk to (resize handles). */
 export const NAMESPACE_MIN_RECT = 80;
 
+/** Smallest a physical node rectangle may be shrunk to (resize handles). */
+export const NODE_MIN_RECT = 120;
+
 /** Namespaces that can never be deleted (K8s built-ins, no × button shown). */
-export const PROTECTED_NAMESPACES = new Set(['default', 'kube-system']);
+export const PROTECTED_NAMESPACES = new Set(['default']);
 
 /**
  * Compute the Cluster/namespace guide frames from the *top-level* nodes only,
@@ -62,7 +77,9 @@ export function buildTeachingFrame(nodes: Node<K8sNodeData>[]): NsLayout | null 
         }
     );
 
-    return { cluster, namespaces };
+    // Physical nodes are never auto-derived from the graph — they exist only
+    // once the user creates them (persisted in the layout).
+    return { cluster, nodes: [], namespaces };
 }
 
 /**
@@ -77,12 +94,13 @@ export function effectiveNsLayout(
 ): NsLayout {
     const auto = buildTeachingFrame(nodes);
     const cluster = nsLayout?.cluster ?? auto?.cluster ?? { ...DEFAULT_CLUSTER_RECT };
+    const nodeRects = nsLayout?.nodes ?? [];
     const merged = new Map((nsLayout?.namespaces ?? []).map((ns) => [ns.name, ns]));
     const discovered = new Map((auto?.namespaces ?? []).map((ns) => [ns.name, ns]));
     discovered.forEach((ns, name) => {
         if (!merged.has(name)) merged.set(name, ns);
     });
-    return { cluster, namespaces: Array.from(merged.values()) };
+    return { cluster, nodes: nodeRects, namespaces: Array.from(merged.values()) };
 }
 
 /** True when the point lies inside the rectangle. */
@@ -95,9 +113,48 @@ export function rectContains(rect: Rect, point: { x: number; y: number }): boole
     );
 }
 
+/** True when `inner` is fully contained in `outer` (touching edges count as inside). */
+export function rectContainsRect(inner: Rect, outer: Rect): boolean {
+    return (
+        inner.x >= outer.x &&
+        inner.y >= outer.y &&
+        inner.x + inner.width <= outer.x + outer.width &&
+        inner.y + inner.height <= outer.y + outer.height
+    );
+}
+
+/** The physical node rectangles a namespace rect overlaps (straddles). */
+export function nodesOfNamespace(
+    ns: NamespaceRect,
+    nodes: NodeRect[]
+): NodeRect[] {
+    return nodes.filter((n) => rectsOverlap(ns, n));
+}
+
+/** The namespace rectangles a physical node rect overlaps (contains or straddles). */
+export function namespacesOfNode(
+    node: NodeRect,
+    namespaces: NamespaceRect[]
+): NamespaceRect[] {
+    return namespaces.filter((ns) => rectsOverlap(node, ns));
+}
+
 /** True when two axis-aligned rectangles overlap (strict, touching edges don't collide). */
 export function rectsOverlap(a: Rect, b: Rect): boolean {
     return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
+/**
+ * Clamp a rectangle so it stays fully inside `container` (like
+ * `clampPositionToRect`, but for a full rect). Degenerate containers smaller
+ * than the rect keep it anchored to the container's top-left corner.
+ */
+export function clampRectToRect(rect: Rect, container: Rect): Rect {
+    return {
+        ...rect,
+        x: Math.min(Math.max(rect.x, container.x), container.x + container.width - rect.width),
+        y: Math.min(Math.max(rect.y, container.y), container.y + container.height - rect.height),
+    };
 }
 
 /**

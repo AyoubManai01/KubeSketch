@@ -77,6 +77,7 @@ import PvcLinkModal from "./PvcLinkModal";
 import SecretLinkModal from "./SecretLinkModal";
 import IngressTlsLinkModal from "./IngressTlsLinkModal";
 import NamespaceModal from "./NamespaceModal";
+import NodeModal from "./NodeModal";
 import DeleteNamespaceModal from "./DeleteNamespaceModal";
 
 /** Register our custom node type so React Flow can render it */
@@ -96,7 +97,7 @@ const RESOURCE_GROUPS: { label: string; kinds: SupportedKind[] }[] = [
     (kind) => !isGatewayApiKind(kind) && kindGroupLabel(kind) === label,
   ),
 }));
-const DEFAULT_NAMESPACES = ["default", "kube-system", "kube-public"];
+const DEFAULT_NAMESPACES = ["default"];
 const SERVICE_TYPES = ["ClusterIP", "NodePort", "LoadBalancer", "ExternalName"];
 
 const KIND_COLORS: Record<string, string> = {
@@ -546,14 +547,42 @@ export default function Canvas() {
   const nsLayout = useVeltraStore((s) => s.nsLayout);
   const nsEditMode = useVeltraStore((s) => s.nsEditMode);
   const setNsEditMode = useVeltraStore((s) => s.setNsEditMode);
+  const nodeEditMode = useVeltraStore((s) => s.nodeEditMode);
+  const setNodeEditMode = useVeltraStore((s) => s.setNodeEditMode);
   const deleteNamespace = useVeltraStore((s) => s.deleteNamespace);
+  // Either frame editing mode is active — resources become fixed / connections
+  // and edge auto-pan switch off while arranging frames.
+  const anyFrameEditMode = nsEditMode || nodeEditMode;
   // Persisted + auto-discovered cluster/namespace rectangles — the drop targets
   // for namespace reassignment and the frames NsFrame renders.
   const effectiveLayout = useMemo(
     () => effectiveNsLayout(nsLayout, nodes),
     [nsLayout, nodes],
   );
-  // In namespace editing mode cluster-scoped kinds (PV/StorageClass) are fixed —
+  // The physical node the selected resource is "running on" — derived read-only
+  // from geometry: walk up to the selected node's top-level ancestor (nested
+  // pods report their workload's node) and hit-test its center against the node
+  // rectangles. Nodes are canvas-only chrome, so this never touches the model.
+  const selectedResourceNode = useMemo(() => {
+    if (!selectedNode) return null;
+    if (isClusterScoped(selectedNode.data.kind)) return null;
+    let top = selectedNode;
+    while (top.parentId) {
+      top = nodes.find((n) => n.id === top.parentId) ?? top;
+    }
+    const width =
+      typeof top.style?.width === "number" ? top.style.width : FALLBACK_NODE_WIDTH;
+    const height =
+      typeof top.style?.height === "number" ? top.style.height : FALLBACK_NODE_HEIGHT;
+    const center = {
+      x: top.position.x + width / 2,
+      y: top.position.y + height / 2,
+    };
+    return (
+      effectiveLayout.nodes.find((nd) => rectContains(nd, center))?.name ?? null
+    );
+  }, [selectedNode, nodes, effectiveLayout]);
+  // In a frame editing mode cluster-scoped kinds (PV/StorageClass) are fixed —
   // they can't be reassigned, so they must not be draggable at all. The React Flow
   // `selected` flag follows the store selection (single source of truth), so the
   // visual highlight also lands on nodes selected from the file explorer.
@@ -563,13 +592,13 @@ export default function Canvas() {
       : "";
     return nodes.map((n) => {
       const node =
-        nsEditMode && isClusterScoped(n.data.kind)
+        (nsEditMode || nodeEditMode) && isClusterScoped(n.data.kind)
           ? { ...n, draggable: false }
           : n;
       const selected = selKey !== "" && `${n.data.kind}:${n.data.name}` === selKey;
       return node.selected === selected ? node : { ...node, selected };
     });
-  }, [nodes, nsEditMode, selectedResource]);
+  }, [nodes, nsEditMode, nodeEditMode, selectedResource]);
 
   const namespaceOptions = useMemo(() => {
     const discovered = new Set<string>(DEFAULT_NAMESPACES);
@@ -1325,7 +1354,7 @@ export default function Canvas() {
         width,
         height,
         null,
-        layout.namespaces,
+        [...layout.namespaces, ...layout.nodes],
       );
     }
     const nsRect = layout.namespaces.find(
@@ -1424,7 +1453,7 @@ export default function Canvas() {
               width,
               height,
               null,
-              [...blockers, ...layout.namespaces],
+              [...blockers, ...layout.namespaces, ...layout.nodes],
             );
           } else {
             const nsRect = layout.namespaces.find(
@@ -1522,6 +1551,9 @@ export default function Canvas() {
   // rectangle is dropped below the cluster. Validation is inline in the modal
   // and re-checked by the store.
   const [namespaceModalOpen, setNamespaceModalOpen] = useState(false);
+
+  // Add a canvas-only physical node rectangle (namespace editing mode).
+  const [nodeModalOpen, setNodeModalOpen] = useState(false);
 
   // Namespace awaiting cascade-delete confirmation (only opened when it has
   // resources — empty boxes are deleted immediately).
@@ -1670,6 +1702,16 @@ export default function Canvas() {
               + Namespace
             </button>
           )}
+          {(nsEditMode || nodeEditMode) && (
+            <button
+              type="button"
+              className="canvas-button"
+              onClick={() => setNodeModalOpen(true)}
+              title="Add a canvas-only physical node rectangle to the cluster"
+            >
+              + Node
+            </button>
+          )}
           <button
             type="button"
             className={`canvas-button canvas-button--nsmode${nsEditMode ? " canvas-button--active" : ""}`}
@@ -1677,7 +1719,7 @@ export default function Canvas() {
             title={
               nsEditMode
                 ? "Exit namespace editing mode (layout is saved)"
-                : "Enter namespace editing mode — drag, resize and add namespace boxes"
+                : "Enter namespace editing mode — drag, resize and add node and namespace boxes"
             }
           >
             <svg
@@ -1694,6 +1736,31 @@ export default function Canvas() {
               <rect x="13" y="13" width="8" height="8" rx="1.5" />
             </svg>
             {nsEditMode ? "Done" : "Namespaces"}
+          </button>
+          <button
+            type="button"
+            className={`canvas-button canvas-button--nsmode${nodeEditMode ? " canvas-button--active" : ""}`}
+            onClick={() => setNodeEditMode(!nodeEditMode)}
+            title={
+              nodeEditMode
+                ? "Exit node editing mode (layout is saved)"
+                : "Enter node editing mode — drag, resize and add physical node boxes"
+            }
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="2.5" y="5" width="19" height="6" rx="1.5" />
+              <rect x="2.5" y="13" width="19" height="6" rx="1.5" />
+              <line x1="7" y1="8" x2="7" y2="8" />
+              <line x1="7" y1="16" x2="7" y2="16" />
+            </svg>
+            {nodeEditMode ? "Done" : "Nodes"}
           </button>
         </div>
       </div>
@@ -1721,10 +1788,10 @@ export default function Canvas() {
               onNodeDragStop={onNodeDragStop}
               onInit={onFlowInit}
               nodesDraggable
-              nodesConnectable={!nsEditMode}
-              // Resources are fixed in NS mode (drags snap back), so edge auto-pan
+              nodesConnectable={!anyFrameEditMode}
+              // Resources are fixed in frame editing mode (drags snap back), so edge auto-pan
               // would only shift the view mid-drag and mislead the drop target.
-              autoPanOnNodeDrag={!nsEditMode}
+              autoPanOnNodeDrag={!anyFrameEditMode}
               selectionOnDrag={false}
               elevateEdgesOnSelect={false}
               proOptions={{ hideAttribution: true }}
@@ -1978,6 +2045,14 @@ export default function Canvas() {
                     {inspectorData.namespace && !isClusterScoped(inspectorData.kind) && (
                       <div className="inspector-hero__namespace">
                         ns/{inspectorData.namespace}
+                      </div>
+                    )}
+                    {selectedResourceNode && !isClusterScoped(inspectorData.kind) && (
+                      <div
+                        className="inspector-hero__node"
+                        title="Derived from the node rectangle the resource's top-level owner sits in — canvas-only, not part of the manifest"
+                      >
+                        node: {selectedResourceNode}
                       </div>
                     )}
                   </div>
@@ -5376,6 +5451,9 @@ export default function Canvas() {
       {namespaceModalOpen && (
         <NamespaceModal onClose={() => setNamespaceModalOpen(false)} />
       )}
+
+      {/* New-physical-node prompt (namespace editing mode) */}
+      {nodeModalOpen && <NodeModal onClose={() => setNodeModalOpen(false)} />}
 
       {/* Cascade-delete confirmation (non-empty namespace) */}
       {deleteNsTarget && (

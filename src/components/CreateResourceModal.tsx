@@ -398,7 +398,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     }, [nodes]);
 
     const namespaceOptions = useMemo(() => {
-        const vals = new Set<string>(['default', 'kube-system']);
+        const vals = new Set<string>(['default']);
         nodes.forEach((n) => { if (n.data.namespace) vals.add(n.data.namespace); });
         nsLayout?.namespaces?.forEach((ns) => vals.add(ns.name));
         return Array.from(vals).sort();

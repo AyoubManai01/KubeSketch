@@ -28,14 +28,17 @@ import {
 } from '../utils/linkResources';
 import { isClusterScoped } from '../utils/k8sScope';
 import { computeFileOf, fileViewOf, resourceKeyOf } from '../utils/fileTree';
-import { repairPlacements, placeNewNamespaceRect } from '../utils/placement';
+import { repairPlacements, placeNewNamespaceRect, placeNewNodeRect } from '../utils/placement';
 import {
     buildTeachingFrame,
+    clampRectToRect,
     DEFAULT_CLUSTER_RECT,
     FALLBACK_NODE_HEIGHT,
     FALLBACK_NODE_WIDTH,
     NAMESPACE_MIN_RECT,
+    NODE_MIN_RECT,
     PROTECTED_NAMESPACES,
+    rectContainsRect,
     resolveMoveCollision,
     resolveResizeCollision,
     type NamespaceRect,
@@ -269,6 +272,11 @@ interface VeltraState {
      *  their rectangle) and can be dragged onto another rectangle to reassign. */
     nsEditMode: boolean;
 
+    /** Dedicated physical-node editing mode: node/cluster rectangles become
+     *  draggable, resizeable and addable (namespaces stay decorative). Mutually
+     *  exclusive with `nsEditMode` — entering one exits the other. */
+    nodeEditMode: boolean;
+
     /** Cluster + namespace rectangles (positions/sizes). Null until the user
      *  edits them — the rendered layout then derives from the live graph every
      *  time. Persisted on exit of namespace editing. */
@@ -341,6 +349,9 @@ interface VeltraState {
     clearAll: () => void;
     /** Enter/exit namespace editing mode; exiting persists the layout. */
     setNsEditMode: (on: boolean) => void;
+    /** Enter/exit the dedicated physical-node editing mode; exiting persists the
+     *  layout. Entering either frame mode exits the other (they share one layout). */
+    setNodeEditMode: (on: boolean) => void;
     /** Move a namespace rectangle (and every contained top-level node with it).
      *  The node translation is derived by diffing `rect` against the current
      *  rectangle, so callers may pass absolute (drag-start-anchored) rects. */
@@ -355,8 +366,22 @@ interface VeltraState {
     /** Add an empty namespace rectangle with the given position/size. */
     addNamespace: (name: string, rect?: Rect) => void;
     /** Delete a namespace: removes its rectangle and cascade-deletes every
-     *  resource living in it (K8s-style). `default`/`kube-system` are protected. */
+     *  resource living in it (K8s-style). `default` is protected. */
     deleteNamespace: (name: string) => void;
+    /** Move a physical node rectangle (and every namespace rectangle fully
+     *  contained in it, with their resources). Straddling namespaces stay put —
+     *  they belong to other nodes too. Translation derived from the rect diff. */
+    moveNodeRect: (name: string, rect: Rect) => void;
+    /** Resize a physical node rectangle (no namespace/resource movement).
+     *  Growth stops at sibling node rects; a shrink can't evict a namespace
+     *  rectangle it fully contains. */
+    resizeNodeRect: (name: string, rect: Rect) => void;
+    /** Add an empty physical node rectangle (swept into the first free pocket;
+     *  the cluster grows when there is no room). */
+    addNode: (name: string, rect?: Rect) => void;
+    /** Delete a physical node rectangle. Namespaces/resources are untouched —
+     *  nodes are canvas-only chrome that never own resources. */
+    deleteNode: (name: string) => void;
     /** Enter/exit VSCode-style file explorer mode (persisted). Entering picks a
      *  sensible active file (the selected resource's, else the first one). */
     setFileExplorerMode: (on: boolean) => void;
@@ -509,6 +534,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         pendingSecretLink: null,
         pendingIngressTlsLink: null,
         nsEditMode: false,
+        nodeEditMode: false,
         nsLayout: initialGraph.nsLayout ?? savedNsLayout,
         fileExplorerMode: savedFileExplorerMode,
         activeFile: initialFileView.activeFile,
@@ -1337,6 +1363,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 pendingSecretLink: null,
                 pendingIngressTlsLink: null,
                 nsEditMode: false,
+                nodeEditMode: false,
                 nsLayout: null,
                 activeFile: null,
                 activeFileText: '',
@@ -1345,6 +1372,13 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         },
 
         setNsEditMode: (on) => {
+            // The two frame modes share one layout — leaving one for the other
+            // persists it, exactly like pressing Done.
+            if (on && get().nodeEditMode) {
+                const current = get().nsLayout;
+                if (current) persistNsLayout(current);
+                set({ nodeEditMode: false });
+            }
             if (!on) {
                 // Auto-persist the layout when leaving namespace editing mode —
                 // but only if the user actually edited it (null = pure auto-layout).
@@ -1354,13 +1388,32 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
             set({ nsEditMode: on });
         },
 
+        setNodeEditMode: (on) => {
+            if (on && get().nsEditMode) {
+                const current = get().nsLayout;
+                if (current) persistNsLayout(current);
+                set({ nsEditMode: false });
+            }
+            if (!on) {
+                const layout = get().nsLayout;
+                if (layout) persistNsLayout(layout);
+            }
+            set({ nodeEditMode: on });
+        },
+
         moveNamespace: (name, rect) =>
             set((state) => {
                 const layout = ensureNsLayout(state);
                 // Namespace rectangles never collide: the dragged rect is pushed out
                 // of every other namespace rect before the translation is computed.
                 const others = layout.namespaces.filter((ns) => ns.name !== name);
-                const clamped = resolveMoveCollision(rect, others);
+                // …and it can never leave the cluster: sibling resolution first, then
+                // a final clamp to the cluster bounds wins (a dragged box stays inside
+                // even when the cluster has no spare room — containment over overlap).
+                const clamped = clampRectToRect(
+                    resolveMoveCollision(rect, others),
+                    layout.cluster
+                );
                 // Translation is the diff between the passed rect and the one the
                 // layout currently holds — the caller may pass absolute rects
                 // anchored at drag start without double-applying.
@@ -1381,7 +1434,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     nodes: nextNodes,
                     nsLayout: {
                         ...layout,
-                        namespaces: upsertNsRect(layout.namespaces, name, clamped),
+                        namespaces: upsertNamedRect(layout.namespaces, name, clamped),
                     },
                 };
             }),
@@ -1392,16 +1445,21 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 const dx = cluster.x - layout.cluster.x;
                 const dy = cluster.y - layout.cluster.y;
                 // The whole cluster translates: every top-level node (namespaced
-                // and cluster-scoped alike) plus all namespace rectangles.
+                // and cluster-scoped alike) plus all node and namespace rectangles.
                 const nextNodes = state.nodes.map((n) =>
                     n.parentId ? n : { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } }
                 );
+                const nodes = layout.nodes.map((nd) => ({
+                    ...nd,
+                    x: nd.x + dx,
+                    y: nd.y + dy,
+                }));
                 const namespaces = layout.namespaces.map((ns) => ({
                     ...ns,
                     x: ns.x + dx,
                     y: ns.y + dy,
                 }));
-                return { nodes: nextNodes, nsLayout: { cluster, namespaces } };
+                return { nodes: nextNodes, nsLayout: { cluster, nodes, namespaces } };
             }),
 
         resizeNsRect: (name, rect) =>
@@ -1426,7 +1484,7 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 return {
                     nsLayout: {
                         ...layout,
-                        namespaces: upsertNsRect(layout.namespaces, name, clamped),
+                        namespaces: upsertNamedRect(layout.namespaces, name, clamped),
                     },
                 };
             }),
@@ -1434,14 +1492,14 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         resizeClusterRect: (rect) =>
             set((state) => {
                 const layout = ensureNsLayout(state);
-                // The cluster can't shrink past its namespace boxes either (they
-                // act as its content) — otherwise a ns box would end up outside.
+                // The cluster can't shrink past its node or namespace boxes either
+                // (they act as its content) — otherwise a box would end up outside.
                 const clamped = resolveResizeCollision(
                     layout.cluster,
                     rect,
                     [],
                     NAMESPACE_MIN_RECT,
-                    layout.namespaces
+                    [...layout.nodes, ...layout.namespaces]
                 );
                 return { nsLayout: { ...layout, cluster: clamped } };
             }),
@@ -1567,6 +1625,160 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     notice: makeNotice(
                         'success',
                         `Namespace “${trimmed}” deleted with ${doomed.size} resource${doomed.size > 1 ? 's' : ''}.`
+                    ),
+                };
+            }),
+
+        moveNodeRect: (name, rect) =>
+            set((state) => {
+                const layout = ensureNsLayout(state);
+                // Node rectangles never collide (physical exclusivity): the
+                // dragged rect is pushed out of every other node rect before the
+                // translation is computed. Namespace rects are NOT blockers —
+                // they may straddle any number of nodes.
+                const others = layout.nodes.filter((nd) => nd.name !== name);
+                // …and it can never leave the cluster: sibling resolution first,
+                // then a final clamp to the cluster bounds wins.
+                const clamped = clampRectToRect(
+                    resolveMoveCollision(rect, others),
+                    layout.cluster
+                );
+                const old = layout.nodes.find((nd) => nd.name === name);
+                if (!old) {
+                    return {
+                        nsLayout: {
+                            ...layout,
+                            nodes: upsertNamedRect(layout.nodes, name, clamped),
+                        },
+                    };
+                }
+                // Translation is the diff between the passed rect and the one the
+                // layout currently holds — the caller may pass absolute rects
+                // anchored at drag start without double-applying.
+                const dx = clamped.x - old.x;
+                const dy = clamped.y - old.y;
+                // Only namespaces FULLY contained in the node's pre-move rect ride
+                // along (with their top-level resources); a straddling namespace
+                // belongs to other nodes too, so it stays put — the node slides
+                // out from under it instead of dragging it along.
+                const rideAlong = new Set(
+                    layout.namespaces
+                        .filter((ns) => rectContainsRect(ns, old))
+                        .map((ns) => ns.name)
+                );
+                const nextNodes = state.nodes.map((n) => {
+                    if (n.parentId) return n;
+                    if (isClusterScoped(n.data.kind)) return n;
+                    if (!rideAlong.has(n.data.namespace ?? 'default')) return n;
+                    return { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } };
+                });
+                const namespaces = layout.namespaces.map((ns) =>
+                    rideAlong.has(ns.name)
+                        ? { ...ns, x: ns.x + dx, y: ns.y + dy }
+                        : ns
+                );
+                return {
+                    nodes: nextNodes,
+                    nsLayout: {
+                        ...layout,
+                        nodes: upsertNamedRect(layout.nodes, name, clamped),
+                        namespaces,
+                    },
+                };
+            }),
+
+        resizeNodeRect: (name, rect) =>
+            set((state) => {
+                const layout = ensureNsLayout(state);
+                const old = layout.nodes.find((nd) => nd.name === name);
+                const others = layout.nodes.filter((nd) => nd.name !== name);
+                // Content = the namespace rects fully contained in the node's
+                // pre-resize box: the box can never shrink past a namespace it
+                // holds (a node can't evict one). Straddling namespaces are cut
+                // freely — they live on other nodes too.
+                const content = old
+                    ? layout.namespaces.filter((ns) => rectContainsRect(ns, old))
+                    : [];
+                const clamped = old
+                    ? resolveResizeCollision(
+                          old,
+                          rect,
+                          others,
+                          NODE_MIN_RECT,
+                          content,
+                          layout.cluster
+                      )
+                    : rect;
+                return {
+                    nsLayout: {
+                        ...layout,
+                        nodes: upsertNamedRect(layout.nodes, name, clamped),
+                    },
+                };
+            }),
+
+        addNode: (name, rect) =>
+            set((state) => {
+                const layout = ensureNsLayout(state);
+                const trimmed = (name ?? '').trim();
+                if (!trimmed) {
+                    return { notice: makeNotice('error', 'Node name cannot be empty.') };
+                }
+                // Nodes are never graph-derived, so only persisted rects can clash.
+                if (layout.nodes.some((nd) => nd.name === trimmed)) {
+                    return {
+                        notice: makeNotice(
+                            'error',
+                            `Node “${trimmed}” already exists on the canvas.`
+                        ),
+                    };
+                }
+                // The new rect always lands INSIDE the cluster (first free pocket
+                // avoiding node AND namespace rects — a fresh node starts empty);
+                // when there is no room, the cluster grows to fit it.
+                const placed = placeNewNodeRect(
+                    layout,
+                    rect?.width ?? 480,
+                    rect?.height ?? 360,
+                    {
+                        x: rect?.x ?? layout.cluster.x + 20,
+                        y: rect?.y ?? layout.cluster.y + 20,
+                    }
+                );
+                return {
+                    nsLayout: {
+                        ...layout,
+                        cluster: placed.cluster,
+                        nodes: [...layout.nodes, { name: trimmed, ...placed.rect }],
+                    },
+                    notice: makeNotice(
+                        'success',
+                        `Node “${trimmed}” added — drag namespaces onto it to place them on the node.`
+                    ),
+                };
+            }),
+
+        deleteNode: (name) =>
+            set((state) => {
+                const trimmed = (name ?? '').trim();
+                if (!trimmed) {
+                    return { notice: makeNotice('error', 'Node name cannot be empty.') };
+                }
+                const layout = ensureNsLayout(state);
+                const nodes = layout.nodes.filter((nd) => nd.name !== trimmed);
+                if (nodes.length === layout.nodes.length) {
+                    return {
+                        notice: makeNotice('error', `Node “${trimmed}” not found.`),
+                    };
+                }
+                // Pure layout change: nodes are canvas-only chrome that never own
+                // resources — namespaces merely lose one node when they straddled
+                // it, and the model/YAML stay untouched.
+                return {
+                    nsLayout: { ...layout, nodes },
+                    notice: makeNotice(
+                        'success',
+                        `Node “${trimmed}” deleted — its namespaces stay on the cluster.`
                     ),
                 };
             }),
@@ -2174,12 +2386,14 @@ function clearSavedPositions(keys: string[]) {
 // ─── Namespace layout storage helpers ────────────────────────────────────────
 
 /** The layout to edit: the persisted one, or a fresh auto-derivation from the
- *  current graph (so unedited layouts always hug the live nodes). */
+ *  current graph (so unedited layouts always hug the live nodes). Physical
+ *  nodes are never auto-derived — a never-edited layout has none. */
 function ensureNsLayout(state: VeltraState): NsLayout {
     if (state.nsLayout) return state.nsLayout;
     return (
         buildTeachingFrame(state.nodes) ?? {
             cluster: { ...DEFAULT_CLUSTER_RECT },
+            nodes: [],
             namespaces: [],
         }
     );
@@ -2204,7 +2418,7 @@ function namespaceContentRects(nodes: Node<K8sNodeData>[], name: string): Rect[]
         }));
 }
 
-function readNsLayout(): NsLayout | null {
+export function readNsLayout(): NsLayout | null {
     try {
         const saved = localStorage.getItem(NS_LAYOUT_KEY);
         if (!saved) return null;
@@ -2216,15 +2430,20 @@ function readNsLayout(): NsLayout | null {
             typeof (r as Rect).width === 'number' &&
             typeof (r as Rect).height === 'number';
         if (!isValidRect(parsed?.cluster)) return null;
+        const isNamedRect = (r: unknown): r is NamespaceRect =>
+            isValidRect(r) &&
+            typeof (r as NamespaceRect).name === 'string' &&
+            (r as NamespaceRect).name.length > 0;
         const namespaces = Array.isArray(parsed?.namespaces)
-            ? (parsed.namespaces as unknown[]).filter(
-                  (ns): ns is NamespaceRect =>
-                      isValidRect(ns) &&
-                      typeof (ns as NamespaceRect).name === 'string' &&
-                      (ns as NamespaceRect).name.length > 0
-              )
+            ? (parsed.namespaces as unknown[]).filter(isNamedRect)
             : [];
-        return { cluster: parsed.cluster, namespaces };
+        // Back-compat: layouts persisted before physical nodes existed have no
+        // `nodes` key — treat it as an empty list instead of discarding the
+        // whole layout (the cluster/namespaces are still valid).
+        const nodes = Array.isArray(parsed?.nodes)
+            ? (parsed.nodes as unknown[]).filter(isNamedRect)
+            : [];
+        return { cluster: parsed.cluster, nodes, namespaces };
     } catch {
         return null;
     }
@@ -2238,18 +2457,18 @@ function persistNsLayout(layout: NsLayout) {
     }
 }
 
-/** Upsert a rectangle into the namespace list (used for auto-discovered namespaces
- *  that are being edited for the first time). */
-function upsertNsRect(
-    namespaces: NamespaceRect[],
+/** Upsert a rectangle into a list of named rectangles (namespaces or physical
+ *  nodes) — used for auto-discovered entries being edited for the first time. */
+function upsertNamedRect<T extends { name: string }>(
+    rects: T[],
     name: string,
     rect: Rect
-): NamespaceRect[] {
-    const idx = namespaces.findIndex((ns) => ns.name === name);
+): T[] {
+    const idx = rects.findIndex((r) => r.name === name);
     if (idx >= 0) {
-        const copy = [...namespaces];
+        const copy = [...rects];
         copy[idx] = { ...copy[idx], ...rect };
         return copy;
     }
-    return [...namespaces, { name, ...rect }];
+    return [...rects, { name, ...rect } as unknown as T];
 }

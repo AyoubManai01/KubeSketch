@@ -70,6 +70,302 @@ describe('placement through the store', () => {
         expect(saved['Deployment:web']).toBeUndefined();
     });
 
+    it('tiles the missing node rects over the namespace and materializes one box+Pod per node', () => {
+        const ds: K8sResource = {
+            apiVersion: 'apps/v1',
+            kind: 'DaemonSet',
+            metadata: { name: 'collector', namespace: 'default' },
+            spec: {
+                selector: { matchLabels: { app: 'collector' } },
+                template: {
+                    metadata: { labels: { app: 'collector' } },
+                    spec: { containers: [{ name: 'app', image: 'fluentd:latest' }] },
+                },
+            },
+        };
+        useVeltraStore.setState({ nsLayout: LAYOUT });
+        useVeltraStore.getState().addConfiguredNode('DaemonSet', ds, undefined, { desiredNodes: 3 });
+
+        // Three node rects were created over the namespace (canvas-only chrome).
+        const nodes = useVeltraStore.getState().nsLayout?.nodes ?? [];
+        expect(nodes.map((n) => n.name)).toEqual(['worker-1', 'worker-2', 'worker-3']);
+        // The tiles cover the namespace: every tile overlaps the default rect.
+        const ns = useVeltraStore.getState().nsLayout!.namespaces[0];
+        nodes.forEach((nd) => {
+            expect(nd.x < ns.x + ns.width && nd.x + nd.width > ns.x).toBe(true);
+            expect(nd.y < ns.y + ns.height && nd.y + nd.height > ns.y).toBe(true);
+        });
+
+        // The DaemonSet materializes one box+Pod per hosting node rect.
+        const boxes = useVeltraStore
+            .getState()
+            .nodes.filter((n) => n.data.kind === 'DaemonSet');
+        expect(boxes).toHaveLength(3);
+        const realBox = boxes.find((b) => !b.data.synthetic)!;
+        expect(realBox).toBeDefined();
+        expect(realBox.data.nodeCount).toBe(3);
+        const dsPods = useVeltraStore
+            .getState()
+            .nodes.filter((n) => n.data.kind === 'Pod' && n.data.managedBy?.kind === 'DaemonSet');
+        expect(dsPods).toHaveLength(3);
+        dsPods.forEach((pod) => {
+            const hostBox = boxes.find((b) => b.id === pod.parentId);
+            expect(hostBox).toBeDefined();
+            expect(pod.data.assignedNode).toBe(hostBox!.data.assignedNode);
+        });
+
+        // Node rects are persisted in the layout, and never leak into the manifest.
+        const savedLayout = JSON.parse(localStorage.getItem('veltra_ns_layout') ?? '{}');
+        expect(savedLayout.nodes).toHaveLength(3);
+        const yaml = localStorage.getItem('veltra_yaml') ?? '';
+        expect(yaml).not.toContain('worker-1');
+        expect(yaml).not.toContain('DaemonSet-collector-worker'); // synthetic pods are display-only
+    });
+
+    it('counts existing node rects OVER the namespace toward the desired total (1 → 2 created)', () => {
+        const withOneNode: NsLayout = {
+            cluster: { x: 0, y: 0, width: 1200, height: 900 },
+            nodes: [{ name: 'node-a', x: 300, y: 100, width: 200, height: 150 }],
+            namespaces: [{ name: 'default', x: 100, y: 100, width: 500, height: 500 }],
+        };
+        const ds: K8sResource = {
+            apiVersion: 'apps/v1',
+            kind: 'DaemonSet',
+            metadata: { name: 'collector', namespace: 'default' },
+            spec: {
+                selector: { matchLabels: { app: 'collector' } },
+                template: {
+                    metadata: { labels: { app: 'collector' } },
+                    spec: { containers: [{ name: 'app', image: 'fluentd:latest' }] },
+                },
+            },
+        };
+        useVeltraStore.setState({ nsLayout: withOneNode });
+        useVeltraStore.getState().addConfiguredNode('DaemonSet', ds, undefined, { desiredNodes: 3 });
+
+        const names = (useVeltraStore.getState().nsLayout?.nodes ?? []).map((n) => n.name);
+        expect(names).toHaveLength(3); // node-a (over the ns) + 2 tiles
+        const dsPods = useVeltraStore
+            .getState()
+            .nodes.filter((n) => n.data.kind === 'Pod' && n.data.managedBy?.kind === 'DaemonSet');
+        expect(dsPods).toHaveLength(3);
+    });
+
+    it('does NOT count node rects elsewhere — all desired nodes are tiled over the namespace', () => {
+        const withFarNode: NsLayout = {
+            cluster: { x: 0, y: 0, width: 2400, height: 1800 },
+            nodes: [{ name: 'node-a', x: 2000, y: 1500, width: 200, height: 150 }],
+            namespaces: [{ name: 'default', x: 100, y: 100, width: 500, height: 500 }],
+        };
+        const ds: K8sResource = {
+            apiVersion: 'apps/v1',
+            kind: 'DaemonSet',
+            metadata: { name: 'collector', namespace: 'default' },
+            spec: {
+                selector: { matchLabels: { app: 'collector' } },
+                template: {
+                    metadata: { labels: { app: 'collector' } },
+                    spec: { containers: [{ name: 'app', image: 'fluentd:latest' }] },
+                },
+            },
+        };
+        useVeltraStore.setState({ nsLayout: withFarNode });
+        useVeltraStore.getState().addConfiguredNode('DaemonSet', ds, undefined, { desiredNodes: 3 });
+
+        const nodes = useVeltraStore.getState().nsLayout?.nodes ?? [];
+        expect(nodes).toHaveLength(4); // node-a (elsewhere) + 3 tiles over the namespace
+        // The far-away node hosts no box — only the 3 tiles host the DS.
+        const boxes = useVeltraStore
+            .getState()
+            .nodes.filter((n) => n.data.kind === 'DaemonSet');
+        expect(boxes).toHaveLength(3);
+        boxes.forEach((b) => expect(b.data.assignedNode).not.toBe('node-a'));
+    });
+
+    it('re-derives DaemonSet boxes on addNode/deleteNode without touching YAML', () => {
+        const ds: K8sResource = {
+            apiVersion: 'apps/v1',
+            kind: 'DaemonSet',
+            metadata: { name: 'collector', namespace: 'default' },
+            spec: {
+                selector: { matchLabels: { app: 'collector' } },
+                template: {
+                    metadata: { labels: { app: 'collector' } },
+                    spec: { containers: [{ name: 'app', image: 'fluentd:latest' }] },
+                },
+            },
+        };
+        useVeltraStore.setState({ nsLayout: LAYOUT });
+        useVeltraStore.getState().addConfiguredNode('DaemonSet', ds, undefined, { desiredNodes: 2 });
+        expect(useVeltraStore.getState().nodes.filter((n) => n.data.kind === 'DaemonSet')).toHaveLength(2);
+        const yamlBefore = localStorage.getItem('veltra_yaml');
+
+        // Adding a node rect in a free pocket (NOT over the namespace) adds no box.
+        useVeltraStore.getState().addNode('worker-extra', { x: 2000, y: 2000, width: 340, height: 280 });
+        expect(useVeltraStore.getState().nodes.filter((n) => n.data.kind === 'DaemonSet')).toHaveLength(2);
+        expect(localStorage.getItem('veltra_yaml')).toBe(yamlBefore); // model/YAML untouched
+
+        // Deleting a hosting node rect removes its box+Pod.
+        useVeltraStore.getState().deleteNode('worker-1');
+        expect(useVeltraStore.getState().nodes.filter((n) => n.data.kind === 'DaemonSet')).toHaveLength(1);
+        expect(localStorage.getItem('veltra_yaml')).toBe(yamlBefore);
+    });
+
+    it('pins a dragged DaemonSet box RELATIVE to its node rect', () => {
+        const ds: K8sResource = {
+            apiVersion: 'apps/v1',
+            kind: 'DaemonSet',
+            metadata: { name: 'collector', namespace: 'default' },
+            spec: {
+                selector: { matchLabels: { app: 'collector' } },
+                template: {
+                    metadata: { labels: { app: 'collector' } },
+                    spec: { containers: [{ name: 'app', image: 'fluentd:latest' }] },
+                },
+            },
+        };
+        useVeltraStore.setState({ nsLayout: LAYOUT });
+        useVeltraStore.getState().addConfiguredNode('DaemonSet', ds, undefined, { desiredNodes: 2 });
+        const rect = useVeltraStore.getState().nsLayout!.nodes.find((n) => n.name === 'worker-1')!;
+        const box = useVeltraStore
+            .getState()
+            .nodes.find((n) => n.data.kind === 'DaemonSet' && n.data.assignedNode === 'worker-1')!;
+        // Simulate a drag: move the box (fully inside the 260×240 tile), then persist.
+        const moved = { ...box, position: { x: rect.x + 30, y: rect.y + 30 } };
+        useVeltraStore.setState({ nodes: useVeltraStore.getState().nodes.map((n) => (n.id === box.id ? moved : n)) });
+        useVeltraStore.getState().persistNodePositions([box.id]);
+
+        const saved = JSON.parse(localStorage.getItem('veltra_node_positions') ?? '{}');
+        expect(saved['DaemonSetBox:collector:worker-1']).toEqual({ x: 30, y: 30 });
+        // The shared DaemonSet:<name> key is untouched (boxes never pollute it).
+        expect(saved['DaemonSet:collector']).toBeUndefined();
+
+        // Rebuilds keep the box at the pinned spot (relative to the rect).
+        useVeltraStore.getState().refreshLayoutDerived();
+        const box2 = useVeltraStore
+            .getState()
+            .nodes.find((n) => n.data.kind === 'DaemonSet' && n.data.assignedNode === 'worker-1')!;
+        expect(box2.position.x).toBe(rect.x + 30);
+        expect(box2.position.y).toBe(rect.y + 30);
+    });
+
+    it('keeps boxes stable across resize + refresh (no toggle)', () => {
+        const ds: K8sResource = {
+            apiVersion: 'apps/v1',
+            kind: 'DaemonSet',
+            metadata: { name: 'collector', namespace: 'default' },
+            spec: {
+                selector: { matchLabels: { app: 'collector' } },
+                template: {
+                    metadata: { labels: { app: 'collector' } },
+                    spec: { containers: [{ name: 'app', image: 'fluentd:latest' }] },
+                },
+            },
+        };
+        useVeltraStore.setState({ nsLayout: LAYOUT });
+        useVeltraStore.getState().addConfiguredNode('DaemonSet', ds, undefined, { desiredNodes: 2 });
+        const rect = useVeltraStore.getState().nsLayout!.nodes.find((n) => n.name === 'worker-1')!;
+        const snap = () =>
+            useVeltraStore
+                .getState()
+                .nodes.filter((n) => n.data.kind === 'DaemonSet')
+                .map((b) => `${b.data.assignedNode}@${b.position.x},${b.position.y}`)
+                .sort();
+
+        // Shrink the hosting node rect (still fits a 182×181 box).
+        useVeltraStore.getState().resizeNodeRect('worker-1', {
+            x: rect.x,
+            y: rect.y,
+            width: Math.max(220, rect.width - 40),
+            height: Math.max(220, rect.height - 40),
+        });
+        // The box follows the rect live and stays inside it.
+        const box = useVeltraStore
+            .getState()
+            .nodes.find((n) => n.data.kind === 'DaemonSet' && n.data.assignedNode === 'worker-1')!;
+        const newRect = useVeltraStore.getState().nsLayout!.nodes.find((n) => n.name === 'worker-1')!;
+        const w = typeof box.style?.width === 'number' ? box.style.width : 182;
+        const h = typeof box.style?.height === 'number' ? box.style.height : 181;
+        expect(box.position.x).toBeGreaterThanOrEqual(newRect.x);
+        expect(box.position.y).toBeGreaterThanOrEqual(newRect.y);
+        expect(box.position.x + w).toBeLessThanOrEqual(newRect.x + newRect.width);
+        expect(box.position.y + h).toBeLessThanOrEqual(newRect.y + newRect.height);
+
+        // Two refreshes → identical positions (the old self-blocking toggle).
+        const before = snap();
+        useVeltraStore.getState().refreshLayoutDerived();
+        useVeltraStore.getState().refreshLayoutDerived();
+        expect(snap()).toEqual(before);
+    });
+
+    it('renames a DaemonSet with sibling boxes (no false duplicate) and migrates box pins', () => {
+        const ds: K8sResource = {
+            apiVersion: 'apps/v1',
+            kind: 'DaemonSet',
+            metadata: { name: 'collector', namespace: 'default' },
+            spec: {
+                selector: { matchLabels: { app: 'collector' } },
+                template: {
+                    metadata: { labels: { app: 'collector' } },
+                    spec: { containers: [{ name: 'app', image: 'fluentd:latest' }] },
+                },
+            },
+        };
+        useVeltraStore.setState({ nsLayout: LAYOUT });
+        useVeltraStore.getState().addConfiguredNode('DaemonSet', ds, undefined, { desiredNodes: 2 });
+        // Seed a box pin, then rename the DS via its real box.
+        localStorage.setItem(
+            'veltra_node_positions',
+            JSON.stringify({ 'DaemonSetBox:collector:worker-1': { x: 40, y: 50 } })
+        );
+        const realBox = useVeltraStore
+            .getState()
+            .nodes.find((n) => n.data.kind === 'DaemonSet' && !n.data.synthetic)!;
+        useVeltraStore.getState().updateNodeFromCanvas(realBox.id, { name: 'collector-2' });
+
+        const names = new Set(
+            useVeltraStore
+                .getState()
+                .nodes.filter((n) => n.data.kind === 'DaemonSet')
+                .map((n) => n.data.name)
+        );
+        expect(names).toEqual(new Set(['collector-2']));
+        const saved = JSON.parse(localStorage.getItem('veltra_node_positions') ?? '{}');
+        expect(saved['DaemonSetBox:collector-2:worker-1']).toEqual({ x: 40, y: 50 });
+        expect(saved['DaemonSetBox:collector:worker-1']).toBeUndefined();
+    });
+
+    it('clears DaemonSet box pins when the DaemonSet is deleted', () => {
+        const ds: K8sResource = {
+            apiVersion: 'apps/v1',
+            kind: 'DaemonSet',
+            metadata: { name: 'collector', namespace: 'default' },
+            spec: {
+                selector: { matchLabels: { app: 'collector' } },
+                template: {
+                    metadata: { labels: { app: 'collector' } },
+                    spec: { containers: [{ name: 'app', image: 'fluentd:latest' }] },
+                },
+            },
+        };
+        useVeltraStore.setState({ nsLayout: LAYOUT });
+        useVeltraStore.getState().addConfiguredNode('DaemonSet', ds, undefined, { desiredNodes: 2 });
+        useVeltraStore.getState().persistNodePositions(
+            useVeltraStore
+                .getState()
+                .nodes.filter((n) => n.data.kind === 'DaemonSet')
+                .map((n) => n.id)
+        );
+        expect(Object.keys(JSON.parse(localStorage.getItem('veltra_node_positions') ?? '{}'))).toHaveLength(2);
+        const realBox = useVeltraStore
+            .getState()
+            .nodes.find((n) => n.data.kind === 'DaemonSet' && !n.data.synthetic)!;
+        useVeltraStore.getState().deleteNodeFromCanvas(realBox.id);
+        const saved = JSON.parse(localStorage.getItem('veltra_node_positions') ?? '{}');
+        expect(Object.keys(saved).filter((k) => k.startsWith('DaemonSetBox:'))).toHaveLength(0);
+        expect(useVeltraStore.getState().nodes.filter((n) => n.data.kind === 'DaemonSet')).toHaveLength(0);
+    });
+
     it('grows the namespace box (and persists the layout) when the created resource does not fit', () => {
         const small: NsLayout = {
             cluster: { x: 0, y: 0, width: 1200, height: 900 },

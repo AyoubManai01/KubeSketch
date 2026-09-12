@@ -23,6 +23,7 @@
 
   /* Harmonized Accent Colors */
   --accent-deployment: #10b981;  /* Emerald */
+  --accent-daemonset: #a855f7;   /* Purple */
   --accent-replicaset: #f97316;  /* Orange */
   --accent-pod: #14b8a6;         /* Teal */
   --accent-service: #3b82f6;     /* Blue */
@@ -1050,6 +1051,10 @@ body,
 
 .k8s-node--pod {
   --kind-color: var(--accent-pod);
+}
+
+.k8s-node--daemonset {
+  --kind-color: var(--accent-daemonset);
 }
 
 .k8s-node--service {

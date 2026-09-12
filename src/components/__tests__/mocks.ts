@@ -26,7 +26,7 @@ function nodeIdFor(kind: string, name: string): string {
 // ─── Resource / node fixtures ────────────────────────────────────────────────
 
 function apiVersionFor(kind: SupportedKind): string {
-    if (kind === 'Deployment' || kind === 'ReplicaSet') return 'apps/v1';
+    if (kind === 'Deployment' || kind === 'DaemonSet' || kind === 'ReplicaSet') return 'apps/v1';
     if (kind === 'Ingress') return 'networking.k8s.io/v1';
     return 'v1';
 }

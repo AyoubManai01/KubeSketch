@@ -20,6 +20,14 @@ const ICONS: Record<string, React.ReactNode> = {
             <path d="M13 8h3v3" strokeDasharray="2 2" />
         </svg>
     ),
+    DaemonSet: (
+        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <circle cx="7" cy="12" r="2.5" />
+            <circle cx="12" cy="16" r="2.5" />
+            <circle cx="17" cy="12" r="2.5" />
+        </svg>
+    ),
     Pod: (
         <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 2L2 7l10 5 10-5-10-5z" />
@@ -159,6 +167,7 @@ const ICONS: Record<string, React.ReactNode> = {
 
 const KIND_COLORS: Record<string, string> = {
     Deployment: '#10b981', // Green
+    DaemonSet: '#a855f7',  // Purple
     ReplicaSet: '#f97316', // Orange
     Pod: '#14b8a6',        // Teal
     Service: '#3b82f6',    // Blue
@@ -187,7 +196,12 @@ function K8sNodeComponent({ data }: NodeProps) {
     const color = KIND_COLORS[kind] ?? '#8b949e';
     const icon = ICONS[kind] ?? ICONS.Pod;
 
-    const isContainer = kind === 'Deployment' || kind === 'ReplicaSet';
+    // Per-node DaemonSet boxes are container cards (header + nested Pod); the
+    // fallback lane card (no assignedNode) is a leaf card like a Job.
+    const isContainer =
+        kind === 'Deployment' ||
+        kind === 'ReplicaSet' ||
+        (kind === 'DaemonSet' && nodeData.assignedNode !== undefined);
     const spec = (nodeData.resource?.spec ?? {}) as Record<string, any>;
     const managedBy = nodeData.synthetic ? nodeData.managedBy : undefined;
 
@@ -232,6 +246,22 @@ function K8sNodeComponent({ data }: NodeProps) {
                 {kind === 'ReplicaSet' && typeof spec.replicas === 'number' && (
                     <div className="k8s-node__badge" title="Desired Pods">
                         ×{spec.replicas} Pods
+                    </div>
+                )}
+                {kind === 'DaemonSet' && nodeData.assignedNode !== undefined && (
+                    <div
+                        className="k8s-node__badge"
+                        title={`One Pod on node ${nodeData.assignedNode}`}
+                    >
+                        on {nodeData.assignedNode}
+                    </div>
+                )}
+                {kind === 'DaemonSet' && nodeData.assignedNode === undefined && (
+                    <div
+                        className="k8s-node__badge"
+                        title="Physical node rects covered by this DaemonSet's namespace (one Pod each)"
+                    >
+                        {nodeData.nodeCount ?? 0} nodes
                     </div>
                 )}
                 {kind === 'HorizontalPodAutoscaler' && typeof spec.maxReplicas === 'number' && (
@@ -323,6 +353,9 @@ function buildResourceDetails(nodeData: K8sNodeData): DetailPair[] {
     const spec = (nodeData.resource?.spec ?? {}) as Record<string, any>;
 
     if (nodeData.kind === 'Pod') {
+        if (nodeData.assignedNode) {
+            details.push({ key: 'node', val: nodeData.assignedNode });
+        }
         const container = spec.containers?.[0];
         if (container?.name) {
             details.push({ key: 'container', val: container.name });
@@ -491,6 +524,20 @@ function buildResourceDetails(nodeData: K8sNodeData): DetailPair[] {
         if (container?.image) {
             const parts = container.image.split('/');
             details.push({ key: 'image', val: parts[parts.length - 1] });
+        }
+    }
+    if (nodeData.kind === 'DaemonSet') {
+        const container = spec.template?.spec?.containers?.[0];
+        if (container?.name) {
+            details.push({ key: 'container', val: container.name });
+        }
+        if (container?.image) {
+            const parts = container.image.split('/');
+            details.push({ key: 'image', val: parts[parts.length - 1] });
+        }
+        const selector = spec.selector?.matchLabels?.app;
+        if (selector) {
+            details.push({ key: 'selector', val: `app=${selector}` });
         }
     }
     if (nodeData.kind === 'GatewayClass') {

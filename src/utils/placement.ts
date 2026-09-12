@@ -3,11 +3,13 @@ import type { K8sNodeData } from './buildGraph';
 import { isClusterScoped } from './k8sScope';
 import {
     buildTeachingFrame,
+    clampRectToRect,
     DEFAULT_CLUSTER_RECT,
     FALLBACK_NODE_HEIGHT,
     FALLBACK_NODE_WIDTH,
     rectsOverlap,
     resolveMoveCollision,
+    type NamespaceRect,
     type NsLayout,
     type Rect,
 } from './teachingFrame';
@@ -31,6 +33,142 @@ const NS_SWEEP_STEP = 24;
 export interface NamespaceRectPlacement {
     rect: Rect;
     cluster: Rect;
+}
+
+/**
+ * Find a free spot for a DaemonSet box INSIDE a physical node rectangle,
+ * avoiding the given blocker rectangles (absolute node boxes: other resources
+ * and previously placed boxes in the same node). Sweeps a small grid from the
+ * rect's top-left; when nothing fits (tiny/crowded node rect), falls back to
+ * appending below the rect's bottom edge.
+ */
+export function placeBoxInNodeRect(
+    container: Rect,
+    size: { width: number; height: number },
+    blockers: Rect[] = []
+): { x: number; y: number } {
+    const PAD = 20;
+    const STEP = 24;
+    const overlapsBlockers = (r: Rect) =>
+        blockers.some(
+            (b) =>
+                r.x < b.x + b.width &&
+                r.x + r.width > b.x &&
+                r.y < b.y + b.height &&
+                r.y + r.height > b.y
+        );
+
+    for (
+        let y = container.y + PAD;
+        y + size.height <= container.y + container.height;
+        y += STEP
+    ) {
+        for (
+            let x = container.x + PAD;
+            x + size.width <= container.x + container.width;
+            x += STEP
+        ) {
+            const spot = { x, y, width: size.width, height: size.height };
+            if (!overlapsBlockers(spot)) return { x, y };
+        }
+    }
+
+    // Fallback: the rect is too small/crowded to fit the box anywhere — clamp
+    // into the rect so the box stays visually inside its node (the degenerate
+    // tiny-rect case) instead of hanging below it. When the box is bigger than
+    // the rect, anchor it at the rect's top-left corner.
+    const clampAxis = (v: number, min: number, max: number) =>
+        Math.max(min, Math.min(v, max));
+    return {
+        x: clampAxis(container.x + PAD, container.x, Math.max(container.x, container.x + container.width - size.width)),
+        y: clampAxis(container.y + PAD, container.y, Math.max(container.y, container.y + container.height - size.height)),
+    };
+}
+
+/** A tile of `tileNodesOverNamespace` (unnamed — the store assigns worker-N names). */
+export interface NodeTile {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
+export interface NodeTilePlacement {
+    rects: NodeTile[];
+    cluster: Rect;
+    namespaces: NamespaceRect[];
+}
+
+/**
+ * Tile `count` physical node rects over a namespace rectangle so the namespace
+ * is covered by the nodes (a grid anchored at the rect's top-left). Each cell
+ * is at least 260×240 — when the namespace is smaller than the grid, the
+ * namespace rectangle is GROWN to the grid bounds first (pushing sibling
+ * namespace rects out of the way via `resolveMoveCollision`, growing the
+ * cluster when needed), so the namespace is fully covered. Every tile avoids
+ * the existing node rects and the tiles already placed (never overlapping),
+ * and is clamped into the cluster. Callers use this for DaemonSet creation —
+ * the desired node count is the number of nodes hosting the namespace.
+ */
+export function tileNodesOverNamespace(
+    layout: NsLayout,
+    nsName: string,
+    count: number
+): NodeTilePlacement {
+    if (count <= 0) {
+        return { rects: [], cluster: { ...layout.cluster }, namespaces: layout.namespaces };
+    }
+    const ns = layout.namespaces.find((n) => n.name === nsName);
+    if (!ns) {
+        throw new Error(`tileNodesOverNamespace: namespace "${nsName}" has no rectangle`);
+    }
+
+    const GAP = 16;
+    const MIN_CELL = { width: 260, height: 240 };
+    const cols = Math.max(1, Math.ceil(Math.sqrt(count)));
+    const rows = Math.ceil(count / cols);
+    const gridWidth = cols * MIN_CELL.width + (cols - 1) * GAP;
+    const gridHeight = rows * MIN_CELL.height + (rows - 1) * GAP;
+
+    // Grow the namespace to the grid bounds (never shrink), then push it out of
+    // sibling namespace rects and clamp it into the cluster.
+    const grown: Rect = {
+        x: ns.x,
+        y: ns.y,
+        width: Math.max(ns.width, gridWidth),
+        height: Math.max(ns.height, gridHeight),
+    };
+    const siblings = layout.namespaces.filter((n) => n.name !== nsName);
+    const resolved = clampRectToRect(resolveMoveCollision(grown, siblings), layout.cluster);
+    const cluster = { ...layout.cluster };
+    if (resolved.x + resolved.width > cluster.x + cluster.width) {
+        cluster.width = resolved.x + resolved.width - cluster.x;
+    }
+    if (resolved.y + resolved.height > cluster.y + cluster.height) {
+        cluster.height = resolved.y + resolved.height - cluster.y;
+    }
+
+    const blockers: Rect[] = layout.nodes.map((n) => ({ ...n }));
+    const rects: NodeTile[] = [];
+    for (let i = 0; i < count; i++) {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const tile: Rect = {
+            x: resolved.x + col * (MIN_CELL.width + GAP),
+            y: resolved.y + row * (MIN_CELL.height + GAP),
+            width: MIN_CELL.width,
+            height: MIN_CELL.height,
+        };
+        const cleared = clampRectToRect(resolveMoveCollision(tile, blockers), cluster);
+        rects.push({ ...cleared });
+        blockers.push(cleared);
+    }
+
+    return {
+        rects,
+        cluster,
+        namespaces: layout.namespaces.map((n) => (n.name === nsName ? { ...n, ...resolved } : n)),
+    };
 }
 
 /**

@@ -58,6 +58,7 @@ export default function NsFrame({ layout, nodes, onDeleteNamespace }: NsFramePro
     const resizeClusterRect = useVeltraStore((s) => s.resizeClusterRect);
     const deleteNode = useVeltraStore((s) => s.deleteNode);
     const persistNodePositions = useVeltraStore((s) => s.persistNodePositions);
+    const refreshLayoutDerived = useVeltraStore((s) => s.refreshLayoutDerived);
     const { screenToFlowPosition } = useReactFlow();
 
     const dragRef = useRef<DragState | null>(null);
@@ -190,7 +191,12 @@ export default function NsFrame({ layout, nodes, onDeleteNamespace }: NsFramePro
                                                   x: nd.x + dx,
                                                   y: nd.y + dy,
                                               }),
-                                          onEnd: () => persistNodePositions(nodeRideAlongNodeIds(nd)),
+                                          onEnd: () => {
+                                              persistNodePositions(nodeRideAlongNodeIds(nd));
+                                              // Boxes follow geometry — re-derive
+                                              // after the node rect settles.
+                                              refreshLayoutDerived();
+                                          },
                                       })
                                 : undefined
                         }
@@ -231,9 +237,10 @@ export default function NsFrame({ layout, nodes, onDeleteNamespace }: NsFramePro
                             <FrameHandles
                                 onHandle={(dir, e) =>
                                     startDragAt(e, {
-                                        onMove: (dx, dy) =>
-                                            resizeNodeRect(nd.name, resizeRect(nd, dx, dy, dir, NODE_MIN_RECT)),
-                                    })
+onMove: (dx, dy) =>
+                                          resizeNodeRect(nd.name, resizeRect(nd, dx, dy, dir, NODE_MIN_RECT)),
+                                      onEnd: () => refreshLayoutDerived(),
+                                  })
                                 }
                                 onPointerMove={onPointerMove}
                                 onPointerUp={onPointerEnd}
@@ -269,8 +276,12 @@ export default function NsFrame({ layout, nodes, onDeleteNamespace }: NsFramePro
                                                   x: ns.x + dx,
                                                   y: ns.y + dy,
                                               }),
-                                          onEnd: () =>
-                                              persistNodePositions(namespaceNodeIds(ns.name)),
+                                          onEnd: () => {
+                                              persistNodePositions(namespaceNodeIds(ns.name));
+                                              // The namespace's straddling set changed —
+                                              // DaemonSet boxes follow it.
+                                              refreshLayoutDerived();
+                                          },
                                       })
                                 : undefined
                         }
@@ -313,6 +324,7 @@ export default function NsFrame({ layout, nodes, onDeleteNamespace }: NsFramePro
                                     startDragAt(e, {
                                         onMove: (dx, dy) =>
                                             resizeNsRect(ns.name, resizeRect(ns, dx, dy, dir, NAMESPACE_MIN_RECT)),
+                                        onEnd: () => refreshLayoutDerived(),
                                     })
                                 }
                                 onPointerMove={onPointerMove}

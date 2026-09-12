@@ -20,6 +20,7 @@ interface Props {
 
 const KIND_COLORS: Record<string, string> = {
     Deployment: '#10b981',
+    DaemonSet: '#a855f7',
     ReplicaSet: '#f97316',
     Pod: '#14b8a6',
     Service: '#3b82f6',
@@ -56,6 +57,14 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
             <rect x="3" y="3" width="10" height="10" rx="2" />
             <rect x="11" y="11" width="10" height="10" rx="2" strokeDasharray="2 2" />
             <path d="M13 8h3v3" strokeDasharray="2 2" />
+        </svg>
+    ),
+    DaemonSet: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <circle cx="7" cy="12" r="2.5" />
+            <circle cx="12" cy="16" r="2.5" />
+            <circle cx="17" cy="12" r="2.5" />
         </svg>
     ),
     Pod: (
@@ -284,6 +293,8 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     const [restartPolicy, setRestartPolicy] = useState('OnFailure');
     const [parallelism, setParallelism] = useState('1');
     const [completions, setCompletions] = useState('1');
+    // DaemonSet fields
+    const [desiredNodes, setDesiredNodes] = useState('3');
     // CronJob fields
     const [schedule, setSchedule] = useState('* * * * *');
     const [shellCommandEnabled, setShellCommandEnabled] = useState(false);
@@ -312,6 +323,15 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
 
     const firstInputRef = useRef<HTMLInputElement>(null);
 
+    // DaemonSet cluster node count: a whole number of at least 1 (the desired
+    // TOTAL node rects — existing ones count toward it).
+    const daemonSetNodesError =
+        kind === 'DaemonSet'
+            ? /^\d+$/.test(desiredNodes.trim()) && parseInt(desiredNodes, 10) >= 1
+                ? ''
+                : 'Nodes must be a whole number of at least 1.'
+            : '';
+
     const color = KIND_COLORS[kind] ?? '#3b82f6';
     const icon = KIND_ICONS[kind];
 
@@ -320,7 +340,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     // Auto-generated label follows the resource name until the user overrides it
     const appLabel = appLabelTouched
         ? appLabelDraft
-        : isWorkload || kind === 'Pod' || kind === 'Job' || kind === 'CronJob'
+        : isWorkload || kind === 'Pod' || kind === 'Job' || kind === 'CronJob' || kind === 'DaemonSet'
         ? name.trim() || suggestedName
         : appLabelDraft;
 
@@ -367,6 +387,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                     (n) =>
                         !n.data.synthetic &&
                         (n.data.kind === 'Deployment' ||
+                            n.data.kind === 'DaemonSet' ||
                             n.data.kind === 'ReplicaSet' ||
                             n.data.kind === 'Pod' ||
                             n.data.kind === 'Job' ||
@@ -384,7 +405,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
             if (n.data.synthetic) return;
             const k = n.data.kind;
             let value: string | undefined;
-            if (k === 'Deployment' || k === 'ReplicaSet' || k === 'Job' || k === 'CronJob') {
+            if (k === 'Deployment' || k === 'DaemonSet' || k === 'ReplicaSet' || k === 'Job' || k === 'CronJob') {
                 value = getWorkloadPodLabels(n.data.resource)?.app;
             } else if (k === 'Pod') {
                 value = n.data.resource.metadata?.labels?.app;
@@ -413,7 +434,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         const options: Array<{ label: string; value: string }> = [];
         nodes.forEach((n) => {
             const k = n.data.kind;
-            if (k !== 'Pod' && k !== 'Deployment' && k !== 'ReplicaSet' && k !== 'Job' && k !== 'CronJob') return;
+            if (k !== 'Pod' && k !== 'Deployment' && k !== 'DaemonSet' && k !== 'ReplicaSet' && k !== 'Job' && k !== 'CronJob') return;
             let realKind: string = k;
             let realName: string = n.data.name;
             let label = `${k} ${n.data.name}`;
@@ -439,7 +460,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         const options: Array<{ label: string; value: string }> = [];
         nodes.forEach((n) => {
             const k = n.data.kind;
-            if (k !== 'Pod' && k !== 'Deployment' && k !== 'ReplicaSet' && k !== 'Job' && k !== 'CronJob') return;
+            if (k !== 'Pod' && k !== 'Deployment' && k !== 'DaemonSet' && k !== 'ReplicaSet' && k !== 'Job' && k !== 'CronJob') return;
             let realKind: string = k;
             let realName: string = n.data.name;
             let label = `${k} ${n.data.name}`;
@@ -477,7 +498,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         const options: Array<{ label: string; value: string }> = [];
         nodes.forEach((n) => {
             const k = n.data.kind;
-            if (k !== 'Pod' && k !== 'Deployment' && k !== 'ReplicaSet' && k !== 'Job' && k !== 'CronJob') return;
+            if (k !== 'Pod' && k !== 'Deployment' && k !== 'DaemonSet' && k !== 'ReplicaSet' && k !== 'Job' && k !== 'CronJob') return;
             let realKind: string = k;
             let realName: string = n.data.name;
             let label = `${k} ${n.data.name}`;
@@ -570,6 +591,28 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                             metadata: { labels: { app: label } },
                             spec: {
                                 containers: [{ name: 'app', image: 'nginx:latest' }],
+                            },
+                        },
+                    },
+                };
+            }
+            case 'DaemonSet': {
+                const label = appLabel.trim() || meta.name;
+                return {
+                    apiVersion: 'apps/v1',
+                    kind,
+                    metadata: { ...meta, labels: { app: label } },
+                    spec: {
+                        selector: { matchLabels: { app: label } },
+                        template: {
+                            metadata: { labels: { app: label } },
+                            spec: {
+                                containers: [
+                                    {
+                                        name: containerName.trim() || 'app',
+                                        image: containerImage.trim() || 'nginx:latest',
+                                    },
+                                ],
                             },
                         },
                     },
@@ -815,7 +858,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                 const targetKind = targetKindRaw || fallback?.kind || 'Deployment';
                 const targetName = targetNameRaw || fallback?.name || '';
                 const targetApiVersion =
-                    targetKind === 'Deployment' || targetKind === 'ReplicaSet'
+                    targetKind === 'Deployment' || targetKind === 'DaemonSet' || targetKind === 'ReplicaSet'
                         ? 'apps/v1'
                         : targetKind === 'Job' || targetKind === 'CronJob'
                         ? 'batch/v1'
@@ -919,7 +962,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         if (cmTarget) {
             const [targetKind, targetName] = cmTarget.split('|');
             link = {
-                targetKind: targetKind as 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job' | 'CronJob',
+                targetKind: targetKind as 'Pod' | 'Deployment' | 'DaemonSet' | 'ReplicaSet' | 'Job' | 'CronJob',
                 targetName,
                 mechanism: cmMechanism,
                 ...(cmMechanism === 'envKey' && cmKey ? { key: cmKey } : {}),
@@ -928,7 +971,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         if (kind === 'Secret' && secretTarget) {
             const [targetKind, targetName] = secretTarget.split('|');
             link = {
-                targetKind: targetKind as 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job' | 'CronJob',
+                targetKind: targetKind as 'Pod' | 'Deployment' | 'DaemonSet' | 'ReplicaSet' | 'Job' | 'CronJob',
                 targetName,
                 mechanism: secretMechanism,
                 ...(secretMechanism === 'envKey' && secretKey ? { key: secretKey } : {}),
@@ -951,7 +994,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
             if (pvcMountTarget) {
                 const [targetKind, targetName] = pvcMountTarget.split('|');
                 mountTarget = {
-                    kind: targetKind as 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job' | 'CronJob',
+                    kind: targetKind as 'Pod' | 'Deployment' | 'DaemonSet' | 'ReplicaSet' | 'Job' | 'CronJob',
                     name: targetName,
                     volumeName: pvcVolumeName.trim(),
                 };
@@ -969,7 +1012,11 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
             }
         }
         const resource = buildResource();
-        if (link) {
+        if (kind === 'DaemonSet') {
+            addConfiguredNode(kind, resource, undefined, {
+                desiredNodes: parseInt(desiredNodes, 10) || 1,
+            });
+        } else if (link) {
             addConfiguredNode(kind, resource, link);
         } else {
             addConfiguredNode(kind, resource);
@@ -1029,12 +1076,12 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                     </div>
 
                     {/* App Label — auto-generated for workloads/Pods, target picker for Services */}
-                    {(isWorkload || kind === 'Pod' || kind === 'Job' || kind === 'CronJob') && (
+                    {(isWorkload || kind === 'Pod' || kind === 'Job' || kind === 'CronJob' || kind === 'DaemonSet') && (
                         <div className="modal-field">
                             <label className="modal-field__label">
                                 App Label
                                 <span className="modal-field__hint">
-                                    {isWorkload || kind === 'Job' || kind === 'CronJob'
+                                    {isWorkload || kind === 'Job' || kind === 'CronJob' || kind === 'DaemonSet'
                                         ? 'Auto-generated from the name. Sets metadata.labels.app and spec.selector.matchLabels.app.'
                                         : 'Auto-generated from the name. Sets metadata.labels.app — enables containment inside matching ReplicaSets.'}
                                 </span>
@@ -1096,6 +1143,56 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                                 placeholder="3"
                             />
                         </div>
+                    )}
+
+                    {/* DaemonSet: container + cluster node count (one Pod per node) */}
+                    {kind === 'DaemonSet' && (
+                        <>
+                            <div className="modal-row">
+                                <div className="modal-field">
+                                    <label className="modal-field__label">Container Name</label>
+                                    <input
+                                        className="modal-field__input"
+                                        value={containerName}
+                                        onChange={(e) => setContainerName(e.target.value)}
+                                        placeholder="app"
+                                    />
+                                </div>
+                                <div className="modal-field">
+                                    <label className="modal-field__label">Image</label>
+                                    <input
+                                        className="modal-field__input"
+                                        value={containerImage}
+                                        onChange={(e) => setContainerImage(e.target.value)}
+                                        placeholder="nginx:latest"
+                                    />
+                                </div>
+                            </div>
+                            <div className="modal-field">
+                                <label className="modal-field__label">
+                                    Nodes
+                                    <span className="modal-field__hint">
+                                        Desired total nodes covering this
+                                        namespace — existing nodes already over
+                                        it count toward the total; missing ones
+                                        are tiled over the namespace as
+                                        canvas-only node rects. One DaemonSet
+                                        box with one Pod runs on each.
+                                    </span>
+                                </label>
+                                <input
+                                    className="modal-field__input"
+                                    type="number"
+                                    min={1}
+                                    value={desiredNodes}
+                                    onChange={(e) => setDesiredNodes(e.target.value)}
+                                    placeholder="3"
+                                />
+                                {daemonSetNodesError && (
+                                    <span className="modal-field__error">{daemonSetNodesError}</span>
+                                )}
+                            </div>
+                        </>
                     )}
 
                     {/* Pod: container */}
@@ -2175,6 +2272,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                         disabled={
                             !!nameError ||
                             !!scheduleError ||
+                            !!daemonSetNodesError ||
                             (kind === 'ConfigMap' && !!cmTarget && cmMechanism === 'envKey' && !cmKey) ||
                             (kind === 'Secret' && !!secretTarget && secretMechanism === 'envKey' && !secretKey) ||
                             (kind === 'PersistentVolumeClaim' && !!pvcMountTarget && (!pvcVolumeName.trim() || !!pvcMountReplicasError))
@@ -2182,6 +2280,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                         title={
                             nameError ||
                             scheduleError ||
+                            daemonSetNodesError ||
                             (kind === 'ConfigMap' && cmTarget && cmMechanism === 'envKey' && !cmKey
                                 ? 'Select a data key first'
                                 : kind === 'Secret' && secretTarget && secretMechanism === 'envKey' && !secretKey

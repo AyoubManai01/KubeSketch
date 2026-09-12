@@ -333,6 +333,76 @@ describe('repairPlacements', () => {
         }
     });
 
+    it('repairs the DaemonSet fallback card (no hosting nodes) into its namespace', () => {
+        const ds: K8sResource = {
+            apiVersion: 'apps/v1',
+            kind: 'DaemonSet',
+            metadata: { name: 'collector', namespace: 'ops' },
+            spec: {
+                selector: { matchLabels: { app: 'collector' } },
+                template: {
+                    metadata: { labels: { app: 'collector' } },
+                    spec: { containers: [{ name: 'app', image: 'fluentd:latest' }] },
+                },
+            },
+        };
+        const layout: NsLayout = {
+            cluster: { x: 0, y: 0, width: 1600, height: 1400 },
+            nodes: [{ name: 'worker-1', x: 700, y: 100, width: 300, height: 200 }],
+            namespaces: [
+                { name: 'ops', x: 300, y: 300, width: 500, height: 500 },
+                { name: 'default', x: 100, y: 100, width: 400, height: 400 },
+            ],
+        };
+        const { nodes: built, autoPlacedIds } = buildGraph([ds], [], layout);
+        expect(autoPlacedIds.size).toBeGreaterThan(0); // the fallback card is auto-placed
+        const result = repairPlacements(built, autoPlacedIds, layout);
+        const dsNode = result.nodes.find((n) => n.data.kind === 'DaemonSet')!;
+        expect(dsNode.data.assignedNode).toBeUndefined();
+        expect(dsNode.position.x).toBeGreaterThanOrEqual(300);
+        expect(dsNode.position.y).toBeGreaterThanOrEqual(300);
+        // No hosting nodes → no per-node boxes or Pods.
+        expect(result.nodes.filter((n) => n.data.managedBy?.kind === 'DaemonSet')).toHaveLength(0);
+    });
+
+    it('never repairs DaemonSet boxes (they are geometry-driven inside their node rects)', () => {
+        const ds: K8sResource = {
+            apiVersion: 'apps/v1',
+            kind: 'DaemonSet',
+            metadata: { name: 'collector', namespace: 'default' },
+            spec: {
+                selector: { matchLabels: { app: 'collector' } },
+                template: {
+                    metadata: { labels: { app: 'collector' } },
+                    spec: { containers: [{ name: 'app', image: 'fluentd:latest' }] },
+                },
+            },
+        };
+        const layout: NsLayout = {
+            cluster: { x: 0, y: 0, width: 1600, height: 1400 },
+            nodes: [
+                { name: 'worker-1', x: 300, y: 300, width: 340, height: 280 },
+                { name: 'worker-2', x: 700, y: 300, width: 340, height: 280 },
+            ],
+            namespaces: [
+                { name: 'default', x: 100, y: 100, width: 1200, height: 800 },
+            ],
+        };
+        const { nodes: built, autoPlacedIds } = buildGraph([ds], [], layout);
+        const boxes = built.filter((n) => n.data.kind === 'DaemonSet');
+        expect(boxes).toHaveLength(2);
+        // Boxes are never auto-placed/repaired.
+        boxes.forEach((box) => expect(autoPlacedIds.has(box.id)).toBe(false));
+        const result = repairPlacements(built, autoPlacedIds, layout);
+        result.nodes
+            .filter((n) => n.data.kind === 'DaemonSet')
+            .forEach((box) => {
+                const host = layout.nodes.find((nd) => nd.name === box.data.assignedNode)!;
+                expect(box.position.x).toBeGreaterThanOrEqual(host.x);
+                expect(box.position.y).toBeGreaterThanOrEqual(host.y);
+            });
+    });
+
     it('does not treat previously-positioned (pinned) nodes as repairable', () => {
         const prev = [node('Deployment', 'web', 500, 300, 220, 150)];
         const { autoPlacedIds } = buildGraph([prev[0].data.resource], prev);

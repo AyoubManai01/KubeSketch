@@ -101,6 +101,7 @@ const RESOURCE_GROUPS: { label: string; kinds: SupportedKind[] }[] = [
 }));
 const DEFAULT_NAMESPACES = ["default"];
 const SERVICE_TYPES = ["ClusterIP", "NodePort", "LoadBalancer", "ExternalName"];
+const MIN_ZOOM = 0.5 / 1.2 ** 3;
 
 const KIND_COLORS: Record<string, string> = {
   Deployment: "#10b981",
@@ -1866,6 +1867,7 @@ export default function Canvas() {
               onNodeDrag={onNodeDrag}
               onNodeDragStop={onNodeDragStop}
               onInit={onFlowInit}
+              minZoom={MIN_ZOOM}
               nodesDraggable
               nodesConnectable={!anyFrameEditMode}
               // Resources are fixed in frame editing mode (drags snap back), so edge auto-pan

@@ -7,6 +7,7 @@ export interface K8sResource {
   kind:
     | 'Deployment'
     | 'DaemonSet'
+    | 'StatefulSet'
     | 'Service'
     | 'Ingress'
     | 'Pod'
@@ -40,6 +41,7 @@ export interface K8sResource {
 export const SUPPORTED_KINDS = [
   'Deployment',
   'DaemonSet',
+  'StatefulSet',
   'Service',
   'Ingress',
   'Pod',

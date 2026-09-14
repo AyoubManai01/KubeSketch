@@ -28,6 +28,14 @@ const ICONS: Record<string, React.ReactNode> = {
             <circle cx="17" cy="12" r="2.5" />
         </svg>
     ),
+    StatefulSet: (
+        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="8" rx="2" />
+            <path d="M7 3v8M12 3v8M17 3v8" />
+            <rect x="3" y="13" width="18" height="8" rx="2" />
+            <path d="M7 13v8M12 13v8M17 13v8" />
+        </svg>
+    ),
     Pod: (
         <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 2L2 7l10 5 10-5-10-5z" />
@@ -168,6 +176,7 @@ const ICONS: Record<string, React.ReactNode> = {
 const KIND_COLORS: Record<string, string> = {
     Deployment: '#10b981', // Green
     DaemonSet: '#a855f7',  // Purple
+    StatefulSet: '#059669', // Emerald
     ReplicaSet: '#f97316', // Orange
     Pod: '#14b8a6',        // Teal
     Service: '#3b82f6',    // Blue
@@ -201,6 +210,7 @@ function K8sNodeComponent({ data }: NodeProps) {
     const isContainer =
         kind === 'Deployment' ||
         kind === 'ReplicaSet' ||
+        kind === 'StatefulSet' ||
         (kind === 'DaemonSet' && nodeData.assignedNode !== undefined);
     const spec = (nodeData.resource?.spec ?? {}) as Record<string, any>;
     const managedBy = nodeData.synthetic ? nodeData.managedBy : undefined;
@@ -243,6 +253,22 @@ function K8sNodeComponent({ data }: NodeProps) {
                         {spec.replicas} Replicas
                     </div>
                 )}
+                {kind === 'StatefulSet' && typeof spec.replicas === 'number' && (
+                    <div className="k8s-node__badge" title="Desired Replicas">
+                        {spec.replicas} Replicas
+                    </div>
+                )}
+                {kind === 'StatefulSet' &&
+                    Array.isArray(spec.volumeClaimTemplates) &&
+                    spec.volumeClaimTemplates.length > 0 && (
+                        <div
+                            className="k8s-node__badge"
+                            title="Volume claim templates (one PVC per Pod in a real cluster)"
+                        >
+                            {spec.volumeClaimTemplates.length}{' '}
+                            {spec.volumeClaimTemplates.length === 1 ? 'claim' : 'claims'}
+                        </div>
+                    )}
                 {kind === 'ReplicaSet' && typeof spec.replicas === 'number' && (
                     <div className="k8s-node__badge" title="Desired Pods">
                         ×{spec.replicas} Pods

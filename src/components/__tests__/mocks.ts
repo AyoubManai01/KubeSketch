@@ -26,7 +26,7 @@ function nodeIdFor(kind: string, name: string): string {
 // ─── Resource / node fixtures ────────────────────────────────────────────────
 
 function apiVersionFor(kind: SupportedKind): string {
-    if (kind === 'Deployment' || kind === 'DaemonSet' || kind === 'ReplicaSet') return 'apps/v1';
+    if (kind === 'Deployment' || kind === 'DaemonSet' || kind === 'StatefulSet' || kind === 'ReplicaSet') return 'apps/v1';
     if (kind === 'Ingress') return 'networking.k8s.io/v1';
     return 'v1';
 }
@@ -102,6 +102,7 @@ export interface MockStoreState {
     applyCanvasEdgeChanges: Mock;
     updateNodeResourceFromCanvas: Mock;
     addConfiguredNode: Mock;
+    addConfiguredNodes: Mock;
     resetLayout: Mock;
     clearAll: Mock;
     nsEditMode: boolean;
@@ -131,6 +132,7 @@ export function createDefaultStoreState(): MockStoreState {
         applyCanvasEdgeChanges: vi.fn(),
         updateNodeResourceFromCanvas: vi.fn(),
         addConfiguredNode: vi.fn(),
+        addConfiguredNodes: vi.fn(),
         resetLayout: vi.fn(),
         clearAll: vi.fn(),
         nsEditMode: false,

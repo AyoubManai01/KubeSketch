@@ -59,7 +59,7 @@ const ACTIVE_FILE_KEY = 'veltra_active_file';
 
 /** Default YAML shown when the app first loads */
 export const DEFAULT_YAML = `# Paste your Kubernetes YAML here (multi-document with ---)
-# Recognized resources: Deployment, DaemonSet, Service, Ingress, ReplicaSet, Pod, HorizontalPodAutoscaler,
+# Recognized resources: Deployment, DaemonSet, StatefulSet, Service, Ingress, ReplicaSet, Pod, HorizontalPodAutoscaler,
 # ConfigMap, PersistentVolumeClaim, PersistentVolume, StorageClass, Secret, Job,
 # CronJob, VerticalPodAutoscaler, GatewayClass, Gateway, HTTPRoute, GRPCRoute,
 # TCPRoute, TLSRoute, UDPRoute
@@ -68,6 +68,8 @@ export const DEFAULT_YAML = `# Paste your Kubernetes YAML here (multi-document w
 # Pods on the canvas automatically — you only declare the Deployment.
 # A DaemonSet places one Pod on every node its namespace covers — each Pod
 # renders inside its own DaemonSet box on that node.
+# A StatefulSet nests its Pods directly (no ReplicaSet) — its optional
+# volumeClaimTemplates draw a "claims" edge to same-named PVCs.
 # A CronJob's Job (and its Pods) are materialized the same way.
 
 apiVersion: apps/v1
@@ -157,12 +159,12 @@ export interface CanvasNotice {
  */
 export interface PendingConfigMapLink {
     cm: { name: string };
-    target: { kind: 'Pod' | 'Deployment' | 'DaemonSet' | 'ReplicaSet' | 'Job' | 'CronJob'; name: string };
+    target: { kind: 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob'; name: string };
 }
 
 /** Target + mechanism for writing a ConfigMap reference (create-modal path). */
 export interface ConfigMapLinkPayload {
-    targetKind: 'Pod' | 'Deployment' | 'DaemonSet' | 'ReplicaSet' | 'Job' | 'CronJob';
+    targetKind: 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob';
     targetName: string;
     mechanism: ConfigMapMechanism;
     key?: string;
@@ -175,12 +177,12 @@ export interface ConfigMapLinkPayload {
  */
 export interface PendingSecretLink {
     secret: { name: string };
-    target: { kind: 'Pod' | 'Deployment' | 'DaemonSet' | 'ReplicaSet' | 'Job' | 'CronJob'; name: string };
+    target: { kind: 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob'; name: string };
 }
 
 /** Target + mechanism for writing a Secret reference (create-modal path). */
 export interface SecretLinkPayload {
-    targetKind: 'Pod' | 'Deployment' | 'DaemonSet' | 'ReplicaSet' | 'Job' | 'CronJob';
+    targetKind: 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob';
     targetName: string;
     mechanism: SecretMechanism;
     key?: string;
@@ -211,7 +213,7 @@ export interface IngressTlsPayload {
  */
 export interface PendingPvcLink {
     pvc: { name: string };
-    target: { kind: 'Pod' | 'Deployment' | 'DaemonSet' | 'ReplicaSet' | 'Job' | 'CronJob'; name: string };
+    target: { kind: 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob'; name: string };
 }
 
 /**
@@ -221,7 +223,7 @@ export interface PendingPvcLink {
  * a StorageClass. Setting one bind kind clears the other field on the PVC.
  */
 export interface PvcLinkPayload {
-    mountTarget?: { kind: 'Pod' | 'Deployment' | 'DaemonSet' | 'ReplicaSet' | 'Job' | 'CronJob'; name: string; volumeName: string };
+    mountTarget?: { kind: 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob'; name: string; volumeName: string };
     bindTarget?: { kind: 'PersistentVolume' | 'StorageClass'; name: string };
 }
 
@@ -767,19 +769,19 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     updatedNodes = renameRouteBackendReferences(updatedNodes, node.data.name, name);
                 }
                 if (
-                    (node.data.kind === 'Deployment' || node.data.kind === 'ReplicaSet') &&
+                    (node.data.kind === 'Deployment' || node.data.kind === 'ReplicaSet' || node.data.kind === 'StatefulSet') &&
                     kind === node.data.kind &&
                     name !== node.data.name
                 ) {
                     updatedNodes = renameWorkloadReferences(
                         updatedNodes,
-                        node.data.kind as 'Deployment' | 'ReplicaSet',
+                        node.data.kind as 'Deployment' | 'ReplicaSet' | 'StatefulSet',
                         node.data.name,
                         name
                     );
                     updatedNodes = renameVpaTargetReferences(
                         updatedNodes,
-                        node.data.kind as 'Deployment' | 'ReplicaSet',
+                        node.data.kind as 'Deployment' | 'ReplicaSet' | 'StatefulSet',
                         node.data.name,
                         name
                     );
@@ -1035,7 +1037,7 @@ if (isNsReassignment) {
                 // the post-drag prompt instead of committing immediately. `sourceNode`/
                 // `targetNode` are real (synthetic targets were redirected to their owner).
                 const isConfigMapTarget = (kind: string) =>
-                    kind === 'Pod' || kind === 'Deployment' || kind === 'DaemonSet' || kind === 'ReplicaSet' || kind === 'Job' || kind === 'CronJob';
+                    kind === 'Pod' || kind === 'Deployment' || kind === 'DaemonSet' || kind === 'StatefulSet' || kind === 'ReplicaSet' || kind === 'Job' || kind === 'CronJob';
                 if (
                     (sourceNode.data.kind === 'ConfigMap' && isConfigMapTarget(targetNode.data.kind)) ||
                     (targetNode.data.kind === 'ConfigMap' && isConfigMapTarget(sourceNode.data.kind))
@@ -1046,7 +1048,7 @@ if (isNsReassignment) {
                         pendingConfigMapLink: {
                             cm: { name: cm.data.name },
                             target: {
-                                kind: workload.data.kind as 'Pod' | 'Deployment' | 'DaemonSet' | 'ReplicaSet' | 'Job' | 'CronJob',
+                                kind: workload.data.kind as 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob',
                                 name: workload.data.name,
                             },
                         },
@@ -1058,7 +1060,7 @@ if (isNsReassignment) {
                 // Single-node claims (ReadWriteOnce/ReadWriteOncePod) cannot serve a
                 // workload that runs more than one replica — reject those up front.
                 const isPvcMountTarget = (kind: string) =>
-                    kind === 'Pod' || kind === 'Deployment' || kind === 'DaemonSet' || kind === 'ReplicaSet' || kind === 'Job' || kind === 'CronJob';
+                    kind === 'Pod' || kind === 'Deployment' || kind === 'DaemonSet' || kind === 'StatefulSet' || kind === 'ReplicaSet' || kind === 'Job' || kind === 'CronJob';
                 if (
                     (sourceNode.data.kind === 'PersistentVolumeClaim' && isPvcMountTarget(targetNode.data.kind)) ||
                     (targetNode.data.kind === 'PersistentVolumeClaim' && isPvcMountTarget(sourceNode.data.kind))
@@ -1086,7 +1088,7 @@ if (isNsReassignment) {
                         pendingPvcLink: {
                             pvc: { name: pvc.data.name },
                             target: {
-                                kind: mountTarget.data.kind as 'Pod' | 'Deployment' | 'DaemonSet' | 'ReplicaSet' | 'Job' | 'CronJob',
+                                kind: mountTarget.data.kind as 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob',
                                 name: mountTarget.data.name,
                             },
                         },
@@ -1097,7 +1099,7 @@ if (isNsReassignment) {
                 // the consumption mechanism (envFrom / volumes / env-key) first —
                 // surface the post-drag prompt instead of committing immediately.
                 const isSecretTarget = (kind: string) =>
-                    kind === 'Pod' || kind === 'Deployment' || kind === 'DaemonSet' || kind === 'ReplicaSet' || kind === 'Job' || kind === 'CronJob';
+                    kind === 'Pod' || kind === 'Deployment' || kind === 'DaemonSet' || kind === 'StatefulSet' || kind === 'ReplicaSet' || kind === 'Job' || kind === 'CronJob';
                 if (
                     (sourceNode.data.kind === 'Secret' && isSecretTarget(targetNode.data.kind)) ||
                     (targetNode.data.kind === 'Secret' && isSecretTarget(sourceNode.data.kind))
@@ -1108,7 +1110,7 @@ if (isNsReassignment) {
                         pendingSecretLink: {
                             secret: { name: secret.data.name },
                             target: {
-                                kind: workload.data.kind as 'Pod' | 'Deployment' | 'DaemonSet' | 'ReplicaSet' | 'Job' | 'CronJob',
+                                kind: workload.data.kind as 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob',
                                 name: workload.data.name,
                             },
                         },
@@ -2090,7 +2092,7 @@ function toResources(nodes: Node<K8sNodeData>[]): K8sResource[] {
 }
 
 export function apiVersionForKind(kind: SupportedKind): string {
-    if (kind === 'Deployment' || kind === 'DaemonSet' || kind === 'ReplicaSet') return 'apps/v1';
+    if (kind === 'Deployment' || kind === 'DaemonSet' || kind === 'StatefulSet' || kind === 'ReplicaSet') return 'apps/v1';
     if (kind === 'Ingress') return 'networking.k8s.io/v1';
     if (kind === 'HorizontalPodAutoscaler') return 'autoscaling/v2';
     if (kind === 'VerticalPodAutoscaler') return 'autoscaling.k8s.io/v1';
@@ -2140,10 +2142,10 @@ function renameServiceReferences(
     });
 }
 
-/** Rewrite HorizontalPodAutoscaler scaleTargetRef names when a Deployment/ReplicaSet is renamed. */
+/** Rewrite HorizontalPodAutoscaler scaleTargetRef names when a Deployment/ReplicaSet/StatefulSet is renamed. */
 function renameWorkloadReferences(
     nodes: Node<K8sNodeData>[],
-    kind: 'Deployment' | 'ReplicaSet',
+    kind: 'Deployment' | 'ReplicaSet' | 'StatefulSet',
     oldName: string,
     newName: string
 ): Node<K8sNodeData>[] {
@@ -2165,10 +2167,10 @@ function renameWorkloadReferences(
 }
 
 /** Rewrite VerticalPodAutoscaler spec.targetRef names when their target
- *  (Deployment/ReplicaSet/DaemonSet/Pod/Job/CronJob) is renamed. */
+ *  (Deployment/ReplicaSet/DaemonSet/StatefulSet/Pod/Job/CronJob) is renamed. */
 function renameVpaTargetReferences(
     nodes: Node<K8sNodeData>[],
-    kind: 'Deployment' | 'ReplicaSet' | 'DaemonSet' | 'Pod' | 'Job' | 'CronJob',
+    kind: 'Deployment' | 'ReplicaSet' | 'DaemonSet' | 'StatefulSet' | 'Pod' | 'Job' | 'CronJob',
     oldName: string,
     newName: string
 ): Node<K8sNodeData>[] {
@@ -2196,7 +2198,7 @@ function renameConfigMapReferences(
     newName: string
 ): Node<K8sNodeData>[] {
     return nodes.map((n) => {
-        if (n.data.kind !== 'Deployment' && n.data.kind !== 'DaemonSet' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod' && n.data.kind !== 'Job' && n.data.kind !== 'CronJob') {
+        if (n.data.kind !== 'Deployment' && n.data.kind !== 'DaemonSet' && n.data.kind !== 'StatefulSet' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod' && n.data.kind !== 'Job' && n.data.kind !== 'CronJob') {
             return n;
         }
         const spec = n.data.resource.spec as Record<string, any> | undefined;
@@ -2293,7 +2295,7 @@ function renameSecretReferences(
             });
             return { ...n, data: { ...n.data, resource } };
         }
-        if (n.data.kind !== 'Deployment' && n.data.kind !== 'DaemonSet' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod' && n.data.kind !== 'Job' && n.data.kind !== 'CronJob') {
+        if (n.data.kind !== 'Deployment' && n.data.kind !== 'DaemonSet' && n.data.kind !== 'StatefulSet' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod' && n.data.kind !== 'Job' && n.data.kind !== 'CronJob') {
             return n;
         }
         const spec = n.data.resource.spec as Record<string, any> | undefined;
@@ -2355,14 +2357,17 @@ function rewriteSecretNames(podSpec: Record<string, any>, oldName: string, newNa
     });
 }
 
-/** Rewrite Pod-spec PersistentVolumeClaim references when a PVC is renamed (volumes[].persistentVolumeClaim.claimName). */
+/** Rewrite Pod-spec PersistentVolumeClaim references when a PVC is renamed
+ *  (volumes[].persistentVolumeClaim.claimName). A StatefulSet's
+ *  volumeClaimTemplates entries match their PVCs by name too — the template's
+ *  metadata.name is rewritten so the "claims" edge stays stable. */
 function renamePvcReferences(
     nodes: Node<K8sNodeData>[],
     oldName: string,
     newName: string
 ): Node<K8sNodeData>[] {
     return nodes.map((n) => {
-        if (n.data.kind !== 'Deployment' && n.data.kind !== 'DaemonSet' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod' && n.data.kind !== 'Job' && n.data.kind !== 'CronJob') {
+        if (n.data.kind !== 'Deployment' && n.data.kind !== 'DaemonSet' && n.data.kind !== 'StatefulSet' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod' && n.data.kind !== 'Job' && n.data.kind !== 'CronJob') {
             return n;
         }
         const spec = n.data.resource.spec as Record<string, any> | undefined;
@@ -2370,7 +2375,11 @@ function renamePvcReferences(
         const referencesPvc = Array.isArray(podSpec?.volumes) && podSpec.volumes.some(
             (v: any) => v?.persistentVolumeClaim?.claimName === oldName
         );
-        if (!referencesPvc) return n;
+        const templates = n.data.kind === 'StatefulSet' ? spec?.volumeClaimTemplates : undefined;
+        const referencesTemplate = Array.isArray(templates) && templates.some(
+            (t: any) => t?.metadata?.name === oldName
+        );
+        if (!referencesPvc && !referencesTemplate) return n;
 
         const resource = structuredClone(n.data.resource);
         const clonedSpec = resource.spec as Record<string, any>;
@@ -2380,6 +2389,13 @@ function renamePvcReferences(
                 volume.persistentVolumeClaim.claimName = newName;
             }
         });
+        if (referencesTemplate && Array.isArray(clonedSpec.volumeClaimTemplates)) {
+            clonedSpec.volumeClaimTemplates.forEach((template: any) => {
+                if (template?.metadata?.name === oldName) {
+                    template.metadata.name = newName;
+                }
+            });
+        }
         return { ...n, data: { ...n.data, resource } };
     });
 }

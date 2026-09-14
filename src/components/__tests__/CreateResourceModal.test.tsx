@@ -269,5 +269,82 @@ describe('CreateResourceModal', () => {
             expect(rule.host).toBe('my-app.example.com');
             expect(rule.http.paths[0].path).toBe('/api');
         });
+
+        it('StatefulSet: builds an apps/v1 resource with replicas/container and no volumeClaimTemplates by default', () => {
+            const addConfiguredNode = vi.fn();
+            setMockStoreState({ addConfiguredNode });
+            render(<CreateResourceModal kind="StatefulSet" onClose={onClose} />);
+
+            fireEvent.change(dom.getByPlaceholderText('statefulset-1'), { target: { value: 'db' } });
+            fireEvent.change(dom.getByPlaceholderText('3'), { target: { value: '2' } });
+            fireEvent.change(dom.getByPlaceholderText('nginx:latest'), { target: { value: 'postgres:16' } });
+            fireEvent.click(dom.getByRole('button', { name: 'Create StatefulSet' }));
+
+            expect(addConfiguredNode).toHaveBeenCalledWith('StatefulSet', {
+                apiVersion: 'apps/v1',
+                kind: 'StatefulSet',
+                metadata: { name: 'db', namespace: 'default', labels: { app: 'db' } },
+                spec: {
+                    replicas: 2,
+                    selector: { matchLabels: { app: 'db' } },
+                    template: {
+                        metadata: { labels: { app: 'db' } },
+                        spec: { containers: [{ name: 'app', image: 'postgres:16' }] },
+                    },
+                },
+            });
+            expect(onClose).toHaveBeenCalled();
+        });
+
+        it('StatefulSet: volumeClaimTemplates commits a [StatefulSet, PVC] batch via addConfiguredNodes', () => {
+            const addConfiguredNodes = vi.fn();
+            setMockStoreState({ addConfiguredNodes });
+            const { container } = render(<CreateResourceModal kind="StatefulSet" onClose={onClose} />);
+
+            fireEvent.change(dom.getByPlaceholderText('statefulset-1'), { target: { value: 'db' } });
+            fireEvent.click(dom.getByRole('checkbox'));
+            fireEvent.change(fieldByLabel(container, 'Claim name'), { target: { value: 'data' } });
+            fireEvent.click(dom.getByRole('button', { name: 'Create StatefulSet' }));
+
+            const [resources, selected] = addConfiguredNodes.mock.calls[0] as unknown as [
+                K8sResource[],
+                { kind: string; name: string },
+            ];
+            expect(resources).toHaveLength(2);
+            expect(resources[0]).toMatchObject({ kind: 'StatefulSet', metadata: { name: 'db' } });
+            expect(resources[1]).toMatchObject({
+                apiVersion: 'v1',
+                kind: 'PersistentVolumeClaim',
+                metadata: { name: 'data', namespace: 'default' },
+            });
+            const pvcSpec = resources[1].spec as { accessModes: string[]; resources: { requests: { storage: string } } };
+            expect(pvcSpec.accessModes).toEqual(['ReadWriteOnce']);
+            expect(pvcSpec.resources.requests.storage).toBe('1Gi');
+            expect((resources[0].spec as { volumeClaimTemplates: unknown[] }).volumeClaimTemplates).toHaveLength(1);
+            expect(selected).toEqual({ kind: 'StatefulSet', name: 'db' });
+            expect(onClose).toHaveBeenCalled();
+        });
+
+        it('StatefulSet: blocks Create when the claim template name is empty or collides with an existing PVC', () => {
+            const addConfiguredNodes = vi.fn();
+            setMockStoreState({
+                addConfiguredNodes,
+                nodes: [createMockNode({ kind: 'PersistentVolumeClaim', name: 'data' })],
+            });
+            const { container } = render(<CreateResourceModal kind="StatefulSet" onClose={onClose} />);
+
+            fireEvent.click(dom.getByRole('checkbox'));
+            // Empty claim name → disabled
+            fireEvent.change(fieldByLabel(container, 'Claim name'), { target: { value: '' } });
+            expect(dom.getByRole('button', { name: 'Create StatefulSet' })).toBeDisabled();
+
+            // Duplicate PVC name → inline error + disabled, nothing committed
+            fireEvent.change(fieldByLabel(container, 'Claim name'), { target: { value: 'data' } });
+            expect(dom.getByText('A PersistentVolumeClaim named “data” already exists.')).toBeInTheDocument();
+            expect(dom.getByRole('button', { name: 'Create StatefulSet' })).toBeDisabled();
+            fireEvent.click(dom.getByRole('button', { name: 'Create StatefulSet' }));
+            expect(addConfiguredNodes).not.toHaveBeenCalled();
+            expect(onClose).not.toHaveBeenCalled();
+        });
     });
 });

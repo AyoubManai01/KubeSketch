@@ -5,6 +5,7 @@ import type { FileNode } from '../utils/fileTree';
 const KIND_COLORS: Record<string, string> = {
     Deployment: '#10b981',
     DaemonSet: '#a855f7',
+    StatefulSet: '#059669',
     ReplicaSet: '#f97316',
     Pod: '#14b8a6',
     Service: '#3b82f6',

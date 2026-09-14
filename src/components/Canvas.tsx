@@ -106,6 +106,7 @@ const MIN_ZOOM = 0.5 / 1.2 ** 3;
 const KIND_COLORS: Record<string, string> = {
   Deployment: "#10b981",
   DaemonSet: "#a855f7",
+  StatefulSet: "#059669",
   ReplicaSet: "#f97316",
   Pod: "#14b8a6",
   Service: "#3b82f6",
@@ -171,6 +172,21 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
       <circle cx="7" cy="12" r="2.5" />
       <circle cx="12" cy="16" r="2.5" />
       <circle cx="17" cy="12" r="2.5" />
+    </svg>
+  ),
+  StatefulSet: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="3" y="3" width="18" height="8" rx="2" />
+      <path d="M7 3v8M12 3v8M17 3v8" />
+      <rect x="3" y="13" width="18" height="8" rx="2" />
+      <path d="M7 13v8M12 13v8M17 13v8" />
     </svg>
   ),
   Pod: (
@@ -649,7 +665,7 @@ export default function Canvas() {
       if (node.data.synthetic) return;
       const kind = node.data.kind;
       let value: string | undefined;
-      if (kind === "Deployment" || kind === "DaemonSet" || kind === "ReplicaSet" || kind === "Job") {
+      if (kind === "Deployment" || kind === "DaemonSet" || kind === "StatefulSet" || kind === "ReplicaSet" || kind === "Job") {
         value = getWorkloadPodLabels(node.data.resource)?.app;
       } else if (kind === "Pod") {
         value = node.data.resource.metadata?.labels?.app;
@@ -673,13 +689,15 @@ export default function Canvas() {
     [nodes],
   );
 
-  // HorizontalPodAutoscaler scale targets: Deployments and ReplicaSets on the canvas
+  // HorizontalPodAutoscaler scale targets: Deployments, ReplicaSets and StatefulSets on the canvas
   const workloadOptions = useMemo(
     () =>
       nodes
         .filter(
           (node) =>
-            node.data.kind === "Deployment" || node.data.kind === "ReplicaSet",
+            node.data.kind === "Deployment" ||
+            node.data.kind === "ReplicaSet" ||
+            node.data.kind === "StatefulSet",
         )
         .map((node) => ({
           kind: node.data.kind as string,
@@ -702,6 +720,7 @@ export default function Canvas() {
             !node.data.synthetic &&
             (node.data.kind === "Deployment" ||
               node.data.kind === "DaemonSet" ||
+              node.data.kind === "StatefulSet" ||
               node.data.kind === "ReplicaSet" ||
               node.data.kind === "Pod" ||
               node.data.kind === "Job" ||
@@ -725,6 +744,7 @@ export default function Canvas() {
     if (
       kind !== "Deployment" &&
       kind !== "DaemonSet" &&
+      kind !== "StatefulSet" &&
       kind !== "ReplicaSet" &&
       kind !== "Pod" &&
       kind !== "Job" &&
@@ -749,7 +769,8 @@ export default function Canvas() {
     if (
       !selectedNode ||
       (selectedNode.data.kind !== "Deployment" &&
-        selectedNode.data.kind !== "ReplicaSet")
+        selectedNode.data.kind !== "ReplicaSet" &&
+        selectedNode.data.kind !== "StatefulSet")
     ) {
       return null;
     }
@@ -775,7 +796,7 @@ export default function Canvas() {
   const selectedNodeConfigMaps = useMemo(() => {
     if (!selectedNode) return [];
     const kind = selectedNode.data.kind;
-    if (kind !== "Pod" && kind !== "Deployment" && kind !== "DaemonSet" && kind !== "ReplicaSet" && kind !== "Job" && kind !== "CronJob") {
+    if (kind !== "Pod" && kind !== "Deployment" && kind !== "DaemonSet" && kind !== "StatefulSet" && kind !== "ReplicaSet" && kind !== "Job" && kind !== "CronJob") {
       return [];
     }
     return getConfigMapRefDetails(selectedNode.data.resource);
@@ -791,6 +812,7 @@ export default function Canvas() {
           !n.data.synthetic &&
           (n.data.kind === "Deployment" ||
             n.data.kind === "DaemonSet" ||
+            n.data.kind === "StatefulSet" ||
             n.data.kind === "ReplicaSet" ||
             n.data.kind === "Pod" ||
             n.data.kind === "Job" ||
@@ -805,7 +827,7 @@ export default function Canvas() {
   const selectedNodeSecrets = useMemo(() => {
     if (!selectedNode) return [];
     const kind = selectedNode.data.kind;
-    if (kind !== "Pod" && kind !== "Deployment" && kind !== "DaemonSet" && kind !== "ReplicaSet" && kind !== "Job" && kind !== "CronJob") {
+    if (kind !== "Pod" && kind !== "Deployment" && kind !== "DaemonSet" && kind !== "StatefulSet" && kind !== "ReplicaSet" && kind !== "Job" && kind !== "CronJob") {
       return [];
     }
     return getSecretRefDetails(selectedNode.data.resource);
@@ -821,6 +843,7 @@ export default function Canvas() {
           !n.data.synthetic &&
           (n.data.kind === "Deployment" ||
             n.data.kind === "DaemonSet" ||
+            n.data.kind === "StatefulSet" ||
             n.data.kind === "ReplicaSet" ||
             n.data.kind === "Pod" ||
             n.data.kind === "Job" ||
@@ -844,7 +867,7 @@ export default function Canvas() {
   const selectedNodePvcs = useMemo(() => {
     if (!selectedNode) return [];
     const kind = selectedNode.data.kind;
-    if (kind !== "Pod" && kind !== "Deployment" && kind !== "DaemonSet" && kind !== "ReplicaSet" && kind !== "Job" && kind !== "CronJob") {
+    if (kind !== "Pod" && kind !== "Deployment" && kind !== "DaemonSet" && kind !== "StatefulSet" && kind !== "ReplicaSet" && kind !== "Job" && kind !== "CronJob") {
       return [];
     }
     return getPvcRefDetails(selectedNode.data.resource);
@@ -861,6 +884,7 @@ export default function Canvas() {
           !n.data.synthetic &&
           (n.data.kind === "Deployment" ||
             n.data.kind === "DaemonSet" ||
+            n.data.kind === "StatefulSet" ||
             n.data.kind === "ReplicaSet" ||
             n.data.kind === "Pod" ||
             n.data.kind === "Job" ||
@@ -1108,8 +1132,11 @@ export default function Canvas() {
   }>({});
   const [lastDraftSig, setLastDraftSig] = useState<{
     selectionKey: string;
-    sig: string;
-  }>({ selectionKey: "", sig: "" });
+    resourceSig: string;
+    labels: string;
+    annotations: string;
+    name: string;
+  }>({ selectionKey: "", resourceSig: "", labels: "", annotations: "", name: "" });
 
   const committedResource = selectedNode?.data.resource ?? null;
   const draft = draftResource ?? committedResource;
@@ -1146,7 +1173,7 @@ export default function Canvas() {
         );
         return node ? cronParallelismOf(node.data.resource) > 1 : false;
       }
-      if (ref.kind !== "Deployment" && ref.kind !== "ReplicaSet") return false;
+      if (ref.kind !== "Deployment" && ref.kind !== "ReplicaSet" && ref.kind !== "StatefulSet") return false;
       const node = nodes.find(
         (n) =>
           !n.data.synthetic && n.data.kind === ref.kind && n.data.name === ref.name,
@@ -1219,15 +1246,43 @@ export default function Canvas() {
 
   // Re-initialize the draft when a different resource is selected or when the
   // committed resource changed without pending edits (external sync, e.g. YAML
-  // edits or HorizontalPodAutoscaler replica clamps). Never clobber in-progress typing.
+  // or file-editor edits, HorizontalPodAutoscaler replica clamps). "Pending
+  // edits" is measured against the LAST-SEEDED snapshot, not the current
+  // committed resource — the committed resource legitimately differs after any
+  // external change, and comparing against it would block every re-seed and
+  // leave the inspector showing stale values. In-progress typing is still
+  // never clobbered (the user's Validate wins, last-writer-wins).
   if (selectedNode && !isManaged) {
-    const sig = JSON.stringify(selectedNode.data.resource);
+    const committed = selectedNode.data.resource;
+    const committedSnapshotChanged =
+      JSON.stringify(committed) !== lastDraftSig.resourceSig ||
+      toKeyValueString(committed.metadata?.labels) !== lastDraftSig.labels ||
+      toKeyValueString(
+        committed.metadata?.annotations as Record<string, string> | undefined,
+      ) !== lastDraftSig.annotations ||
+      (committed.metadata?.name ?? "") !== lastDraftSig.name;
+    const hasPendingEdits =
+      draftResource !== null &&
+      (JSON.stringify(draftResource) !== lastDraftSig.resourceSig ||
+        labelsDraft !== lastDraftSig.labels ||
+        annotationsDraft !== lastDraftSig.annotations ||
+        nameDraft !== lastDraftSig.name);
     const needsInit =
       draftResource === null ||
       lastDraftSig.selectionKey !== selectionKey ||
-      (lastDraftSig.sig !== sig && !dirty);
+      (committedSnapshotChanged && !hasPendingEdits);
     if (needsInit) {
-      setLastDraftSig({ selectionKey, sig });
+      setLastDraftSig({
+        selectionKey,
+        resourceSig: JSON.stringify(selectedNode.data.resource),
+        labels: toKeyValueString(selectedNode.data.resource.metadata?.labels),
+        annotations: toKeyValueString(
+          selectedNode.data.resource.metadata?.annotations as
+            | Record<string, string>
+            | undefined,
+        ),
+        name: selectedNode.data.resource.metadata?.name ?? "",
+      });
       setDraftResource(selectedNode.data.resource);
       setLabelsDraft(
         toKeyValueString(selectedNode.data.resource.metadata?.labels),
@@ -1292,7 +1347,15 @@ export default function Canvas() {
     );
     setNameDraft(resource.metadata?.name ?? "");
     setDraftErrors({});
-    setLastDraftSig({ selectionKey: freshKey, sig: JSON.stringify(resource) });
+    setLastDraftSig({
+      selectionKey: freshKey,
+      resourceSig: JSON.stringify(resource),
+      labels: toKeyValueString(resource.metadata?.labels),
+      annotations: toKeyValueString(
+        resource.metadata?.annotations as Record<string, string> | undefined,
+      ),
+      name: resource.metadata?.name ?? "",
+    });
   }, []);
 
   /** Validate the draft and commit it to the model through the store. */
@@ -2419,10 +2482,11 @@ export default function Canvas() {
                   </div>
                 )}
 
-                {/* ── Section: Scaling (Deployment / ReplicaSet) ── */}
+                {/* ── Section: Scaling (Deployment / ReplicaSet / StatefulSet) ── */}
                 {!isManaged &&
                   (draftKind === "Deployment" ||
-                    draftKind === "ReplicaSet") && (
+                    draftKind === "ReplicaSet" ||
+                    draftKind === "StatefulSet") && (
                     <div className="inspector-section">
                       <div className="inspector-section__header">
                         <svg
@@ -2534,6 +2598,193 @@ export default function Canvas() {
                       </div>
                     </div>
                   )}
+
+                {/* ── Section: StatefulSet (container/volume claims) ── */}
+                {!isManaged && draftKind === "StatefulSet" && (
+                  <div className="inspector-section">
+                    <div className="inspector-section__header">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <rect x="3" y="3" width="18" height="8" rx="2" />
+                        <path d="M7 3v8M12 3v8M17 3v8" />
+                        <rect x="3" y="13" width="18" height="8" rx="2" />
+                        <path d="M7 13v8M12 13v8M17 13v8" />
+                      </svg>
+                      StatefulSet
+                    </div>
+                    <div className="inspector-section__body">
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Container Name
+                        </label>
+                        <input
+                          className="inspector-field__input"
+                          value={String(
+                            draftSpec?.template?.spec?.containers?.[0]?.name ??
+                              "",
+                          )}
+                          onChange={(e) =>
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                template: {
+                                  ...(draftSpec?.template ?? {}),
+                                  spec: {
+                                    ...(draftSpec?.template?.spec ?? {}),
+                                    containers: [
+                                      {
+                                        ...(draftSpec?.template?.spec
+                                          ?.containers?.[0] ?? {}),
+                                        name: e.target.value,
+                                      },
+                                    ],
+                                  },
+                                },
+                              },
+                            })
+                          }
+                          placeholder="app"
+                        />
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">Image</label>
+                        <input
+                          className="inspector-field__input"
+                          value={String(
+                            draftSpec?.template?.spec?.containers?.[0]?.image ??
+                              "",
+                          )}
+                          onChange={(e) =>
+                            patchDraft({
+                              spec: {
+                                ...draftSpec,
+                                template: {
+                                  ...(draftSpec?.template ?? {}),
+                                  spec: {
+                                    ...(draftSpec?.template?.spec ?? {}),
+                                    containers: [
+                                      {
+                                        ...(draftSpec?.template?.spec
+                                          ?.containers?.[0] ?? {}),
+                                        image: e.target.value,
+                                      },
+                                    ],
+                                  },
+                                },
+                              },
+                            })
+                          }
+                          placeholder="nginx:latest"
+                        />
+                      </div>
+                      <div className="inspector-field">
+                        <label className="inspector-field__label">
+                          Volume claims
+                        </label>
+                        {(() => {
+                          const templates: any[] = Array.isArray(
+                            draftSpec?.volumeClaimTemplates,
+                          )
+                            ? draftSpec.volumeClaimTemplates
+                            : [];
+                          if (templates.length === 0) {
+                            return (
+                              <span className="inspector-field__hint">
+                                No volume claim templates — add one under
+                                spec.volumeClaimTemplates in the YAML.
+                              </span>
+                            );
+                          }
+                          return (
+                            <div className="inspector-rel-list">
+                              {templates.map((template, idx) => {
+                                const claimName =
+                                  typeof template?.metadata?.name === "string"
+                                    ? template.metadata.name
+                                    : "";
+                                const storage =
+                                  template?.spec?.resources?.requests?.storage;
+                                const accessMode = Array.isArray(
+                                  template?.spec?.accessModes,
+                                )
+                                  ? template.spec.accessModes[0]
+                                  : undefined;
+                                const exists =
+                                  !!claimName &&
+                                  nodes.some(
+                                    (n) =>
+                                      n.data.kind ===
+                                        "PersistentVolumeClaim" &&
+                                      n.data.name === claimName,
+                                  );
+                                return (
+                                  <button
+                                    key={`${claimName}:${idx}`}
+                                    type="button"
+                                    className="inspector-rel-item inspector-rel-item--link"
+                                    title={
+                                      exists
+                                        ? `Select PVC ${claimName}`
+                                        : `PVC ${claimName} is declared but not on the canvas`
+                                    }
+                                    onClick={() =>
+                                      claimName &&
+                                      setSelectedResource({
+                                        kind: "PersistentVolumeClaim",
+                                        name: claimName,
+                                      })
+                                    }
+                                  >
+                                    <span
+                                      className="inspector-rel-arrow inspector-rel-arrow--outgoing"
+                                      title="claims"
+                                    >
+                                      ▤
+                                    </span>
+                                    <div className="inspector-rel-info">
+                                      <span className="inspector-rel-kind">
+                                        PersistentVolumeClaim
+                                      </span>
+                                      <span className="inspector-rel-name">
+                                        {claimName || "(unnamed template)"}
+                                      </span>
+                                    </div>
+                                    {storage && (
+                                      <span className="inspector-rel-badge">
+                                        {String(storage)}
+                                      </span>
+                                    )}
+                                    {accessMode && (
+                                      <span className="inspector-rel-badge">
+                                        {String(accessMode)}
+                                      </span>
+                                    )}
+                                    {!exists && (
+                                      <span className="inspector-rel-badge">
+                                        missing
+                                      </span>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
+                        <span className="inspector-field__hint">
+                          Declared in spec.volumeClaimTemplates — the template
+                          name links to a PVC of the same name on the canvas
+                          (&quot;claims&quot; edge). Editable in the YAML.
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* ── Section: DaemonSet (selector/container/nodes) ── */}
                 {!isManaged && draftKind === "DaemonSet" && (
@@ -3270,6 +3521,7 @@ export default function Canvas() {
                   (inspectorData.kind === "Pod" ||
                     inspectorData.kind === "Deployment" ||
                     inspectorData.kind === "DaemonSet" ||
+                    inspectorData.kind === "StatefulSet" ||
                     inspectorData.kind === "ReplicaSet" ||
                     inspectorData.kind === "Job" ||
                     inspectorData.kind === "CronJob") &&
@@ -3358,6 +3610,7 @@ export default function Canvas() {
                   (inspectorData.kind === "Pod" ||
                     inspectorData.kind === "Deployment" ||
                     inspectorData.kind === "DaemonSet" ||
+                    inspectorData.kind === "StatefulSet" ||
                     inspectorData.kind === "ReplicaSet" ||
                     inspectorData.kind === "Job" ||
                     inspectorData.kind === "CronJob") &&
@@ -3447,6 +3700,7 @@ export default function Canvas() {
                   (inspectorData.kind === "Pod" ||
                     inspectorData.kind === "Deployment" ||
                     inspectorData.kind === "DaemonSet" ||
+                    inspectorData.kind === "StatefulSet" ||
                     inspectorData.kind === "ReplicaSet" ||
                     inspectorData.kind === "Job" ||
                     inspectorData.kind === "CronJob") &&
@@ -4535,6 +4789,7 @@ export default function Canvas() {
                                             return targetKind ===
                                                 "Deployment" ||
                                               targetKind === "DaemonSet" ||
+                                              targetKind === "StatefulSet" ||
                                               targetKind === "ReplicaSet"
                                               ? "apps/v1"
                                               : targetKind === "Job" ||
@@ -4568,7 +4823,7 @@ export default function Canvas() {
                           );
                         })()}
                         <span className="inspector-field__hint">
-                          Lists the Deployments, DaemonSets, ReplicaSets, Pods,
+                          Lists the Deployments, DaemonSets, StatefulSets, ReplicaSets, Pods,
                           Jobs and CronJobs currently on the canvas.
                         </span>
                       </div>
@@ -5024,6 +5279,7 @@ export default function Canvas() {
                 {/* ── Section: Vertical scaled by (VPA targets) ── */}
                 {(inspectorData.kind === "Deployment" ||
                   inspectorData.kind === "DaemonSet" ||
+                  inspectorData.kind === "StatefulSet" ||
                   inspectorData.kind === "ReplicaSet" ||
                   inspectorData.kind === "Pod" ||
                   inspectorData.kind === "Job" ||

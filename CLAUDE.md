@@ -15,7 +15,7 @@ npm run lint     # eslint
 npm run test     # vitest run (buildGraph utils + component tests)
 ```
 
-Verify changes by driving the running app in a browser — see `.claude/skills/verify/SKILL.md` for the full recipe and its gotchas (localStorage reset, clipboard-paste into Monaco, handle-drag connections). Note: the Canvas component tests currently fail on the `@xyflow/react` mock (missing `useReactFlow` export, pre-existing); the buildGraph/util tests (`job.test.ts`, `cronjob.test.ts`, `storage.test.ts`, `secrets.test.ts`, `hpaOverrides.test.ts`, `vpa.test.ts`) are the meaningful suite.
+Verify changes by driving the running app in a browser — see `.claude/skills/verify/SKILL.md` for the full recipe and its gotchas (localStorage reset, clipboard-paste into Monaco, handle-drag connections). Note: the Canvas component spec is partially stale — the `@xyflow/react` mock now provides `useReactFlow`, so 29 of its 47 tests pass; the remaining 18 assert commit-on-change behavior that predates the draft-buffer inspector (they fire a field change and expect an immediate commit, but the inspector commits only via "Validate Changes") and a few assert presence instead of visibility (YAML preview). The buildGraph/util tests (`job.test.ts`, `cronjob.test.ts`, `storage.test.ts`, `secrets.test.ts`, `hpaOverrides.test.ts`, `vpa.test.ts`) are the meaningful suite.
 
 ## Architecture
 

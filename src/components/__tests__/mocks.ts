@@ -202,6 +202,12 @@ export function xyflowMockFactory() {
         applyNodeChanges: (_changes: unknown, nodes: unknown) => nodes,
         applyEdgeChanges: (_changes: unknown, edges: unknown) => edges,
         MarkerType: { ArrowClosed: 'arrowclosed' },
+        // NsFrame calls `useReactFlow().screenToFlowPosition` to map pointer
+        // coordinates into flow space for its drag protocol; an identity
+        // transform keeps frame tests deterministic.
+        useReactFlow: () => ({
+            screenToFlowPosition: (point: { x: number; y: number }) => point,
+        }),
     };
 }
 

@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import YamlEditor from './components/YamlEditor';
 import FileExplorerView from './components/FileExplorerView';
 import Canvas from './components/Canvas';
+import WelcomeScreen from './components/WelcomeScreen';
 import { useVeltraStore, DEFAULT_YAML } from './store/store';
 import { exportCanvasImage } from './utils/exportCanvas';
+import { IDE_PATH, IDE_SAMPLE_PARAM } from './landingConfig';
 
 const SPLIT_KEY = 'veltra_panel_split';
 const MIN_SPLIT = 20;
@@ -25,6 +27,21 @@ export default function App() {
   const resetLayout = useVeltraStore((s) => s.resetLayout);
   const fileExplorerMode = useVeltraStore((s) => s.fileExplorerMode);
   const setFileExplorerMode = useVeltraStore((s) => s.setFileExplorerMode);
+
+  // Landing page at "/", IDE at "/ide" (see landingConfig.ts). Vite dev and
+  // `vite preview` SPA-fallback /ide to index.html; a static host needs a
+  // rewrite rule (/ide -> /index.html).
+  const [path] = useState(() => window.location.pathname);
+  const isIde = path.endsWith(IDE_PATH);
+
+  // "Load sample manifest" on the landing page opens /ide?sample=1.
+  useEffect(() => {
+    if (!isIde) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get(IDE_SAMPLE_PARAM) === '1') {
+      setYaml(DEFAULT_YAML);
+    }
+  }, [isIde, setYaml]);
 
   // User-resizable editor/canvas split — purely presentational, so it lives
   // outside the resource-model store and is persisted directly to localStorage.
@@ -96,6 +113,11 @@ export default function App() {
   const handleResetLayout = () => {
     resetLayout();
   };
+
+  // The landing page is the default entry; the IDE renders only on /ide.
+  if (!isIde) {
+    return <WelcomeScreen />;
+  }
 
   return (
     <div className="app">

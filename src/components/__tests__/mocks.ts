@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { vi, type Mock } from 'vitest';
-import type { Node, Edge } from '@xyflow/react';
+import type { Node, Edge, NodeChange } from '@xyflow/react';
 import type { K8sNodeData } from '../../utils/buildGraph';
 import type { K8sResource, SupportedKind } from '../../types/types';
 
@@ -157,7 +157,10 @@ export function resetMockStoreState(): void {
 /** Factory passed to `vi.mock('../../store/store', storeMockFactory)`. */
 export function storeMockFactory() {
     return {
-        useVeltraStore: (selector: (s: MockStoreState) => unknown) => selector(mockState),
+        useVeltraStore: Object.assign(
+            (selector: (s: MockStoreState) => unknown) => selector(mockState),
+            { getState: () => mockState },
+        ),
         DEFAULT_YAML: '',
         apiVersionForKind: (kind: SupportedKind): string => apiVersionFor(kind),
     };
@@ -199,7 +202,27 @@ export function xyflowMockFactory() {
             React.createElement('div', { 'data-testid': 'panel-mock' }, props.children),
         ViewportPortal: (props: { children?: React.ReactNode }) =>
             React.createElement('div', { 'data-testid': 'viewport-portal-mock' }, props.children),
-        applyNodeChanges: (_changes: unknown, nodes: unknown) => nodes,
+        applyNodeChanges: (changes: unknown, nodes: unknown) => {
+            const next = (nodes as Array<Record<string, unknown>>).map((n) => ({ ...n }));
+            for (const c of changes as NodeChange[]) {
+                if (c.type === 'position') {
+                    for (const n of next) {
+                        if (n.id === c.id) n.position = c.position;
+                    }
+                } else if (c.type === 'select') {
+                    for (const n of next) {
+                        if (n.id === c.id) n.selected = c.selected;
+                    }
+                } else if (c.type === 'dimensions') {
+                    for (const n of next) {
+                        if (n.id === c.id) n.style = { ...(n.style as object), ...c.dimensions };
+                    }
+                } else if (c.type === 'remove') {
+                    return next.filter((n) => n.id !== c.id);
+                }
+            }
+            return next;
+        },
         applyEdgeChanges: (_changes: unknown, edges: unknown) => edges,
         MarkerType: { ArrowClosed: 'arrowclosed' },
         // NsFrame calls `useReactFlow().screenToFlowPosition` to map pointer

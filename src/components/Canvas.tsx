@@ -467,6 +467,22 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${parseInt(result[1], 16)},${parseInt(result[2], 16)},${parseInt(result[3], 16)},${alpha})`;
 }
 
+/** True when `n` is a sibling DaemonSet box of the box the user grabbed
+ *  (`grab` = the node under the pointer). React Flow drags every *selected*
+ *  node, and all sibling boxes of a DaemonSet share the selection — the grabbed
+ *  box must move alone, so tag-along siblings are filtered out of the drag. */
+function isDaemonSetDragSibling(
+  grab: Node<K8sNodeData> | null,
+  n: Node<K8sNodeData>,
+): boolean {
+  return (
+    grab !== null &&
+    grab.data.kind === "DaemonSet" &&
+    n.id !== grab.id &&
+    isDaemonSetSibling(n, { kind: grab.data.kind, name: grab.data.name })
+  );
+}
+
 /**
  * React Flow canvas displaying K8s resource nodes.
  * Reads nodes/edges from the Zustand store — the store is the single source of truth
@@ -1485,7 +1501,23 @@ export default function Canvas() {
       (c) =>
         c.type !== "select" && c.type !== "position" && c.type !== "dimensions",
     );
-    const nextNodes = applyNodeChanges(changes, nodes) as Node<K8sNodeData>[];
+    // React Flow moves every *selected* node while dragging, and all DaemonSet
+    // sibling boxes share the selection — drop position changes for tag-along
+    // siblings so the grabbed box moves independently (identity fields are
+    // stable during a drag, so the render-scope lookup is safe).
+    let applied = changes;
+    const grabId = dragGrabIdRef.current;
+    if (grabId) {
+      const grab = nodes.find((n) => n.id === grabId) ?? null;
+      if (grab) {
+        applied = changes.filter((c) => {
+          if (c.type !== "position") return true;
+          const target = nodes.find((n) => n.id === c.id);
+          return target ? !isDaemonSetDragSibling(grab, target) : true;
+        });
+      }
+    }
+    const nextNodes = applyNodeChanges(applied, nodes) as Node<K8sNodeData>[];
     if (hasResourceChanges) {
       setCanvasNodes(nextNodes);
     } else {
@@ -1512,12 +1544,18 @@ export default function Canvas() {
   // layout would let a dragged node drag its own boundary along — the captured
   // layout is a stable constraint for the whole gesture.
   const dragLayoutRef = useRef<NsLayout | null>(null);
+  // The node id under the pointer at drag start. React Flow moves every selected
+  // node together and all DaemonSet sibling boxes share the selection, so this
+  // id is what keeps the grabbed box's drag independent (onNodesChange filters
+  // the tag-along siblings' position changes while it is set).
+  const dragGrabIdRef = useRef<string | null>(null);
 
   const onNodeDragStart = (
     _: unknown,
     node: Node<K8sNodeData>,
     draggedNodes: Node<K8sNodeData>[],
   ) => {
+    dragGrabIdRef.current = node.id;
     const moved = draggedNodes?.length ? draggedNodes : [node];
     moved.forEach((n) => dragOriginRef.current.set(n.id, { ...n.position }));
     dragLayoutRef.current = effectiveLayout;
@@ -1578,7 +1616,13 @@ export default function Canvas() {
     if (nsEditMode) return;
     const layout = dragLayoutRef.current;
     if (!layout) return;
-    const moved = draggedNodes?.length ? draggedNodes : [node];
+    // Only the grabbed node moves — sibling DaemonSet boxes were never dragged,
+    // they just shared the selection (React Flow drags all selected nodes).
+    const grabId = dragGrabIdRef.current;
+    const grab = grabId ? nodes.find((n) => n.id === grabId) ?? null : null;
+    const moved = (draggedNodes?.length ? draggedNodes : [node]).filter(
+      (mn) => !isDaemonSetDragSibling(grab, mn),
+    );
     // React Flow emits onNodesChange before onNodeDrag in the same event, and
     // re-renders are batched — the render-scope `nodes` is one frame behind, so
     // clamp against the fresh store state.
@@ -1603,7 +1647,14 @@ export default function Canvas() {
     node: Node<K8sNodeData>,
     draggedNodes: Node<K8sNodeData>[],
   ) => {
-    const moved = draggedNodes?.length ? draggedNodes : [node];
+    // Sibling DaemonSet boxes share the selection but were never actually
+    // grabbed — only the box under the pointer is clamped and pinned.
+    const grabId = dragGrabIdRef.current;
+    const grab = grabId ? nodes.find((n) => n.id === grabId) ?? null : null;
+    const moved = (draggedNodes?.length ? draggedNodes : [node]).filter(
+      (mn) => !isDaemonSetDragSibling(grab, mn),
+    );
+    dragGrabIdRef.current = null;
     if (!nsEditMode) {
       const layout = dragLayoutRef.current;
       dragLayoutRef.current = null;

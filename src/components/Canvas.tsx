@@ -616,9 +616,13 @@ export default function Canvas() {
       top = nodes.find((n) => n.id === top.parentId) ?? top;
     }
     const width =
-      typeof top.style?.width === "number" ? top.style.width : FALLBACK_NODE_WIDTH;
+      typeof top.style?.width === "number"
+        ? top.style.width
+        : FALLBACK_NODE_WIDTH;
     const height =
-      typeof top.style?.height === "number" ? top.style.height : FALLBACK_NODE_HEIGHT;
+      typeof top.style?.height === "number"
+        ? top.style.height
+        : FALLBACK_NODE_HEIGHT;
     const center = {
       x: top.position.x + width / 2,
       y: top.position.y + height / 2,
@@ -643,7 +647,8 @@ export default function Canvas() {
         (isClusterScoped(n.data.kind) || n.data.assignedNode !== undefined)
           ? { ...n, draggable: false }
           : n;
-      const selected = selKey !== "" && `${n.data.kind}:${n.data.name}` === selKey;
+      const selected =
+        selKey !== "" && `${n.data.kind}:${n.data.name}` === selKey;
       return node.selected === selected ? node : { ...node, selected };
     });
   }, [nodes, nsEditMode, nodeEditMode, selectedResource]);
@@ -665,7 +670,13 @@ export default function Canvas() {
       if (node.data.synthetic) return;
       const kind = node.data.kind;
       let value: string | undefined;
-      if (kind === "Deployment" || kind === "DaemonSet" || kind === "StatefulSet" || kind === "ReplicaSet" || kind === "Job") {
+      if (
+        kind === "Deployment" ||
+        kind === "DaemonSet" ||
+        kind === "StatefulSet" ||
+        kind === "ReplicaSet" ||
+        kind === "Job"
+      ) {
         value = getWorkloadPodLabels(node.data.resource)?.app;
       } else if (kind === "Pod") {
         value = node.data.resource.metadata?.labels?.app;
@@ -796,7 +807,15 @@ export default function Canvas() {
   const selectedNodeConfigMaps = useMemo(() => {
     if (!selectedNode) return [];
     const kind = selectedNode.data.kind;
-    if (kind !== "Pod" && kind !== "Deployment" && kind !== "DaemonSet" && kind !== "StatefulSet" && kind !== "ReplicaSet" && kind !== "Job" && kind !== "CronJob") {
+    if (
+      kind !== "Pod" &&
+      kind !== "Deployment" &&
+      kind !== "DaemonSet" &&
+      kind !== "StatefulSet" &&
+      kind !== "ReplicaSet" &&
+      kind !== "Job" &&
+      kind !== "CronJob"
+    ) {
       return [];
     }
     return getConfigMapRefDetails(selectedNode.data.resource);
@@ -827,7 +846,15 @@ export default function Canvas() {
   const selectedNodeSecrets = useMemo(() => {
     if (!selectedNode) return [];
     const kind = selectedNode.data.kind;
-    if (kind !== "Pod" && kind !== "Deployment" && kind !== "DaemonSet" && kind !== "StatefulSet" && kind !== "ReplicaSet" && kind !== "Job" && kind !== "CronJob") {
+    if (
+      kind !== "Pod" &&
+      kind !== "Deployment" &&
+      kind !== "DaemonSet" &&
+      kind !== "StatefulSet" &&
+      kind !== "ReplicaSet" &&
+      kind !== "Job" &&
+      kind !== "CronJob"
+    ) {
       return [];
     }
     return getSecretRefDetails(selectedNode.data.resource);
@@ -867,7 +894,15 @@ export default function Canvas() {
   const selectedNodePvcs = useMemo(() => {
     if (!selectedNode) return [];
     const kind = selectedNode.data.kind;
-    if (kind !== "Pod" && kind !== "Deployment" && kind !== "DaemonSet" && kind !== "StatefulSet" && kind !== "ReplicaSet" && kind !== "Job" && kind !== "CronJob") {
+    if (
+      kind !== "Pod" &&
+      kind !== "Deployment" &&
+      kind !== "DaemonSet" &&
+      kind !== "StatefulSet" &&
+      kind !== "ReplicaSet" &&
+      kind !== "Job" &&
+      kind !== "CronJob"
+    ) {
       return [];
     }
     return getPvcRefDetails(selectedNode.data.resource);
@@ -939,7 +974,8 @@ export default function Canvas() {
 
   // PVCs bound to the selected PV (their spec.volumeName points at it).
   const pvBoundBy = useMemo(() => {
-    if (!selectedNode || selectedNode.data.kind !== "PersistentVolume") return [];
+    if (!selectedNode || selectedNode.data.kind !== "PersistentVolume")
+      return [];
     const resources = nodes
       .filter((n) => !n.data.synthetic)
       .map((n) => n.data.resource);
@@ -1136,7 +1172,13 @@ export default function Canvas() {
     labels: string;
     annotations: string;
     name: string;
-  }>({ selectionKey: "", resourceSig: "", labels: "", annotations: "", name: "" });
+  }>({
+    selectionKey: "",
+    resourceSig: "",
+    labels: "",
+    annotations: "",
+    name: "",
+  });
 
   const committedResource = selectedNode?.data.resource ?? null;
   const draft = draftResource ?? committedResource;
@@ -1153,7 +1195,8 @@ export default function Canvas() {
       return null;
     }
     const current = draftResource ?? selectedNode.data.resource;
-    if (!current || !isSingleNodeAccessMode(current as K8sResource)) return null;
+    if (!current || !isSingleNodeAccessMode(current as K8sResource))
+      return null;
     const draftMode = String(
       (current.spec as Record<string, any> | undefined)?.accessModes?.[0] ??
         "ReadWriteOnce",
@@ -1162,21 +1205,32 @@ export default function Canvas() {
       if (ref.kind === "Job") {
         const node = nodes.find(
           (n) =>
-            !n.data.synthetic && n.data.kind === ref.kind && n.data.name === ref.name,
+            !n.data.synthetic &&
+            n.data.kind === ref.kind &&
+            n.data.name === ref.name,
         );
         return node ? parallelismOf(node.data.resource) > 1 : false;
       }
       if (ref.kind === "CronJob") {
         const node = nodes.find(
           (n) =>
-            !n.data.synthetic && n.data.kind === ref.kind && n.data.name === ref.name,
+            !n.data.synthetic &&
+            n.data.kind === ref.kind &&
+            n.data.name === ref.name,
         );
         return node ? cronParallelismOf(node.data.resource) > 1 : false;
       }
-      if (ref.kind !== "Deployment" && ref.kind !== "ReplicaSet" && ref.kind !== "StatefulSet") return false;
+      if (
+        ref.kind !== "Deployment" &&
+        ref.kind !== "ReplicaSet" &&
+        ref.kind !== "StatefulSet"
+      )
+        return false;
       const node = nodes.find(
         (n) =>
-          !n.data.synthetic && n.data.kind === ref.kind && n.data.name === ref.name,
+          !n.data.synthetic &&
+          n.data.kind === ref.kind &&
+          n.data.name === ref.name,
       );
       return node ? replicasOf(node.data.resource) > 1 : false;
     });
@@ -1415,7 +1469,15 @@ export default function Canvas() {
     updateNodeResourceFromCanvas(nodeId, finalResource);
     syncDraftFromStore(nodeId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedNode, draftResource, labelsDraft, annotationsDraft, nameDraft, isManaged, pvcAccessModeViolation]);
+  }, [
+    selectedNode,
+    draftResource,
+    labelsDraft,
+    annotationsDraft,
+    nameDraft,
+    isManaged,
+    pvcAccessModeViolation,
+  ]);
 
   // Skip YAML serialization for position/select/dimension-only changes (perf optimization)
   const onNodesChange = (changes: NodeChange[]) => {
@@ -1442,7 +1504,9 @@ export default function Canvas() {
   // In namespace editing mode a resource drag is a namespace *reassignment*
   // attempt, not a move — resources are fixed in place and move only with their
   // rectangle. The pre-drag positions let us snap everything back on drop.
-  const dragOriginRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const dragOriginRef = useRef<Map<string, { x: number; y: number }>>(
+    new Map(),
+  );
   // The cluster/namespace rectangles captured at drag start. Auto-derived
   // layouts re-hug the live nodes every render, so clamping against the *live*
   // layout would let a dragged node drag its own boundary along — the captured
@@ -1466,14 +1530,22 @@ export default function Canvas() {
     const width =
       typeof n.style?.width === "number" ? n.style.width : FALLBACK_NODE_WIDTH;
     const height =
-      typeof n.style?.height === "number" ? n.style.height : FALLBACK_NODE_HEIGHT;
+      typeof n.style?.height === "number"
+        ? n.style.height
+        : FALLBACK_NODE_HEIGHT;
     // DaemonSet boxes can only live inside their own node rect.
     if (n.data.assignedNode !== undefined) {
       const hostRect = layout.nodes.find(
         (nd) => nd.name === n.data.assignedNode,
       );
       return hostRect
-        ? clampPositionToRect(n.position.x, n.position.y, width, height, hostRect)
+        ? clampPositionToRect(
+            n.position.x,
+            n.position.y,
+            width,
+            height,
+            hostRect,
+          )
         : n.position;
     }
     if (isClusterScoped(n.data.kind)) {
@@ -1482,7 +1554,7 @@ export default function Canvas() {
         n.position.y,
         width,
         height,
-        null,
+        layout.cluster,
         [...layout.namespaces, ...layout.nodes],
       );
     }
@@ -1572,7 +1644,9 @@ export default function Canvas() {
               ? n.style.height
               : FALLBACK_NODE_HEIGHT;
           const blockers = current
-            .filter((o) => o.id !== n.id && !o.parentId && !draggedIds.has(o.id))
+            .filter(
+              (o) => o.id !== n.id && !o.parentId && !draggedIds.has(o.id),
+            )
             .map(nodeRect);
           let pos;
           if (n.data.assignedNode !== undefined) {
@@ -1595,7 +1669,7 @@ export default function Canvas() {
               clamped.y,
               width,
               height,
-              null,
+              layout.cluster,
               [...blockers, ...layout.namespaces, ...layout.nodes],
             );
           } else {
@@ -1655,10 +1729,17 @@ export default function Canvas() {
         return { ...n, position: origin };
       }
       const width =
-        typeof n.style?.width === "number" ? n.style.width : FALLBACK_NODE_WIDTH;
+        typeof n.style?.width === "number"
+          ? n.style.width
+          : FALLBACK_NODE_WIDTH;
       const height =
-        typeof n.style?.height === "number" ? n.style.height : FALLBACK_NODE_HEIGHT;
-      const center = { x: n.position.x + width / 2, y: n.position.y + height / 2 };
+        typeof n.style?.height === "number"
+          ? n.style.height
+          : FALLBACK_NODE_HEIGHT;
+      const center = {
+        x: n.position.x + width / 2,
+        y: n.position.y + height / 2,
+      };
       const target = findDropTarget(pointer ?? center);
       const current = n.data.namespace ?? "default";
       if (target && target.name !== current) {
@@ -1753,9 +1834,14 @@ export default function Canvas() {
             {RESOURCE_GROUPS.map((group, gi) => (
               <Fragment key={group.label}>
                 {gi > 0 && (
-                  <span className="canvas-toolbar__group-divider" aria-hidden="true" />
+                  <span
+                    className="canvas-toolbar__group-divider"
+                    aria-hidden="true"
+                  />
                 )}
-                <span className="canvas-toolbar__group-label">{group.label}</span>
+                <span className="canvas-toolbar__group-label">
+                  {group.label}
+                </span>
                 {group.kinds.map((kind) => (
                   <button
                     key={kind}
@@ -1787,7 +1873,9 @@ export default function Canvas() {
                     <button
                       type="button"
                       className={`canvas-button canvas-button--chevron ${
-                        gatewayApiDropdownOpen ? "canvas-button--chevron--open" : ""
+                        gatewayApiDropdownOpen
+                          ? "canvas-button--chevron--open"
+                          : ""
                       }`}
                       onClick={toggleGatewayApiDropdown}
                       title="Reveal the Gateway API resources (GatewayClass, Gateway, routes)"
@@ -1816,21 +1904,23 @@ export default function Canvas() {
               ref={gaDropdownRef}
               style={{ top: gaDropdownPos.top, left: gaDropdownPos.left }}
             >
-              {SUPPORTED_KINDS.filter((kind) => isGatewayApiKind(kind)).map((kind) => (
-                <button
-                  key={kind}
-                  type="button"
-                  className="canvas-button canvas-toolbar__dropdown-item"
-                  onClick={() => {
-                    setGatewayApiDropdownOpen(false);
-                    setGatewayApiModalOpen(false);
-                    setPendingKind(kind);
-                  }}
-                  title={`Add ${kind} resource`}
-                >
-                  + {kind}
-                </button>
-              ))}
+              {SUPPORTED_KINDS.filter((kind) => isGatewayApiKind(kind)).map(
+                (kind) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    className="canvas-button canvas-toolbar__dropdown-item"
+                    onClick={() => {
+                      setGatewayApiDropdownOpen(false);
+                      setGatewayApiModalOpen(false);
+                      setPendingKind(kind);
+                    }}
+                    title={`Add ${kind} resource`}
+                  >
+                    + {kind}
+                  </button>
+                ),
+              )}
             </div>
           )}
         </div>
@@ -1941,7 +2031,11 @@ export default function Canvas() {
               proOptions={{ hideAttribution: true }}
             >
               {/* Cluster/namespace bounding frames — editable in namespace editing mode */}
-              <NsFrame layout={effectiveLayout} nodes={nodes} onDeleteNamespace={onDeleteNamespace} />
+              <NsFrame
+                layout={effectiveLayout}
+                nodes={nodes}
+                onDeleteNamespace={onDeleteNamespace}
+              />
               <Panel position="top-left">
                 <div className="canvas-legend">
                   <span className="canvas-legend__item canvas-legend__item--own">
@@ -2078,7 +2172,8 @@ export default function Canvas() {
                       <path d="M7 14l4-4 3 3 5-6" />
                     </svg>
                     <span>
-                      HorizontalPodAutoscaler {o.hpaName} has more priority — {o.kind} {o.name}{" "}
+                      HorizontalPodAutoscaler {o.hpaName} has more priority —{" "}
+                      {o.kind} {o.name}{" "}
                       {o.viaDeployment
                         ? `(via Deployment ${o.viaDeployment}) `
                         : ""}
@@ -2186,19 +2281,21 @@ export default function Canvas() {
                     >
                       {inspectorData.name}
                     </div>
-                    {inspectorData.namespace && !isClusterScoped(inspectorData.kind) && (
-                      <div className="inspector-hero__namespace">
-                        ns/{inspectorData.namespace}
-                      </div>
-                    )}
-                    {selectedResourceNode && !isClusterScoped(inspectorData.kind) && (
-                      <div
-                        className="inspector-hero__node"
-                        title="Derived from the node rectangle the resource's top-level owner sits in — canvas-only, not part of the manifest"
-                      >
-                        node: {selectedResourceNode}
-                      </div>
-                    )}
+                    {inspectorData.namespace &&
+                      !isClusterScoped(inspectorData.kind) && (
+                        <div className="inspector-hero__namespace">
+                          ns/{inspectorData.namespace}
+                        </div>
+                      )}
+                    {selectedResourceNode &&
+                      !isClusterScoped(inspectorData.kind) && (
+                        <div
+                          className="inspector-hero__node"
+                          title="Derived from the node rectangle the resource's top-level owner sits in — canvas-only, not part of the manifest"
+                        >
+                          node: {selectedResourceNode}
+                        </div>
+                      )}
                   </div>
                 </div>
 
@@ -2354,8 +2451,7 @@ export default function Canvas() {
                           onChange={(e) => {
                             const next = e.target.value as SupportedKind;
                             setDraftResource((prev) => {
-                              const base =
-                                prev ?? selectedNode.data.resource;
+                              const base = prev ?? selectedNode.data.resource;
                               return {
                                 ...base,
                                 kind: next,
@@ -2527,8 +2623,9 @@ export default function Canvas() {
                           </span>
                           {hpaConstraint && (
                             <span className="inspector-field__hint inspector-field__hint--hpa">
-                              HorizontalPodAutoscaler {hpaConstraint.name} has priority — replicas
-                              are clamped to {hpaConstraint.min ?? 1}–
+                              HorizontalPodAutoscaler {hpaConstraint.name} has
+                              priority — replicas are clamped to{" "}
+                              {hpaConstraint.min ?? 1}–
                               {hpaConstraint.max ?? "∞"} and written back to
                               YAML.
                             </span>
@@ -2544,7 +2641,8 @@ export default function Canvas() {
                                 | string
                                 | undefined) ?? "";
                             const ownName =
-                              nameDraft.trim() || (selectedNode.data.name as string);
+                              nameDraft.trim() ||
+                              (selectedNode.data.name as string);
                             const known = selectorOptions.some(
                               (o) => o.value === current,
                             );
@@ -2719,8 +2817,7 @@ export default function Canvas() {
                                   !!claimName &&
                                   nodes.some(
                                     (n) =>
-                                      n.data.kind ===
-                                        "PersistentVolumeClaim" &&
+                                      n.data.kind === "PersistentVolumeClaim" &&
                                       n.data.name === claimName,
                                   );
                                 return (
@@ -2937,9 +3034,9 @@ export default function Canvas() {
                         <div className="inspector-rel-list">
                           {daemonSetNodeNames.length === 0 ? (
                             <span className="inspector-field__hint">
-                              This namespace covers no physical nodes — add Nodes
-                              over it (or create this DaemonSet with a node
-                              count) and one Pod will run on each.
+                              This namespace covers no physical nodes — add
+                              Nodes over it (or create this DaemonSet with a
+                              node count) and one Pod will run on each.
                             </span>
                           ) : (
                             daemonSetNodeNames.map((nodeName) => (
@@ -2955,16 +3052,18 @@ export default function Canvas() {
                                     {nodeName}
                                   </span>
                                 </span>
-                                <span className="inspector-rel-badge">1 pod</span>
+                                <span className="inspector-rel-badge">
+                                  1 pod
+                                </span>
                               </div>
                             ))
                           )}
                         </div>
                         <span className="inspector-field__hint">
-                          A DaemonSet runs exactly one Pod on every node rect its
-                          namespace covers (canvas-only node rects). Each Pod is
-                          nested inside its own DaemonSet box on that node; the
-                          count follows the node/namespace geometry.
+                          A DaemonSet runs exactly one Pod on every node rect
+                          its namespace covers (canvas-only node rects). Each
+                          Pod is nested inside its own DaemonSet box on that
+                          node; the count follows the node/namespace geometry.
                         </span>
                       </div>
                     </div>
@@ -2995,7 +3094,8 @@ export default function Canvas() {
                         <select
                           className="inspector-field__input inspector-field__input--select"
                           value={String(
-                            draftSpec?.template?.spec?.restartPolicy ?? "OnFailure",
+                            draftSpec?.template?.spec?.restartPolicy ??
+                              "OnFailure",
                           )}
                           onChange={(e) =>
                             patchDraft({
@@ -3171,7 +3271,9 @@ export default function Canvas() {
                     </div>
                     <div className="inspector-section__body">
                       <div className="inspector-field">
-                        <label className="inspector-field__label">Schedule</label>
+                        <label className="inspector-field__label">
+                          Schedule
+                        </label>
                         <input
                           className={`inspector-field__input ${cronScheduleError(String(draftSpec?.schedule ?? "")) ? "inspector-field__input--invalid" : ""}`}
                           value={String(draftSpec?.schedule ?? "")}
@@ -3189,9 +3291,13 @@ export default function Canvas() {
                           5-field cron (minute hour day month weekday) or an
                           @-descriptor like @hourly.
                         </span>
-                        {cronScheduleError(String(draftSpec?.schedule ?? "")) && (
+                        {cronScheduleError(
+                          String(draftSpec?.schedule ?? ""),
+                        ) && (
                           <span className="inspector-field__error">
-                            {cronScheduleError(String(draftSpec?.schedule ?? ""))}
+                            {cronScheduleError(
+                              String(draftSpec?.schedule ?? ""),
+                            )}
                           </span>
                         )}
                       </div>
@@ -3251,7 +3357,9 @@ export default function Canvas() {
                                   ...(draftSpec?.jobTemplate ?? {}),
                                   spec: {
                                     ...(draftSpec?.jobTemplate?.spec ?? {}),
-                                    parallelism: toOptionalNumber(e.target.value),
+                                    parallelism: toOptionalNumber(
+                                      e.target.value,
+                                    ),
                                   },
                                 },
                               },
@@ -3260,7 +3368,8 @@ export default function Canvas() {
                           placeholder="1"
                         />
                         <span className="inspector-field__hint">
-                          This many Pods run at the same time on each scheduled run.
+                          This many Pods run at the same time on each scheduled
+                          run.
                         </span>
                       </div>
                       <div className="inspector-field">
@@ -3282,7 +3391,9 @@ export default function Canvas() {
                                   ...(draftSpec?.jobTemplate ?? {}),
                                   spec: {
                                     ...(draftSpec?.jobTemplate?.spec ?? {}),
-                                    completions: toOptionalNumber(e.target.value),
+                                    completions: toOptionalNumber(
+                                      e.target.value,
+                                    ),
                                   },
                                 },
                               },
@@ -3470,9 +3581,7 @@ export default function Canvas() {
                         </label>
                         <input
                           className="inspector-field__input"
-                          value={String(
-                            draftSpec?.containers?.[0]?.name ?? "",
-                          )}
+                          value={String(draftSpec?.containers?.[0]?.name ?? "")}
                           onChange={(e) =>
                             patchDraft({
                               spec: {
@@ -3911,61 +4020,60 @@ export default function Canvas() {
                 )}
 
                 {/* ── Section: Used by (Secret) ─────────── */}
-                {inspectorData.kind === "Secret" &&
-                  secretUsedBy.length > 0 && (
-                    <div className="inspector-section">
-                      <div className="inspector-section__header">
-                        <svg
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                        >
-                          <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-                          <polyline points="15 3 21 3 21 9" />
-                          <line x1="10" y1="14" x2="21" y2="3" />
-                        </svg>
-                        Used by
-                        <span className="inspector-section__count">
-                          {secretUsedBy.length}
-                        </span>
-                      </div>
-                      <div className="inspector-section__body">
-                        <div className="inspector-rel-list">
-                          {secretUsedBy.map((ref) => (
-                            <button
-                              key={`${ref.kind}:${ref.name}`}
-                              type="button"
-                              className="inspector-rel-item inspector-rel-item--link"
-                              title={`Select ${ref.kind} ${ref.name}`}
-                              onClick={() =>
-                                setSelectedResource({
-                                  kind: ref.kind,
-                                  name: ref.name,
-                                })
-                              }
-                            >
-                              <span className="inspector-rel-arrow inspector-rel-arrow--incoming">
-                                ↑
-                              </span>
-                              <div className="inspector-rel-info">
-                                <span className="inspector-rel-kind">
-                                  {ref.kind}
-                                </span>
-                                <span className="inspector-rel-name">
-                                  {ref.name}
-                                </span>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                        <span className="inspector-field__hint">
-                          Resources referencing this Secret via envFrom /
-                          env.valueFrom / volumes in their Pod spec.
-                        </span>
-                      </div>
+                {inspectorData.kind === "Secret" && secretUsedBy.length > 0 && (
+                  <div className="inspector-section">
+                    <div className="inspector-section__header">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                        <polyline points="15 3 21 3 21 9" />
+                        <line x1="10" y1="14" x2="21" y2="3" />
+                      </svg>
+                      Used by
+                      <span className="inspector-section__count">
+                        {secretUsedBy.length}
+                      </span>
                     </div>
-                  )}
+                    <div className="inspector-section__body">
+                      <div className="inspector-rel-list">
+                        {secretUsedBy.map((ref) => (
+                          <button
+                            key={`${ref.kind}:${ref.name}`}
+                            type="button"
+                            className="inspector-rel-item inspector-rel-item--link"
+                            title={`Select ${ref.kind} ${ref.name}`}
+                            onClick={() =>
+                              setSelectedResource({
+                                kind: ref.kind,
+                                name: ref.name,
+                              })
+                            }
+                          >
+                            <span className="inspector-rel-arrow inspector-rel-arrow--incoming">
+                              ↑
+                            </span>
+                            <div className="inspector-rel-info">
+                              <span className="inspector-rel-kind">
+                                {ref.kind}
+                              </span>
+                              <span className="inspector-rel-name">
+                                {ref.name}
+                              </span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                      <span className="inspector-field__hint">
+                        Resources referencing this Secret via envFrom /
+                        env.valueFrom / volumes in their Pod spec.
+                      </span>
+                    </div>
+                  </div>
+                )}
 
                 {/* ── Section: Storage (PersistentVolumeClaim) ── */}
                 {!isManaged && draftKind === "PersistentVolumeClaim" && (
@@ -4095,9 +4203,7 @@ export default function Canvas() {
                           Bind to PV
                         </label>
                         {(() => {
-                          const current = String(
-                            draftSpec?.volumeName ?? "",
-                          );
+                          const current = String(draftSpec?.volumeName ?? "");
                           const known = pvOptions.includes(current);
                           return (
                             <select
@@ -4145,7 +4251,9 @@ export default function Canvas() {
                             className="inspector-static-row__val"
                             title={pvcBoundTo.name}
                           >
-                            {pvcBoundTo.kind === "PersistentVolume" ? "PV" : "StorageClass"}{" "}
+                            {pvcBoundTo.kind === "PersistentVolume"
+                              ? "PV"
+                              : "StorageClass"}{" "}
                             {pvcBoundTo.name}
                             {!pvcBoundTo.exists ? " (missing)" : ""}
                           </span>
@@ -4515,8 +4623,8 @@ export default function Canvas() {
                     <div className="inspector-section__body">
                       {ingressTlsEntries.length === 0 && (
                         <span className="inspector-field__hint">
-                          No spec.tls[] entries. Drag an Ingress onto a Secret to
-                          terminate TLS, or edit the YAML.
+                          No spec.tls[] entries. Drag an Ingress onto a Secret
+                          to terminate TLS, or edit the YAML.
                         </span>
                       )}
                       {ingressTlsEntries.map((entry, idx) => {
@@ -4787,15 +4895,15 @@ export default function Canvas() {
                                             const targetKind =
                                               e.target.value.split("|")[0];
                                             return targetKind ===
-                                                "Deployment" ||
+                                              "Deployment" ||
                                               targetKind === "DaemonSet" ||
                                               targetKind === "StatefulSet" ||
                                               targetKind === "ReplicaSet"
                                               ? "apps/v1"
                                               : targetKind === "Job" ||
                                                   targetKind === "CronJob"
-                                              ? "batch/v1"
-                                              : "v1";
+                                                ? "batch/v1"
+                                                : "v1";
                                           })(),
                                           kind: e.target.value.split("|")[0],
                                           name: e.target.value.split("|")[1],
@@ -4823,8 +4931,9 @@ export default function Canvas() {
                           );
                         })()}
                         <span className="inspector-field__hint">
-                          Lists the Deployments, DaemonSets, StatefulSets, ReplicaSets, Pods,
-                          Jobs and CronJobs currently on the canvas.
+                          Lists the Deployments, DaemonSets, StatefulSets,
+                          ReplicaSets, Pods, Jobs and CronJobs currently on the
+                          canvas.
                         </span>
                       </div>
                       <div className="inspector-field">
@@ -5008,8 +5117,8 @@ export default function Canvas() {
                         />
                       </div>
                       <span className="inspector-field__hint">
-                        Bounds apply to the first containerPolicy
-                        (containerName &quot;*&quot;). Clear to leave unbounded.
+                        Bounds apply to the first containerPolicy (containerName
+                        &quot;*&quot;). Clear to leave unbounded.
                       </span>
                     </div>
                   </div>
@@ -5034,7 +5143,9 @@ export default function Canvas() {
                     </div>
                     <div className="inspector-section__body">
                       <div className="inspector-field">
-                        <label className="inspector-field__label">Capacity</label>
+                        <label className="inspector-field__label">
+                          Capacity
+                        </label>
                         <input
                           className="inspector-field__input"
                           value={String(draftSpec?.capacity?.storage ?? "")}
@@ -5080,7 +5191,8 @@ export default function Canvas() {
                         <select
                           className="inspector-field__input inspector-field__input--select"
                           value={String(
-                            draftSpec?.persistentVolumeReclaimPolicy ?? "Retain",
+                            draftSpec?.persistentVolumeReclaimPolicy ??
+                              "Retain",
                           )}
                           onChange={(e) =>
                             patchDraft({
@@ -5298,7 +5410,10 @@ export default function Canvas() {
                           <rect x="4" y="12" width="4" height="8" rx="1" />
                           <rect x="10" y="8" width="4" height="12" rx="1" />
                           <rect x="16" y="4" width="4" height="16" rx="1" />
-                          <path d="M5 12V9M11 8V5M17 4V7" strokeDasharray="2 2" />
+                          <path
+                            d="M5 12V9M11 8V5M17 4V7"
+                            strokeDasharray="2 2"
+                          />
                         </svg>
                         Vertical scaled by
                         <span className="inspector-section__count">
@@ -5465,11 +5580,11 @@ export default function Canvas() {
                     </div>
                     <div className="inspector-section__body">
                       <div className="inspector-field">
-                        <label className="inspector-field__label">
-                          Class
-                        </label>
+                        <label className="inspector-field__label">Class</label>
                         {(() => {
-                          const current = String(draftSpec?.gatewayClassName ?? "");
+                          const current = String(
+                            draftSpec?.gatewayClassName ?? "",
+                          );
                           const known = gatewayClassOptions.includes(current);
                           return (
                             <select
@@ -5479,7 +5594,8 @@ export default function Canvas() {
                                 patchDraft({
                                   spec: {
                                     ...draftSpec,
-                                    gatewayClassName: e.target.value || undefined,
+                                    gatewayClassName:
+                                      e.target.value || undefined,
                                   },
                                 })
                               }
@@ -5491,7 +5607,9 @@ export default function Canvas() {
                                 </option>
                               ))}
                               {current && !known && (
-                                <option value={current}>{current} (missing)</option>
+                                <option value={current}>
+                                  {current} (missing)
+                                </option>
                               )}
                             </select>
                           );
@@ -5505,59 +5623,60 @@ export default function Canvas() {
                 )}
 
                 {/* ── Section: Used by Routes (Gateway) ── */}
-                {inspectorData.kind === "Gateway" && gatewayUsedBy.length > 0 && (
-                  <div className="inspector-section">
-                    <div className="inspector-section__header">
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                      >
-                        <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-                        <polyline points="15 3 21 3 21 9" />
-                        <line x1="10" y1="14" x2="21" y2="3" />
-                      </svg>
-                      Used by Routes
-                      <span className="inspector-section__count">
-                        {gatewayUsedBy.length}
-                      </span>
-                    </div>
-                    <div className="inspector-section__body">
-                      <div className="inspector-rel-list">
-                        {gatewayUsedBy.map((ref) => (
-                          <button
-                            key={`${ref.kind}:${ref.name}`}
-                            type="button"
-                            className="inspector-rel-item inspector-rel-item--link"
-                            title={`Select ${ref.kind} ${ref.name}`}
-                            onClick={() =>
-                              setSelectedResource({
-                                kind: ref.kind as SupportedKind,
-                                name: ref.name,
-                              })
-                            }
-                          >
-                            <span className="inspector-rel-arrow inspector-rel-arrow--incoming">
-                              ↑
-                            </span>
-                            <div className="inspector-rel-info">
-                              <span className="inspector-rel-kind">
-                                {ref.kind}
-                              </span>
-                              <span className="inspector-rel-name">
-                                {ref.name}
-                              </span>
-                            </div>
-                          </button>
-                        ))}
+                {inspectorData.kind === "Gateway" &&
+                  gatewayUsedBy.length > 0 && (
+                    <div className="inspector-section">
+                      <div className="inspector-section__header">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                        >
+                          <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                          <polyline points="15 3 21 3 21 9" />
+                          <line x1="10" y1="14" x2="21" y2="3" />
+                        </svg>
+                        Used by Routes
+                        <span className="inspector-section__count">
+                          {gatewayUsedBy.length}
+                        </span>
                       </div>
-                      <span className="inspector-field__hint">
-                        Routes whose spec.parentRefs point at this Gateway.
-                      </span>
+                      <div className="inspector-section__body">
+                        <div className="inspector-rel-list">
+                          {gatewayUsedBy.map((ref) => (
+                            <button
+                              key={`${ref.kind}:${ref.name}`}
+                              type="button"
+                              className="inspector-rel-item inspector-rel-item--link"
+                              title={`Select ${ref.kind} ${ref.name}`}
+                              onClick={() =>
+                                setSelectedResource({
+                                  kind: ref.kind as SupportedKind,
+                                  name: ref.name,
+                                })
+                              }
+                            >
+                              <span className="inspector-rel-arrow inspector-rel-arrow--incoming">
+                                ↑
+                              </span>
+                              <div className="inspector-rel-info">
+                                <span className="inspector-rel-kind">
+                                  {ref.kind}
+                                </span>
+                                <span className="inspector-rel-name">
+                                  {ref.name}
+                                </span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                        <span className="inspector-field__hint">
+                          Routes whose spec.parentRefs point at this Gateway.
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
                 {/* ── Section: Routes — parent + backends ── */}
                 {!isManaged &&
@@ -5587,7 +5706,9 @@ export default function Canvas() {
                             Parent Gateway
                           </label>
                           {(() => {
-                            const refs: any[] = Array.isArray(draftSpec?.parentRefs)
+                            const refs: any[] = Array.isArray(
+                              draftSpec?.parentRefs,
+                            )
                               ? draftSpec.parentRefs
                               : [];
                             const current = String(refs[0]?.name ?? "");
@@ -5614,48 +5735,55 @@ export default function Canvas() {
                                   </option>
                                 ))}
                                 {current && !known && (
-                                  <option value={current}>{current} (missing)</option>
+                                  <option value={current}>
+                                    {current} (missing)
+                                  </option>
                                 )}
                               </select>
                             );
                           })()}
                         </div>
-                        {draftKind !== "TCPRoute" && draftKind !== "UDPRoute" && (
-                          <div className="inspector-field">
-                            <label className="inspector-field__label">
-                              Hostnames
-                            </label>
-                            <input
-                              className="inspector-field__input"
-                              value={(() => {
-                                const hs: any[] = Array.isArray(draftSpec?.hostnames)
-                                  ? draftSpec.hostnames
-                                  : [];
-                                return hs.join(", ");
-                              })()}
-                              onChange={(e) =>
-                                patchDraft({
-                                  spec: {
-                                    ...draftSpec,
-                                    hostnames: e.target.value.trim()
-                                      ? e.target.value
-                                          .split(/[\s,]+/)
-                                          .map((h: string) => h.trim())
-                                          .filter(Boolean)
-                                      : undefined,
-                                  },
-                                })
-                              }
-                              placeholder="api.example.com"
-                            />
-                          </div>
-                        )}
+                        {draftKind !== "TCPRoute" &&
+                          draftKind !== "UDPRoute" && (
+                            <div className="inspector-field">
+                              <label className="inspector-field__label">
+                                Hostnames
+                              </label>
+                              <input
+                                className="inspector-field__input"
+                                value={(() => {
+                                  const hs: any[] = Array.isArray(
+                                    draftSpec?.hostnames,
+                                  )
+                                    ? draftSpec.hostnames
+                                    : [];
+                                  return hs.join(", ");
+                                })()}
+                                onChange={(e) =>
+                                  patchDraft({
+                                    spec: {
+                                      ...draftSpec,
+                                      hostnames: e.target.value.trim()
+                                        ? e.target.value
+                                            .split(/[\s,]+/)
+                                            .map((h: string) => h.trim())
+                                            .filter(Boolean)
+                                        : undefined,
+                                    },
+                                  })
+                                }
+                                placeholder="api.example.com"
+                              />
+                            </div>
+                          )}
                         <div className="inspector-field">
                           <label className="inspector-field__label">
                             Backend Services
                           </label>
                           {(() => {
-                            const refs: any[] = Array.isArray(draftSpec?.backendRefs)
+                            const refs: any[] = Array.isArray(
+                              draftSpec?.backendRefs,
+                            )
                               ? draftSpec.backendRefs
                               : [];
                             const patchRefs = (next: any[]) =>
@@ -5668,13 +5796,19 @@ export default function Canvas() {
                             return (
                               <>
                                 {refs.map((ref, i) => (
-                                  <div className="inspector-backend-row" key={i}>
+                                  <div
+                                    className="inspector-backend-row"
+                                    key={i}
+                                  >
                                     <select
                                       className="inspector-field__input inspector-field__input--select"
                                       value={String(ref?.name ?? "")}
                                       onChange={(e) => {
                                         const next = [...refs];
-                                        next[i] = { ...next[i], name: e.target.value };
+                                        next[i] = {
+                                          ...next[i],
+                                          name: e.target.value,
+                                        };
                                         patchRefs(next);
                                       }}
                                     >
@@ -5690,7 +5824,9 @@ export default function Canvas() {
                                       className="inspector-backend-remove"
                                       title="Remove backend"
                                       onClick={() =>
-                                        patchRefs(refs.filter((_, j) => j !== i))
+                                        patchRefs(
+                                          refs.filter((_, j) => j !== i),
+                                        )
                                       }
                                     >
                                       ×
@@ -5700,7 +5836,9 @@ export default function Canvas() {
                                 <button
                                   type="button"
                                   className="inspector-rel-item inspector-rel-item--link"
-                                  onClick={() => patchRefs([...refs, { name: "" }])}
+                                  onClick={() =>
+                                    patchRefs([...refs, { name: "" }])
+                                  }
                                 >
                                   + Add backend Service
                                 </button>
@@ -5716,60 +5854,61 @@ export default function Canvas() {
                   )}
 
                 {/* ── Section: Routed by (Service) ── */}
-                {inspectorData.kind === "Service" && serviceRoutedBy.length > 0 && (
-                  <div className="inspector-section">
-                    <div className="inspector-section__header">
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                      >
-                        <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-                        <polyline points="15 3 21 3 21 9" />
-                        <line x1="10" y1="14" x2="21" y2="3" />
-                      </svg>
-                      Routed by
-                      <span className="inspector-section__count">
-                        {serviceRoutedBy.length}
-                      </span>
-                    </div>
-                    <div className="inspector-section__body">
-                      <div className="inspector-rel-list">
-                        {serviceRoutedBy.map((ref) => (
-                          <button
-                            key={`${ref.kind}:${ref.name}`}
-                            type="button"
-                            className="inspector-rel-item inspector-rel-item--link"
-                            title={`Select ${ref.kind} ${ref.name}`}
-                            onClick={() =>
-                              setSelectedResource({
-                                kind: ref.kind as SupportedKind,
-                                name: ref.name,
-                              })
-                            }
-                          >
-                            <span className="inspector-rel-arrow inspector-rel-arrow--incoming">
-                              ↑
-                            </span>
-                            <div className="inspector-rel-info">
-                              <span className="inspector-rel-kind">
-                                {ref.kind}
-                              </span>
-                              <span className="inspector-rel-name">
-                                {ref.name}
-                              </span>
-                            </div>
-                          </button>
-                        ))}
+                {inspectorData.kind === "Service" &&
+                  serviceRoutedBy.length > 0 && (
+                    <div className="inspector-section">
+                      <div className="inspector-section__header">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                        >
+                          <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                          <polyline points="15 3 21 3 21 9" />
+                          <line x1="10" y1="14" x2="21" y2="3" />
+                        </svg>
+                        Routed by
+                        <span className="inspector-section__count">
+                          {serviceRoutedBy.length}
+                        </span>
                       </div>
-                      <span className="inspector-field__hint">
-                        Gateway API routes whose spec.backendRefs point at this
-                        Service.
-                      </span>
+                      <div className="inspector-section__body">
+                        <div className="inspector-rel-list">
+                          {serviceRoutedBy.map((ref) => (
+                            <button
+                              key={`${ref.kind}:${ref.name}`}
+                              type="button"
+                              className="inspector-rel-item inspector-rel-item--link"
+                              title={`Select ${ref.kind} ${ref.name}`}
+                              onClick={() =>
+                                setSelectedResource({
+                                  kind: ref.kind as SupportedKind,
+                                  name: ref.name,
+                                })
+                              }
+                            >
+                              <span className="inspector-rel-arrow inspector-rel-arrow--incoming">
+                                ↑
+                              </span>
+                              <div className="inspector-rel-info">
+                                <span className="inspector-rel-kind">
+                                  {ref.kind}
+                                </span>
+                                <span className="inspector-rel-name">
+                                  {ref.name}
+                                </span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                        <span className="inspector-field__hint">
+                          Gateway API routes whose spec.backendRefs point at
+                          this Service.
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
                 {/* ── Section: Relationships ───────────────── */}
                 {relationships.length > 0 && (
@@ -6048,9 +6187,14 @@ function flowPointFromScreen(e: {
   clientX?: number;
   clientY?: number;
 }): { x: number; y: number } | null {
-  if (typeof e?.clientX !== "number" || typeof e.clientY !== "number") return null;
-  const renderer = document.querySelector(".react-flow__renderer") as HTMLElement | null;
-  const viewport = document.querySelector(".react-flow__viewport") as HTMLElement | null;
+  if (typeof e?.clientX !== "number" || typeof e.clientY !== "number")
+    return null;
+  const renderer = document.querySelector(
+    ".react-flow__renderer",
+  ) as HTMLElement | null;
+  const viewport = document.querySelector(
+    ".react-flow__viewport",
+  ) as HTMLElement | null;
   if (!renderer || !viewport) return null;
   const bounds = renderer.getBoundingClientRect();
   const m = new DOMMatrixReadOnly(viewport.style.transform);
@@ -6073,7 +6217,7 @@ function cronScheduleError(schedule: string): string {
   if (trimmed.startsWith("@")) return "";
   return trimmed.split(/\s+/).length === 5
     ? ""
-    : "A cron schedule has 5 fields: minute hour day month weekday (e.g. \"* * * * *\").";
+    : 'A cron schedule has 5 fields: minute hour day month weekday (e.g. "* * * * *").';
 }
 
 function parseKeyValueString(

@@ -6,7 +6,6 @@ import { isClusterScoped } from '../utils/k8sScope';
 import {
     NAMESPACE_MIN_RECT,
     NODE_MIN_RECT,
-    PROTECTED_NAMESPACES,
     nodesOfNamespace,
     rectContainsRect,
     type NsLayout,
@@ -22,7 +21,7 @@ interface NsFrameProps {
     /** Effective (persisted + auto-discovered) cluster/namespace rectangles. */
     layout: NsLayout | null;
     nodes: Node<K8sNodeData>[];
-    /** User clicked the × on a namespace frame (never fired for protected ones). */
+    /** User clicked the × on a namespace frame. */
     onDeleteNamespace: (name: string) => void;
 }
 
@@ -290,7 +289,7 @@ onMove: (dx, dy) =>
                         onPointerCancel={onPointerEnd}
                     >
                         <div className="teaching-frame__title">ns: {ns.name}{onNodes}</div>
-                        {nsEditMode && !PROTECTED_NAMESPACES.has(ns.name) && (
+                        {nsEditMode && (
                             <button
                                 type="button"
                                 className="teaching-frame__delete"

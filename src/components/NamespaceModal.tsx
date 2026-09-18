@@ -5,6 +5,8 @@ import { DEFAULT_CLUSTER_RECT, effectiveNsLayout } from '../utils/teachingFrame'
 
 interface Props {
     onClose: () => void;
+    /** Called with the created name right after `addNamespace` (before close). */
+    onCreated?: (name: string) => void;
 }
 
 /**
@@ -13,7 +15,7 @@ interface Props {
  * names, and a default-size rectangle placed inside the cluster on confirm
  * (growing the cluster when there is no room).
  */
-export default function NamespaceModal({ onClose }: Props) {
+export default function NamespaceModal({ onClose, onCreated }: Props) {
     const nodes = useVeltraStore((s) => s.nodes);
     const nsLayout = useVeltraStore((s) => s.nsLayout);
     const addNamespace = useVeltraStore((s) => s.addNamespace);
@@ -41,11 +43,17 @@ export default function NamespaceModal({ onClose }: Props) {
 
     useEffect(() => {
         inputRef.current?.focus();
+        // Capture-phase + stopImmediatePropagation: when this modal is stacked
+        // above a creation modal, Escape closes only this one — the underlying
+        // modal's own document-level Escape listener never fires.
         const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') onClose();
+            if (e.key === 'Escape') {
+                e.stopImmediatePropagation();
+                onClose();
+            }
         };
-        document.addEventListener('keydown', onKey);
-        return () => document.removeEventListener('keydown', onKey);
+        document.addEventListener('keydown', onKey, true);
+        return () => document.removeEventListener('keydown', onKey, true);
     }, [onClose]);
 
     const handleCreate = () => {
@@ -58,11 +66,20 @@ export default function NamespaceModal({ onClose }: Props) {
             width: 320,
             height: 240,
         });
+        onCreated?.(trimmed);
         onClose();
     };
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
+        <div
+            className="modal-overlay"
+            onClick={(e) => {
+                // stopPropagation: when stacked above a creation modal, a
+                // backdrop click must not bubble into the modal underneath.
+                e.stopPropagation();
+                onClose();
+            }}
+        >
             <div
                 className="modal modal--compact"
                 role="dialog"

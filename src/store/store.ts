@@ -39,7 +39,6 @@ import {
     FALLBACK_NODE_WIDTH,
     NAMESPACE_MIN_RECT,
     NODE_MIN_RECT,
-    PROTECTED_NAMESPACES,
     rectContainsRect,
     rectsOverlap,
     resolveMoveCollision,
@@ -374,7 +373,7 @@ interface VeltraState {
     /** Add an empty namespace rectangle with the given position/size. */
     addNamespace: (name: string, rect?: Rect) => void;
     /** Delete a namespace: removes its rectangle and cascade-deletes every
-     *  resource living in it (K8s-style). `default` is protected. */
+     *  resource living in it (K8s-style). No namespace is protected. */
     deleteNamespace: (name: string) => void;
     /** Move a physical node rectangle (and every namespace rectangle fully
      *  contained in it, with their resources). Straddling namespaces stay put —
@@ -1720,14 +1719,6 @@ if (isNsReassignment) {
                 const trimmed = (name ?? '').trim();
                 if (!trimmed) {
                     return { notice: makeNotice('error', 'Namespace name cannot be empty.') };
-                }
-                if (PROTECTED_NAMESPACES.has(trimmed)) {
-                    return {
-                        notice: makeNotice(
-                            'error',
-                            `Namespace “${trimmed}” is protected and cannot be deleted.`
-                        ),
-                    };
                 }
                 // Cascade like Kubernetes: every top-level real resource living in
                 // the namespace is deleted, and its nested descendants (Pods under

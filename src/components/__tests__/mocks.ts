@@ -11,6 +11,7 @@ import { vi, type Mock } from 'vitest';
 import type { Node, Edge, NodeChange } from '@xyflow/react';
 import type { K8sNodeData } from '../../utils/buildGraph';
 import type { K8sResource, SupportedKind } from '../../types/types';
+import type { NsLayout } from '../../utils/teachingFrame';
 
 // Deliberately NOT importing the real `nodeIdFor` from '../../utils/buildGraph':
 // that module also imports the real '@xyflow/react' (for MarkerType), and since
@@ -90,6 +91,10 @@ export interface MockStoreState {
     selectedResource: { kind: SupportedKind; name: string } | null;
     notice: { id: number; tone: 'success' | 'error' | 'info'; text: string } | null;
     hpaOverrides: { kind: string; name: string; original: number; effective: number; hpaName: string; reason: 'minReplicas' | 'maxReplicas'; bound: number; viaDeployment?: string }[];
+    nsLayout: NsLayout | null;
+    addNamespace: Mock;
+    addNode: Mock;
+    deleteNamespace: Mock;
     setNotice: Mock;
     setYaml: Mock;
     updateNodeFromCanvas: Mock;
@@ -120,6 +125,10 @@ export function createDefaultStoreState(): MockStoreState {
         selectedResource: null,
         notice: null,
         hpaOverrides: [],
+        nsLayout: null,
+        addNamespace: vi.fn(),
+        addNode: vi.fn(),
+        deleteNamespace: vi.fn(),
         setNotice: vi.fn(),
         setYaml: vi.fn(),
         updateNodeFromCanvas: vi.fn(),

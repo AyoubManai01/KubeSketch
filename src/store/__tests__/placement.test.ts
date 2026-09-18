@@ -786,4 +786,21 @@ describe('frame editing modes + cluster containment through the store', () => {
         expect(n1.x + n1.width).toBeLessThanOrEqual(1600);
         expect(n1.y + n1.height).toBeLessThanOrEqual(1200);
     });
+
+    describe('namespace deletion (no protected namespaces)', () => {
+        it('an empty "default" namespace rectangle can be deleted', () => {
+            useVeltraStore.setState({ nsLayout: LAYOUT });
+            useVeltraStore.getState().deleteNamespace('default');
+            const layout = useVeltraStore.getState().nsLayout!;
+            expect(layout.namespaces.map((ns) => ns.name)).toEqual([]);
+        });
+
+        it('deleting "default" cascades the resources living in it', () => {
+            useVeltraStore.setState({ nsLayout: LAYOUT });
+            useVeltraStore.getState().addConfiguredNode('ConfigMap', configMap('cm', 'default'));
+            useVeltraStore.getState().deleteNamespace('default');
+            expect(nodeOf('ConfigMap', 'cm')).toBeUndefined();
+            expect(useVeltraStore.getState().nsLayout!.namespaces).toEqual([]);
+        });
+    });
 });

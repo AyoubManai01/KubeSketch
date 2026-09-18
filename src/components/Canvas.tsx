@@ -99,7 +99,6 @@ const RESOURCE_GROUPS: { label: string; kinds: SupportedKind[] }[] = [
     (kind) => !isGatewayApiKind(kind) && kindGroupLabel(kind) === label,
   ),
 }));
-const DEFAULT_NAMESPACES = ["default"];
 const SERVICE_TYPES = ["ClusterIP", "NodePort", "LoadBalancer", "ExternalName"];
 const MIN_ZOOM = 0.5 / 1.2 ** 3;
 
@@ -620,6 +619,12 @@ export default function Canvas() {
     () => effectiveNsLayout(nsLayout, nodes),
     [nsLayout, nodes],
   );
+  // The full-canvas empty prompt is only for a truly fresh canvas: namespace
+  // and physical node rectangles are canvas-only frames (never React Flow
+  // nodes), so once one exists the prompt must disappear instead of covering
+  // the cluster structure the user just created.
+  const hasStructureFrames =
+    effectiveLayout.namespaces.length > 0 || effectiveLayout.nodes.length > 0;
   // The physical node the selected resource is "running on" — derived read-only
   // from geometry: walk up to the selected node's top-level ancestor (nested
   // pods report their workload's node) and hit-test its center against the node
@@ -670,7 +675,7 @@ export default function Canvas() {
   }, [nodes, nsEditMode, nodeEditMode, selectedResource]);
 
   const namespaceOptions = useMemo(() => {
-    const discovered = new Set<string>(DEFAULT_NAMESPACES);
+    const discovered = new Set<string>();
     nodes.forEach((node) => {
       if (node.data?.namespace) discovered.add(node.data.namespace);
     });
@@ -1287,6 +1292,16 @@ export default function Canvas() {
     ? validateDraftName(draftKind, nameDraft)
     : "";
 
+  // Namespaces are never assumed: a namespaced resource must keep a non-empty
+  // namespace (clearing it would silently fall back to "default" at the model
+  // level). Mirrors the create-modal requirement.
+  const namespaceError =
+    draftResource && !isClusterScoped(draftKind)
+      ? String(draftMetadata.namespace ?? "").trim()
+        ? ""
+        : "Choose or create a namespace."
+      : "";
+
   // True when the draft holds anything the model doesn't — gates the
   // Validate Changes button.
   const dirty = useMemo(() => {
@@ -1451,6 +1466,10 @@ export default function Canvas() {
     // commit so the model is never left invalid (invariant 8).
     if (validateDraftName(kind, name)) return;
 
+    // A namespaced resource must keep a namespace (no silent "default"
+    // fallback) — surfaced inline on the Namespace field.
+    if (namespaceError) return;
+
     // Single-node access-mode guard (invariant 14): a RWO/RWOP claim mounted by
     // a multi-replica workload is impossible — the inline error explains why.
     if (pvcAccessModeViolation) return;
@@ -1493,6 +1512,7 @@ export default function Canvas() {
     nameDraft,
     isManaged,
     pvcAccessModeViolation,
+    namespaceError,
   ]);
 
   // Skip YAML serialization for position/select/dimension-only changes (perf optimization)
@@ -2164,7 +2184,7 @@ export default function Canvas() {
               </div>
             )}
 
-            {isEmpty && (
+            {isEmpty && !hasStructureFrames && (
               <div className="canvas-empty-state">
                 <div className="canvas-empty-state__illustration">
                   <svg
@@ -2182,23 +2202,24 @@ export default function Canvas() {
                   Empty Infrastructure Canvas
                 </h3>
                 <p className="canvas-empty-state__desc">
-                  No Kubernetes resources to visualize. Add resources using the
-                  toolbar above or paste a YAML manifest in the editor.
+                  Start with your cluster layout: add a namespace to group your
+                  resources, and physical nodes to host them. Then add resources
+                  using the toolbar above or paste a YAML manifest in the editor.
                 </p>
                 <div className="canvas-empty-state__actions">
                   <button
                     type="button"
                     className="canvas-button"
-                    onClick={() => setPendingKind("Deployment")}
+                    onClick={() => setNamespaceModalOpen(true)}
                   >
-                    + Add Deployment
+                    + Add Namespace
                   </button>
                   <button
                     type="button"
                     className="canvas-button"
-                    onClick={() => setPendingKind("Service")}
+                    onClick={() => setNodeModalOpen(true)}
                   >
-                    + Add Service
+                    + Add Node
                   </button>
                 </div>
               </div>
@@ -2529,7 +2550,7 @@ export default function Canvas() {
                             Namespace
                           </label>
                           <input
-                            className="inspector-field__input"
+                            className={`inspector-field__input${namespaceError ? " inspector-field__input--invalid" : ""}`}
                             value={(draftMetadata.namespace as string) ?? ""}
                             list={namespaceListId}
                             onChange={(e) =>
@@ -2539,8 +2560,13 @@ export default function Canvas() {
                                 },
                               })
                             }
-                            placeholder="default"
+                            placeholder="choose or type a namespace"
                           />
+                          {namespaceError && (
+                            <span className="inspector-field__error">
+                              {namespaceError}
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>

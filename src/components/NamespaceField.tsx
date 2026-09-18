@@ -108,7 +108,7 @@ export default function NamespaceField({ value, onChange, options, placeholder }
                     if (document.activeElement === inputRef.current) setOpen(true);
                 }}
                 onKeyDown={handleKeyDown}
-                placeholder={placeholder ?? 'default'}
+                placeholder={placeholder ?? 'choose or type a namespace'}
             />
             <button
                 type="button"

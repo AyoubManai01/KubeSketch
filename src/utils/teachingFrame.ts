@@ -45,9 +45,6 @@ export const NAMESPACE_MIN_RECT = 80;
 /** Smallest a physical node rectangle may be shrunk to (resize handles). */
 export const NODE_MIN_RECT = 120;
 
-/** Namespaces that can never be deleted (K8s built-ins, no × button shown). */
-export const PROTECTED_NAMESPACES = new Set(['default']);
-
 /**
  * Compute the Cluster/namespace guide frames from the *top-level* nodes only,
  * using each node's real width/height. Child nodes have parent-relative

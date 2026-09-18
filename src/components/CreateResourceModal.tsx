@@ -12,6 +12,7 @@ import {
 } from '../store/store';
 import ConfigMapDataEditor from './ConfigMapDataEditor';
 import NamespaceField from './NamespaceField';
+import NamespaceModal from './NamespaceModal';
 
 interface Props {
     kind: SupportedKind;
@@ -245,7 +246,16 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
             : '';
     }, [name, kind, nodes]);
 
-    const [namespace, setNamespace] = useState('default');
+    const [namespace, setNamespace] = useState('');
+    // Stacked "+ New namespace" prompt (alternative to typing a new name).
+    const [nsCreateOpen, setNsCreateOpen] = useState(false);
+
+    // Namespaces are never assumed: a namespaced resource must pick, type or
+    // create a namespace explicitly ("+ New" next to the field).
+    const namespaceError = useMemo(() => {
+        if (isClusterScoped(kind)) return '';
+        return namespace.trim() ? '' : 'Choose or create a namespace.';
+    }, [kind, namespace]);
     // Workloads/Pods auto-derive their app label from the name until the user edits it
     const [appLabelDraft, setAppLabelDraft] = useState('');
     const [appLabelTouched, setAppLabelTouched] = useState(false);
@@ -455,7 +465,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     }, [nodes]);
 
     const namespaceOptions = useMemo(() => {
-        const vals = new Set<string>(['default']);
+        const vals = new Set<string>();
         nodes.forEach((n) => { if (n.data.namespace) vals.add(n.data.namespace); });
         nsLayout?.namespaces?.forEach((ns) => vals.add(ns.name));
         return Array.from(vals).sort();
@@ -607,7 +617,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     function buildResource(): K8sResource {
         const meta: K8sResource['metadata'] = {
             name: name.trim() || suggestedName,
-            namespace: namespace || 'default',
+            namespace: namespace.trim(),
         };
         if (appLabel.trim()) meta.labels = { app: appLabel.trim() };
 
@@ -1029,6 +1039,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
 
     function handleCreate() {
         if (nameError) return;
+        if (namespaceError) return;
         if (stsClaimNameError) return;
         if (cmTarget && cmMechanism === 'envKey' && !cmKey) return;
         if (secretTarget && secretMechanism === 'envKey' && !secretKey) return;
@@ -1099,7 +1110,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                 kind: 'PersistentVolumeClaim',
                 metadata: {
                     name: stsClaimName.trim(),
-                    namespace: namespace || 'default',
+                    namespace: namespace.trim(),
                     labels: { app: appLabel.trim() || name.trim() || suggestedName },
                 },
                 spec: {
@@ -1161,11 +1172,24 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                         {!isClusterScoped(kind) && (
                             <div className="modal-field">
                                 <label className="modal-field__label">Namespace</label>
-                                <NamespaceField
-                                    value={namespace}
-                                    onChange={setNamespace}
-                                    options={namespaceOptions}
-                                />
+                                <div className="namespace-field-group">
+                                    <NamespaceField
+                                        value={namespace}
+                                        onChange={setNamespace}
+                                        options={namespaceOptions}
+                                    />
+                                    <button
+                                        type="button"
+                                        className="namespace-field__new"
+                                        onClick={() => setNsCreateOpen(true)}
+                                        title="Create a new namespace rectangle"
+                                    >
+                                        + New
+                                    </button>
+                                </div>
+                                {namespaceError && (
+                                    <span className="modal-field__error">{namespaceError}</span>
+                                )}
                             </div>
                         )}
                     </div>
@@ -2478,6 +2502,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                         onClick={handleCreate}
                         disabled={
                             !!nameError ||
+                            !!namespaceError ||
                             !!stsClaimNameError ||
                             !!scheduleError ||
                             !!daemonSetNodesError ||
@@ -2487,6 +2512,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                         }
                         title={
                             nameError ||
+                            namespaceError ||
                             stsClaimNameError ||
                             scheduleError ||
                             daemonSetNodesError ||
@@ -2505,6 +2531,16 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                     </button>
                 </div>
             </div>
+
+            {/* Stacked namespace creation prompt — renders above the create
+                modal (later in DOM, same overlay z-index) and auto-selects the
+                new namespace on success. */}
+            {nsCreateOpen && (
+                <NamespaceModal
+                    onClose={() => setNsCreateOpen(false)}
+                    onCreated={(created) => setNamespace(created)}
+                />
+            )}
         </div>
     );
 }

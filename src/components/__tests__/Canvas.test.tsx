@@ -50,23 +50,58 @@ describe('Canvas', () => {
 
     // ── Empty state ──────────────────────────────────────────────────────────
     describe('empty state', () => {
-        it('shows the empty-canvas illustration and CTAs only when there are no nodes', () => {
-            setMockStoreState({ nodes: [] });
+        it('shows the prompt with Node/Namespace CTAs only on a truly fresh canvas', () => {
+            setMockStoreState({ nodes: [], nsLayout: null });
             render(<Canvas />);
             expect(dom.getByText('Empty Infrastructure Canvas')).toBeInTheDocument();
+            expect(dom.getByText('+ Add Namespace')).toBeInTheDocument();
+            expect(dom.getByText('+ Add Node')).toBeInTheDocument();
         });
 
-        it('hides the empty state once at least one node exists', () => {
+        it('hides the empty state once at least one resource node exists', () => {
             setMockStoreState({ nodes: [createMockNode({ kind: 'Pod', name: 'p1' })] });
             render(<Canvas />);
             expect(dom.queryByText('Empty Infrastructure Canvas')).toBeNull();
         });
 
-        it('the "+ Add Deployment" CTA opens the creation modal pre-set to Deployment', () => {
-            setMockStoreState({ nodes: [] });
+        it('hides the empty state when only a namespace rectangle exists (no resources yet)', () => {
+            setMockStoreState({
+                nodes: [],
+                nsLayout: {
+                    cluster: { x: 20, y: 20, width: 1200, height: 1400 },
+                    nodes: [],
+                    namespaces: [{ name: 'team-a', x: 40, y: 40, width: 320, height: 240 }],
+                },
+            });
             render(<Canvas />);
-            fireEvent.click(dom.getByText('+ Add Deployment'));
-            expect(dom.getByTestId('create-modal-mock')).toHaveAttribute('data-kind', 'Deployment');
+            expect(dom.queryByText('Empty Infrastructure Canvas')).toBeNull();
+        });
+
+        it('hides the empty state when only a physical node rectangle exists (no resources yet)', () => {
+            setMockStoreState({
+                nodes: [],
+                nsLayout: {
+                    cluster: { x: 20, y: 20, width: 1200, height: 1400 },
+                    nodes: [{ name: 'worker-1', x: 40, y: 40, width: 480, height: 360 }],
+                    namespaces: [],
+                },
+            });
+            render(<Canvas />);
+            expect(dom.queryByText('Empty Infrastructure Canvas')).toBeNull();
+        });
+
+        it('the "+ Add Namespace" CTA opens the New Namespace modal', () => {
+            setMockStoreState({ nodes: [], nsLayout: null });
+            render(<Canvas />);
+            fireEvent.click(dom.getByText('+ Add Namespace'));
+            expect(dom.getByText('New Namespace')).toBeInTheDocument();
+        });
+
+        it('the "+ Add Node" CTA opens the New Node modal', () => {
+            setMockStoreState({ nodes: [], nsLayout: null });
+            render(<Canvas />);
+            fireEvent.click(dom.getByText('+ Add Node'));
+            expect(dom.getByText('New Node')).toBeInTheDocument();
         });
     });
 

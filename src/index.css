@@ -2358,6 +2358,36 @@ body,
   position: relative;
 }
 
+/* Row layout for the namespace picker + its "+ New" creation button. */
+.namespace-field-group {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.namespace-field-group .namespace-field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.namespace-field__new {
+  flex-shrink: 0;
+  padding: 0 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.namespace-field__new:hover {
+  border-color: #8b5cf6;
+  color: #8b5cf6;
+}
+
 .namespace-field__input {
   padding-right: 26px;
 }

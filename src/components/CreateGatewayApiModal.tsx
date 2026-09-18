@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import type { K8sResource } from '../types/types';
 import { useVeltraStore } from '../store/store';
 import NamespaceField from './NamespaceField';
+import NamespaceModal from './NamespaceModal';
 
 interface Props {
     onClose: () => void;
@@ -82,7 +83,7 @@ export default function CreateGatewayApiModal({ onClose }: Props) {
     );
 
     const namespaceOptions = useMemo(() => {
-        const vals = new Set<string>(['default']);
+        const vals = new Set<string>();
         nodes.forEach((n) => {
             if (n.data.namespace) vals.add(n.data.namespace);
         });
@@ -93,7 +94,16 @@ export default function CreateGatewayApiModal({ onClose }: Props) {
     const [gcName, setGcName] = useState(suggestedGatewayClassName);
     const [gcControllerName, setGcControllerName] = useState('acme.io/gateway-controller');
     const [gwName, setGwName] = useState(suggestedGatewayName);
-    const [gwNamespace, setGwNamespace] = useState('default');
+    const [gwNamespace, setGwNamespace] = useState('');
+    // Stacked "+ New namespace" prompt (alternative to typing a new name).
+    const [nsCreateOpen, setNsCreateOpen] = useState(false);
+
+    // The Gateway, its Routes and any new Services are namespaced — the
+    // namespace must be picked, typed or created explicitly.
+    const namespaceError = useMemo(
+        () => (gwNamespace.trim() ? '' : 'Choose or create a namespace.'),
+        [gwNamespace]
+    );
 
     const [routes, setRoutes] = useState<RouteDraft[]>(() => [
         {
@@ -235,7 +245,7 @@ export default function CreateGatewayApiModal({ onClose }: Props) {
     );
 
     function handleCreate() {
-        if (gcNameError || gwNameError || hasErrors) return;
+        if (gcNameError || gwNameError || namespaceError || hasErrors) return;
         const gatewayClass = gcName.trim() || suggestedGatewayClassName;
         const gateway = gwName.trim() || suggestedGatewayName;
         const resources: K8sResource[] = [];
@@ -250,7 +260,7 @@ export default function CreateGatewayApiModal({ onClose }: Props) {
         resources.push({
             apiVersion: 'gateway.networking.k8s.io/v1',
             kind: 'Gateway',
-            metadata: { name: gateway, namespace: gwNamespace || 'default' },
+            metadata: { name: gateway, namespace: gwNamespace.trim() },
             spec: { gatewayClassName: gatewayClass, listeners: [] },
         });
 
@@ -269,7 +279,7 @@ export default function CreateGatewayApiModal({ onClose }: Props) {
                 };
             });
             const spec: Record<string, unknown> = {
-                parentRefs: [{ name: gateway, namespace: gwNamespace || 'default' }],
+                parentRefs: [{ name: gateway, namespace: gwNamespace.trim() }],
             };
             if (ROUTES_WITH_HOSTNAMES.includes(route.kind) && hostnames.length > 0) {
                 spec.hostnames = hostnames;
@@ -280,7 +290,7 @@ export default function CreateGatewayApiModal({ onClose }: Props) {
             resources.push({
                 apiVersion: 'gateway.networking.k8s.io/v1',
                 kind: route.kind,
-                metadata: { name: route.name.trim(), namespace: gwNamespace || 'default' },
+                metadata: { name: route.name.trim(), namespace: gwNamespace.trim() },
                 spec,
             });
         });
@@ -292,7 +302,7 @@ export default function CreateGatewayApiModal({ onClose }: Props) {
                 resources.push({
                     apiVersion: 'v1',
                     kind: 'Service',
-                    metadata: { name: backend.newServiceName.trim(), namespace: gwNamespace || 'default' },
+                    metadata: { name: backend.newServiceName.trim(), namespace: gwNamespace.trim() },
                     spec: {
                         type: 'ClusterIP',
                         ports: [
@@ -391,11 +401,24 @@ export default function CreateGatewayApiModal({ onClose }: Props) {
                         </div>
                         <div className="modal-field">
                             <label className="modal-field__label">Namespace</label>
-                            <NamespaceField
-                                value={gwNamespace}
-                                onChange={setGwNamespace}
-                                options={namespaceOptions}
-                            />
+                            <div className="namespace-field-group">
+                                <NamespaceField
+                                    value={gwNamespace}
+                                    onChange={setGwNamespace}
+                                    options={namespaceOptions}
+                                />
+                                <button
+                                    type="button"
+                                    className="namespace-field__new"
+                                    onClick={() => setNsCreateOpen(true)}
+                                    title="Create a new namespace rectangle"
+                                >
+                                    + New
+                                </button>
+                            </div>
+                            {namespaceError && (
+                                <span className="modal-field__error">{namespaceError}</span>
+                            )}
                         </div>
                     </div>
 
@@ -571,13 +594,22 @@ export default function CreateGatewayApiModal({ onClose }: Props) {
                     <button
                         type="button"
                         className="modal-btn modal-btn--primary"
-                        disabled={Boolean(gcNameError || gwNameError || hasErrors)}
+                        disabled={Boolean(gcNameError || gwNameError || namespaceError || hasErrors)}
                         onClick={handleCreate}
                     >
                         Create Gateway API
                     </button>
                 </div>
             </div>
+
+            {/* Stacked namespace creation prompt — renders above the gateway
+                modal and auto-selects the new namespace on success. */}
+            {nsCreateOpen && (
+                <NamespaceModal
+                    onClose={() => setNsCreateOpen(false)}
+                    onCreated={(created) => setGwNamespace(created)}
+                />
+            )}
         </div>
     );
 }

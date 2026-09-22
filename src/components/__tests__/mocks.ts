@@ -27,7 +27,7 @@ function nodeIdFor(kind: string, name: string): string {
 // ─── Resource / node fixtures ────────────────────────────────────────────────
 
 function apiVersionFor(kind: SupportedKind): string {
-    if (kind === 'Deployment' || kind === 'DaemonSet' || kind === 'StatefulSet' || kind === 'ReplicaSet') return 'apps/v1';
+    if (kind === 'Deployment' || kind === 'ReplicaSet') return 'apps/v1';
     if (kind === 'Ingress') return 'networking.k8s.io/v1';
     return 'v1';
 }
@@ -93,7 +93,6 @@ export interface MockStoreState {
     hpaOverrides: { kind: string; name: string; original: number; effective: number; hpaName: string; reason: 'minReplicas' | 'maxReplicas'; bound: number; viaDeployment?: string }[];
     nsLayout: NsLayout | null;
     addNamespace: Mock;
-    addNode: Mock;
     deleteNamespace: Mock;
     setNotice: Mock;
     setYaml: Mock;
@@ -111,9 +110,7 @@ export interface MockStoreState {
     resetLayout: Mock;
     clearAll: Mock;
     nsEditMode: boolean;
-    nodeEditMode: boolean;
     setNsEditMode: Mock;
-    setNodeEditMode: Mock;
 }
 
 export function createDefaultStoreState(): MockStoreState {
@@ -127,7 +124,6 @@ export function createDefaultStoreState(): MockStoreState {
         hpaOverrides: [],
         nsLayout: null,
         addNamespace: vi.fn(),
-        addNode: vi.fn(),
         deleteNamespace: vi.fn(),
         setNotice: vi.fn(),
         setYaml: vi.fn(),
@@ -145,9 +141,7 @@ export function createDefaultStoreState(): MockStoreState {
         resetLayout: vi.fn(),
         clearAll: vi.fn(),
         nsEditMode: false,
-        nodeEditMode: false,
         setNsEditMode: vi.fn(),
-        setNodeEditMode: vi.fn(),
     };
 }
 

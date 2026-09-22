@@ -20,22 +20,6 @@ const ICONS: Record<string, React.ReactNode> = {
             <path d="M13 8h3v3" strokeDasharray="2 2" />
         </svg>
     ),
-    DaemonSet: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="3" y1="6" x2="21" y2="6" />
-            <circle cx="7" cy="12" r="2.5" />
-            <circle cx="12" cy="16" r="2.5" />
-            <circle cx="17" cy="12" r="2.5" />
-        </svg>
-    ),
-    StatefulSet: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="3" width="18" height="8" rx="2" />
-            <path d="M7 3v8M12 3v8M17 3v8" />
-            <rect x="3" y="13" width="18" height="8" rx="2" />
-            <path d="M7 13v8M12 13v8M17 13v8" />
-        </svg>
-    ),
     Pod: (
         <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 2L2 7l10 5 10-5-10-5z" />
@@ -175,8 +159,6 @@ const ICONS: Record<string, React.ReactNode> = {
 
 const KIND_COLORS: Record<string, string> = {
     Deployment: '#10b981', // Green
-    DaemonSet: '#a855f7',  // Purple
-    StatefulSet: '#059669', // Emerald
     ReplicaSet: '#f97316', // Orange
     Pod: '#14b8a6',        // Teal
     Service: '#3b82f6',    // Blue
@@ -205,13 +187,9 @@ function K8sNodeComponent({ data }: NodeProps) {
     const color = KIND_COLORS[kind] ?? '#8b949e';
     const icon = ICONS[kind] ?? ICONS.Pod;
 
-    // Per-node DaemonSet boxes are container cards (header + nested Pod); the
-    // fallback lane card (no assignedNode) is a leaf card like a Job.
     const isContainer =
         kind === 'Deployment' ||
-        kind === 'ReplicaSet' ||
-        kind === 'StatefulSet' ||
-        (kind === 'DaemonSet' && nodeData.assignedNode !== undefined);
+        kind === 'ReplicaSet';
     const spec = (nodeData.resource?.spec ?? {}) as Record<string, any>;
     const managedBy = nodeData.synthetic ? nodeData.managedBy : undefined;
 
@@ -253,41 +231,9 @@ function K8sNodeComponent({ data }: NodeProps) {
                         {spec.replicas} Replicas
                     </div>
                 )}
-                {kind === 'StatefulSet' && typeof spec.replicas === 'number' && (
-                    <div className="k8s-node__badge" title="Desired Replicas">
-                        {spec.replicas} Replicas
-                    </div>
-                )}
-                {kind === 'StatefulSet' &&
-                    Array.isArray(spec.volumeClaimTemplates) &&
-                    spec.volumeClaimTemplates.length > 0 && (
-                        <div
-                            className="k8s-node__badge"
-                            title="Volume claim templates (one PVC per Pod in a real cluster)"
-                        >
-                            {spec.volumeClaimTemplates.length}{' '}
-                            {spec.volumeClaimTemplates.length === 1 ? 'claim' : 'claims'}
-                        </div>
-                    )}
                 {kind === 'ReplicaSet' && typeof spec.replicas === 'number' && (
                     <div className="k8s-node__badge" title="Desired Pods">
                         ×{spec.replicas} Pods
-                    </div>
-                )}
-                {kind === 'DaemonSet' && nodeData.assignedNode !== undefined && (
-                    <div
-                        className="k8s-node__badge"
-                        title={`One Pod on node ${nodeData.assignedNode}`}
-                    >
-                        on {nodeData.assignedNode}
-                    </div>
-                )}
-                {kind === 'DaemonSet' && nodeData.assignedNode === undefined && (
-                    <div
-                        className="k8s-node__badge"
-                        title="Physical node rects covered by this DaemonSet's namespace (one Pod each)"
-                    >
-                        {nodeData.nodeCount ?? 0} nodes
                     </div>
                 )}
                 {kind === 'HorizontalPodAutoscaler' && typeof spec.maxReplicas === 'number' && (
@@ -379,9 +325,6 @@ function buildResourceDetails(nodeData: K8sNodeData): DetailPair[] {
     const spec = (nodeData.resource?.spec ?? {}) as Record<string, any>;
 
     if (nodeData.kind === 'Pod') {
-        if (nodeData.assignedNode) {
-            details.push({ key: 'node', val: nodeData.assignedNode });
-        }
         const container = spec.containers?.[0];
         if (container?.name) {
             details.push({ key: 'container', val: container.name });
@@ -550,20 +493,6 @@ function buildResourceDetails(nodeData: K8sNodeData): DetailPair[] {
         if (container?.image) {
             const parts = container.image.split('/');
             details.push({ key: 'image', val: parts[parts.length - 1] });
-        }
-    }
-    if (nodeData.kind === 'DaemonSet') {
-        const container = spec.template?.spec?.containers?.[0];
-        if (container?.name) {
-            details.push({ key: 'container', val: container.name });
-        }
-        if (container?.image) {
-            const parts = container.image.split('/');
-            details.push({ key: 'image', val: parts[parts.length - 1] });
-        }
-        const selector = spec.selector?.matchLabels?.app;
-        if (selector) {
-            details.push({ key: 'selector', val: `app=${selector}` });
         }
     }
     if (nodeData.kind === 'GatewayClass') {

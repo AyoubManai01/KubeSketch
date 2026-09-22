@@ -1,11 +1,5 @@
 import { type Node, type Edge, MarkerType } from '@xyflow/react';
 import type { K8sResource, SupportedKind } from '../types/types';
-import {
-    nodesOfNamespace,
-    type NamespaceRect,
-    type NodeRect,
-} from './teachingFrame';
-import { placeBoxInNodeRect } from './placement';
 
 /** Data payload we attach to each React Flow node */
 export interface K8sNodeData {
@@ -18,11 +12,6 @@ export interface K8sNodeData {
     synthetic?: boolean;
     /** For synthetic resources: the nearest REAL resource that controls them. */
     managedBy?: { kind: SupportedKind; name: string };
-    /** For a synthetic DaemonSet Pod: the physical node rect it runs on (canvas-only). */
-    assignedNode?: string;
-    /** For a DaemonSet node: the total number of physical node rects in the cluster
-     *  (the true pod count, even when materialization is capped). */
-    nodeCount?: number;
     [key: string]: unknown;
 }
 
@@ -49,16 +38,11 @@ const JOB_WIDTH = 180;
 const JOB_HEIGHT = 124; // fits header + restart/parallelism/completions rows without overflowing the leaf box
 const CRONJOB_WIDTH = 185;
 const CRONJOB_HEIGHT = 150; // fits header + schedule/parallelism/completions/container/image rows without overflowing the leaf box
-/** DaemonSet fallback card (no hosting node rects): a leaf card in the workload lane. */
-const DAEMONSET_FALLBACK_WIDTH = 180;
-const DAEMONSET_FALLBACK_HEIGHT = 124; // fits header + image/selector rows without overflowing the leaf box
 const RS_HEADER_HEIGHT = 45;
 const DEP_HEADER_HEIGHT = 45;
-const STATEFULSET_HEADER_HEIGHT = 45;
 
 const RS_PADDING = { top: 10, left: 16, right: 16, bottom: 16 };
 const DEP_PADDING = { top: 15, left: 20, right: 20, bottom: 20 };
-const STATEFULSET_PADDING = { top: 15, left: 20, right: 20, bottom: 20 };
 
 const POD_GAP = 12;
 const RS_GAP = 20;
@@ -86,7 +70,7 @@ export function isGatewayApiKind(kind: string): boolean {
 
 /** Presentational grouping of resource kinds for the canvas toolbar. */
 export function kindGroupLabel(kind: string): string {
-    if (kind === 'Deployment' || kind === 'DaemonSet' || kind === 'StatefulSet' || kind === 'Pod' || kind === 'ReplicaSet' ||
+    if (kind === 'Deployment' || kind === 'Pod' || kind === 'ReplicaSet' ||
         kind === 'HorizontalPodAutoscaler' || kind === 'VerticalPodAutoscaler' || kind === 'Job' ||
         kind === 'CronJob') {
         return 'Workload';
@@ -233,7 +217,7 @@ export function isSingleNodeAccessMode(pvc: K8sResource): boolean {
 
 /** One HorizontalPodAutoscaler-enforced replica clamp on a workload (or on a ReplicaSet inherited from its Deployment). */
 export interface HpaReplicaOverride {
-    kind: 'Deployment' | 'ReplicaSet' | 'StatefulSet';
+    kind: 'Deployment' | 'ReplicaSet';
     name: string;
     original: number;
     effective: number;
@@ -305,7 +289,7 @@ export function applyHpaReplicaOverrides(resources: K8sResource[]): HpaReplicaOv
         const spec = resource.spec as { replicas?: unknown };
         spec.replicas = effective;
         overrides.push({
-            kind: resource.kind as 'Deployment' | 'ReplicaSet' | 'StatefulSet',
+            kind: resource.kind as 'Deployment' | 'ReplicaSet',
             name: resource.metadata.name,
             original,
             effective,
@@ -317,7 +301,7 @@ export function applyHpaReplicaOverrides(resources: K8sResource[]): HpaReplicaOv
     };
 
     resources.forEach((resource) => {
-        if (resource.kind !== 'Deployment' && resource.kind !== 'ReplicaSet' && resource.kind !== 'StatefulSet') return;
+        if (resource.kind !== 'Deployment' && resource.kind !== 'ReplicaSet') return;
         for (const hpa of hpas) {
             const effective = effectiveReplicas(hpa, resource);
             if (effective === undefined) continue;
@@ -416,59 +400,15 @@ function getSavedPosition(kind: string, name: string): { x: number; y: number } 
     return null;
 }
 
-/** localStorage key of a DaemonSet box's saved position — a RELATIVE offset
- *  inside its node rect, so node/cluster moves never invalidate it. */
-export function daemonSetBoxPinKey(dsName: string, nodeName: string): string {
-    return `DaemonSetBox:${dsName}:${nodeName}`;
-}
-
-/** Read a DaemonSet box's saved RELATIVE position inside its node rect. */
-function readDaemonSetBoxPin(dsName: string, nodeName: string): { x: number; y: number } | null {
-    try {
-        const saved = localStorage.getItem('veltra_node_positions');
-        if (saved) {
-            const parsed = JSON.parse(saved);
-            const pos = parsed[daemonSetBoxPinKey(dsName, nodeName)];
-            if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
-                return pos;
-            }
-        }
-    } catch {}
-    return null;
-}
-
-/** True when node `n` belongs to the same logical DaemonSet the user is
- *  editing (`edited` carries the resource's CURRENT kind+name). A DaemonSet
- *  renders one node per hosting node rect — they all share kind+name and are
- *  ONE resource, so sibling boxes must never count as name clashes. */
-export function isDaemonSetSibling(
-    n: Node<K8sNodeData>,
-    edited: { kind: string; name: string }
-): boolean {
-    return (
-        edited.kind === 'DaemonSet' &&
-        n.data.kind === 'DaemonSet' &&
-        n.data.name === edited.name
-    );
-}
-
 /**
  * Convert an array of parsed K8s resources into React Flow nodes with true nested containment.
- *
- * Kubernetes controller simulation:
  * - A Deployment with no matching ReplicaSet in the manifest gets a synthetic one
  *   (named `<name>-<hash>` like a real pod-template-hash RS).
  * - Every ReplicaSet (real or synthetic) materializes Pods up to `spec.replicas`,
  *   on top of any explicit Pods in the manifest that its selector claims.
- * - A DaemonSet materializes one box per physical node rect its namespace
- *   straddles (canvas-only chrome), each nesting exactly one Pod (named
- *   `<name>-<node>`). The box in the first hosting node is the real resource
- *   node; the others are display-only copies. With no hosting node rects the
- *   DaemonSet falls back to a single normal card in the workload lane.
- * - A StatefulSet creates no ReplicaSet: it claims explicit Pods matching its
- *   selector and nests them (plus the shortfall materialized up to
- *   `spec.replicas`, named `<name>-<ordinal>` like a real cluster) DIRECTLY
- *   inside its card.
+ * - A CronJob always creates exactly ONE synthetic Job (named `<name>-<hash>`)
+ *   from `spec.jobTemplate.spec`, which materializes Pods up to the template's
+ *   parallelism.
  * - Synthetic resources are flagged `synthetic` + `managedBy` in node data; they are
  *   display-only and are never serialized back to YAML.
  *
@@ -509,8 +449,7 @@ export function isDaemonSetSibling(
  */
 export function buildGraph(
     resources: K8sResource[],
-    previousNodes: Node<K8sNodeData>[] = [],
-    layout: { nodes: NodeRect[]; namespaces: NamespaceRect[] } | null = null
+    previousNodes: Node<K8sNodeData>[] = []
 ): {
     nodes: Node<K8sNodeData>[];
     edges: Edge[];
@@ -522,10 +461,7 @@ export function buildGraph(
     // Map previous node coordinates by key
     const prevCoords = new Map<string, { x: number; y: number }>();
     previousNodes.forEach((node) => {
-        // DaemonSet boxes (assignedNode set) are geometry-driven — they are
-        // re-placed from their node rect on every rebuild and share the
-        // `DaemonSet:<name>` position key, so they must never pollute it.
-        if (!node.parentId && node.data.assignedNode === undefined) {
+        if (!node.parentId) {
             prevCoords.set(`${node.data.kind}:${node.data.name}`, node.position);
         }
     });
@@ -534,8 +470,6 @@ export function buildGraph(
     const ingresses = resources.filter((r) => r.kind === 'Ingress');
     const services = resources.filter((r) => r.kind === 'Service');
     const deployments = resources.filter((r) => r.kind === 'Deployment');
-    const daemonSets = resources.filter((r) => r.kind === 'DaemonSet');
-    const statefulSets = resources.filter((r) => r.kind === 'StatefulSet');
     const replicaSets = resources.filter((r) => r.kind === 'ReplicaSet');
     const pods = resources.filter((r) => r.kind === 'Pod');
     const hpas = resources.filter((r) => r.kind === 'HorizontalPodAutoscaler');
@@ -646,40 +580,6 @@ export function buildGraph(
         rsToPod.set(rs, [...explicit, ...generated]);
     });
 
-    // StatefulSets own their Pods directly — a StatefulSet creates no
-    // ReplicaSet (the controller names its Pods ordinally: <name>-0,
-    // <name>-1, …). Claim explicit Pods matching the selector/name first
-    // (single-assignment: Pods already claimed by a ReplicaSet stay claimed),
-    // then materialize the shortfall up to spec.replicas. The Pods nest
-    // directly inside the StatefulSet card.
-    const ssToPod = new Map<K8sResource, K8sResource[]>();
-    statefulSets.forEach((ss) => {
-        const children = pods.filter((pod) => {
-            if (claimedPods.has(pod)) return false;
-            return ownsResource(ss, pod);
-        });
-        children.forEach((pod) => claimedPods.add(pod));
-        ssToPod.set(ss, children);
-    });
-    statefulSets.forEach((ss) => {
-        const explicit = ssToPod.get(ss) ?? [];
-        const desired = effectiveReplicasOf(ss);
-        const shortfall = Math.min(Math.max(desired - explicit.length, 0), MAX_SYNTHETIC_PODS);
-        if (shortfall === 0) return;
-        const generated: K8sResource[] = [];
-        let ordinal = 0;
-        for (let i = 0; i < shortfall; i++) {
-            let name = `${ss.metadata.name}-${ordinal++}`;
-            while (usedPodNames.has(name)) name = `${ss.metadata.name}-${ordinal++}`;
-            usedPodNames.add(name);
-            const pod = synthesizePod(ss, name);
-            syntheticOwner.set(pod, { kind: 'StatefulSet', name: ss.metadata.name });
-            generated.push(pod);
-        }
-        syntheticPods.push(...generated);
-        ssToPod.set(ss, [...explicit, ...generated]);
-    });
-
     // Jobs own their Pods directly (no ReplicaSet layer): claim explicit Pods that
     // match the Job's selector/name, then materialize the shortfall up to
     // spec.parallelism. Job Pods are siblings of the Job node (linked by an inferred
@@ -746,36 +646,7 @@ export function buildGraph(
         jobToPod.set(job, generated);
     });
 
-    // DaemonSets place exactly one Pod on every physical node rect that their
-    // namespace straddles (the geometric overlap IS node membership —
-    // `nodesOfNamespace`). A DaemonSet never claims explicit Pods: each per-node
-    // Pod is controller-materialized, named `<name>-<node>` and nested inside a
-    // per-node DaemonSet box (layout section F). No hosting node rects → no
-    // pods (the DaemonSet falls back to one normal lane card).
-    const daemonSetHostNodes = new Map<K8sResource, NodeRect[]>();
-    const daemonSetPods = new Map<K8sResource, K8sResource[]>();
-    const daemonSetPodNode = new Map<K8sResource, string>();
-    daemonSets.forEach((ds) => {
-        const nsName = ds.metadata.namespace ?? 'default';
-        const nsRect = layout?.namespaces.find((ns) => ns.name === nsName);
-        const hostNodes = nsRect ? nodesOfNamespace(nsRect, layout?.nodes ?? []) : [];
-        daemonSetHostNodes.set(ds, hostNodes);
-        const generated: K8sResource[] = [];
-        hostNodes.slice(0, MAX_SYNTHETIC_PODS).forEach((rect) => {
-            let name = `${ds.metadata.name}-${rect.name}`;
-            let n = 2;
-            while (usedJobPodNames.has(name)) name = `${ds.metadata.name}-${rect.name}-${n++}`;
-            usedJobPodNames.add(name);
-            const pod = synthesizePod(ds, name);
-            syntheticOwner.set(pod, { kind: 'DaemonSet', name: ds.metadata.name });
-            daemonSetPodNode.set(pod, rect.name);
-            generated.push(pod);
-        });
-        daemonSetPods.set(ds, generated);
-        syntheticPods.push(...generated);
-    });
-
-    /** All pods that end up on the canvas — explicit + controller-materialized. */
+    // Jobs own their Pods directly (no ReplicaSet layer): claim explicit Pods that
     const allPods = [...pods, ...syntheticPods];
 
     /** synthetic/managedBy node-data fragment for a resource (empty for real resources). */
@@ -814,17 +685,15 @@ export function buildGraph(
         pod: K8sResource,
         parentId: string,
         parentAbs: { x: number; y: number },
-        podIdx: number,
-        assignedNode?: string,
-        offsets?: { left: number; top: number }
+        podIdx: number
     ) => {
         const podId = allocateId(pod);
         const colIdx = podIdx % 3;
         const rowIdx = Math.floor(podIdx / 3);
 
         const podRelPos = {
-            x: (offsets?.left ?? RS_PADDING.left) + colIdx * (POD_WIDTH + POD_GAP),
-            y: (offsets?.top ?? RS_HEADER_HEIGHT + RS_PADDING.top) + rowIdx * (POD_HEIGHT + POD_GAP),
+            x: RS_PADDING.left + colIdx * (POD_WIDTH + POD_GAP),
+            y: RS_HEADER_HEIGHT + RS_PADDING.top + rowIdx * (POD_HEIGHT + POD_GAP),
         };
         absCoords.set(podId, { x: parentAbs.x + podRelPos.x, y: parentAbs.y + podRelPos.y });
 
@@ -841,14 +710,13 @@ export function buildGraph(
                 namespace: pod.metadata.namespace,
                 resource: pod,
                 ...syntheticMeta(pod),
-                ...(assignedNode ? { assignedNode } : {}),
             },
             draggable: false,
         });
     };
 
-    /** Size of a container card that nests a grid of `podCount` pods (ReplicaSets
-     *  and DaemonSets): a 3-column pod grid plus the container's header/padding. */
+    /** Size of a container card that nests a grid of `podCount` pods (ReplicaSets):
+ *  a 3-column pod grid plus the container's header/padding. */
     const podGridSize = (podCount: number) => {
         let width = 180;
         let height = 90;
@@ -862,20 +730,6 @@ export function buildGraph(
     };
 
     const rsSize = (rs: K8sResource) => podGridSize((rsToPod.get(rs) ?? []).length);
-
-    /** Size of a StatefulSet card: a pod grid like a ReplicaSet's, with a
-     *  Deployment-like minimum so the card reads as a workload container. */
-    const statefulSetSize = (podCount: number) => {
-        let width = 220;
-        let height = 100;
-        if (podCount > 0) {
-            const cols = Math.min(podCount, 3);
-            const rows = Math.ceil(podCount / 3);
-            width = STATEFULSET_PADDING.left + STATEFULSET_PADDING.right + cols * POD_WIDTH + (cols - 1) * POD_GAP;
-            height = STATEFULSET_HEADER_HEIGHT + STATEFULSET_PADDING.top + STATEFULSET_PADDING.bottom + rows * POD_HEIGHT + (rows - 1) * POD_GAP;
-        }
-        return { width: Math.max(width, 220), height: Math.max(height, 100) };
-    };
 
     const depWidthOf = (dep: K8sResource) => {
         const childRs = depToRs.get(dep) ?? [];
@@ -905,10 +759,6 @@ export function buildGraph(
         const pos = workloadPos('Pod', pod.metadata.name);
         if (pos) fixedWorkloadSpans.push({ x: pos.x, width: POD_WIDTH });
     });
-    statefulSets.forEach((ss) => {
-        const pos = workloadPos('StatefulSet', ss.metadata.name);
-        if (pos) fixedWorkloadSpans.push({ x: pos.x, width: statefulSetSize((ssToPod.get(ss) ?? []).length).width });
-    });
     jobs.forEach((job) => {
         const pos = workloadPos('Job', job.metadata.name);
         if (pos) fixedWorkloadSpans.push({ x: pos.x, width: JOB_WIDTH });
@@ -916,13 +766,6 @@ export function buildGraph(
     cronJobs.forEach((cron) => {
         const pos = workloadPos('CronJob', cron.metadata.name);
         if (pos) fixedWorkloadSpans.push({ x: pos.x, width: CRONJOB_WIDTH });
-    });
-    daemonSets.forEach((ds) => {
-        // Only the fallback lane card (no hosting nodes) is a pinned workload —
-        // per-node boxes are geometry-driven and never occupy the lane.
-        if ((daemonSetHostNodes.get(ds) ?? []).length > 0) return;
-        const pos = workloadPos('DaemonSet', ds.metadata.name);
-        if (pos) fixedWorkloadSpans.push({ x: pos.x, width: DAEMONSET_FALLBACK_WIDTH });
     });
     // A pinned synthetic CronJob Job is a top-level workload too — auto-placed
     // nodes must clear it just like a real Job's pinned position.
@@ -1208,166 +1051,6 @@ export function buildGraph(
                 draggable: true,
             });
         });
-    });
-
-    // E2. StatefulSets — a Deployment-like card that nests its Pods DIRECTLY
-    // (the controller creates no ReplicaSet). Draggable and pinned like any
-    // workload; the Pods are nested children (parentId/extent, not draggable).
-    statefulSets.forEach((ss) => {
-        const ssId = allocateId(ss);
-        const children = ssToPod.get(ss) ?? [];
-        const { width: ssWidth, height: ssHeight } = statefulSetSize(children.length);
-
-        const key = `StatefulSet:${ss.metadata.name}`;
-        const savedPos = getSavedPosition('StatefulSet', ss.metadata.name);
-        const prevPos = prevCoords.get(key);
-        const ssPos = prevPos || savedPos || { x: autoPlaceWorkload(ssWidth), y: 320 };
-
-        absCoords.set(ssId, ssPos);
-
-        nodes.push({
-            id: ssId,
-            type: 'k8sNode',
-            position: ssPos,
-            style: { width: ssWidth, height: ssHeight },
-            data: {
-                kind: 'StatefulSet',
-                name: ss.metadata.name,
-                namespace: ss.metadata.namespace,
-                resource: ss,
-            },
-            draggable: true,
-        });
-
-        children.forEach((pod, podIdx) =>
-            emitPod(pod, ssId, ssPos, podIdx, undefined, {
-                left: STATEFULSET_PADDING.left,
-                top: STATEFULSET_HEADER_HEIGHT + STATEFULSET_PADDING.top,
-            })
-        );
-    });
-
-    // F. DaemonSets — the controller runs one box per physical node rect its
-    // namespace straddles: each box is a DaemonSet card containing exactly one
-    // Pod. The box in the FIRST hosting node rect is the REAL resource node
-    // (the single source feeding toResources); every other box is a display-only
-    // copy (synthetic + managedBy — links/edits redirect to the real one). With
-    // no hosting node rects the DaemonSet falls back to ONE normal card in the
-    // workload lane (draggable, pinned, repaired like any workload). Boxes are
-    // geometry-driven: positioned inside their node rect (sticky — a saved
-    // RELATIVE pin, then the box's own previous spot, then a free-spot sweep),
-    // never auto-placed/repaired, and never share the `DaemonSet:<name>` key.
-    const daemonSetBoxes = new Map<K8sResource, string[]>();
-    daemonSets.forEach((ds) => {
-        const hostNodes = daemonSetHostNodes.get(ds) ?? [];
-        const boxIds: string[] = [];
-        const boxSize = podGridSize(1);
-        if (hostNodes.length === 0) {
-            // Fallback lane card — behaves exactly like any other workload.
-            const dsId = allocateId(ds);
-            const key = `DaemonSet:${ds.metadata.name}`;
-            const savedPos = getSavedPosition('DaemonSet', ds.metadata.name);
-            const prevPos = prevCoords.get(key);
-            const dsPos = prevPos || savedPos || { x: autoPlaceWorkload(DAEMONSET_FALLBACK_WIDTH), y: 320 };
-            absCoords.set(dsId, dsPos);
-            nodes.push({
-                id: dsId,
-                type: 'k8sNode',
-                position: dsPos,
-                style: { width: DAEMONSET_FALLBACK_WIDTH, height: DAEMONSET_FALLBACK_HEIGHT },
-                data: {
-                    kind: 'DaemonSet',
-                    name: ds.metadata.name,
-                    namespace: ds.metadata.namespace,
-                    resource: ds,
-                    nodeCount: 0,
-                },
-                draggable: true,
-            });
-            daemonSetBoxes.set(ds, [dsId]);
-            return;
-        }
-
-        // Blockers for the box sweep: every top-level node currently on the
-        // canvas EXCEPT this DaemonSet's own boxes — a box must never block its
-        // own (or its siblings') spot, or every re-derive would shove the boxes
-        // around (each re-sweep would have to avoid the previous positions).
-        const blockers: Array<{ x: number; y: number; width: number; height: number }> = [];
-        previousNodes.forEach((prev) => {
-            if (prev.parentId) return;
-            if (prev.data.kind === 'DaemonSet' && prev.data.name === ds.metadata.name) return;
-            const w = typeof prev.style?.width === 'number' ? prev.style.width : 220;
-            const h = typeof prev.style?.height === 'number' ? prev.style.height : 130;
-            blockers.push({ x: prev.position.x, y: prev.position.y, width: w, height: h });
-        });
-
-        const boxFits = (
-            pos: { x: number; y: number },
-            rect: NodeRect
-        ): boolean =>
-            pos.x >= rect.x &&
-            pos.y >= rect.y &&
-            pos.x + boxSize.width <= rect.x + rect.width &&
-            pos.y + boxSize.height <= rect.y + rect.height;
-        const boxOverlaps = (pos: { x: number; y: number }): boolean =>
-            blockers.some(
-                (b) =>
-                    pos.x < b.x + b.width &&
-                    pos.x + boxSize.width > b.x &&
-                    pos.y < b.y + b.height &&
-                    pos.y + boxSize.height > b.y
-            );
-
-        hostNodes.slice(0, MAX_SYNTHETIC_PODS).forEach((rect, idx) => {
-            const isReal = idx === 0;
-            const boxResource = isReal ? ds : structuredClone(ds);
-            const boxId = allocateId(boxResource);
-            // Sticky placement: honor the saved RELATIVE pin first, then the
-            // box's own previous spot — but only when it still fully fits the
-            // node rect overlap-free (a box only moves when its node rect or
-            // its surroundings actually changed).
-            const pin = readDaemonSetBoxPin(ds.metadata.name, rect.name);
-            const pinPos = pin ? { x: rect.x + pin.x, y: rect.y + pin.y } : null;
-            const prevBox = previousNodes.find(
-                (p) =>
-                    !p.parentId &&
-                    p.data.kind === 'DaemonSet' &&
-                    p.data.name === ds.metadata.name &&
-                    p.data.assignedNode === rect.name
-            );
-            const prevPos = prevBox
-                ? { x: prevBox.position.x, y: prevBox.position.y }
-                : null;
-            const sticky = [pinPos, prevPos].find(
-                (pos) => !!pos && boxFits(pos, rect) && !boxOverlaps(pos)
-            );
-            const boxPos = sticky ?? placeBoxInNodeRect(rect, boxSize, blockers);
-            const boxRect = { x: boxPos.x, y: boxPos.y, width: boxSize.width, height: boxSize.height };
-            blockers.push(boxRect);
-            absCoords.set(boxId, boxPos);
-            nodes.push({
-                id: boxId,
-                type: 'k8sNode',
-                position: boxPos,
-                style: { width: boxSize.width, height: boxSize.height },
-                data: {
-                    kind: 'DaemonSet',
-                    name: ds.metadata.name,
-                    namespace: ds.metadata.namespace,
-                    resource: boxResource,
-                    assignedNode: rect.name,
-                    nodeCount: hostNodes.length,
-                    ...(isReal ? {} : { synthetic: true, managedBy: { kind: 'DaemonSet', name: ds.metadata.name } }),
-                },
-                // Draggable, but constrained to this box's own node rect (the
-                // Canvas drag handlers clamp it there; frame modes fix it).
-                draggable: true,
-            });
-            boxIds.push(boxId);
-            const pod = (daemonSetPods.get(ds) ?? [])[idx];
-            if (pod) emitPod(pod, boxId, boxPos, 0, daemonSetPodNode.get(pod));
-        });
-        daemonSetBoxes.set(ds, boxIds);
     });
 
     // 2. LAY OUT SERVICES
@@ -2210,15 +1893,11 @@ export function buildGraph(
             const contained =
                 workload.kind === 'Deployment'
                     ? (depToRs.get(workload) ?? []).flatMap((rs) => rsToPod.get(rs) ?? [])
-                    : workload.kind === 'DaemonSet'
-                    ? (daemonSetPods.get(workload) ?? [])
-                    : workload.kind === 'StatefulSet'
-                    ? (ssToPod.get(workload) ?? [])
                     : (rsToPod.get(workload) ?? []);
             return contained.some((pod) => matchedPods.has(pod));
         };
 
-        [...deployments, ...replicaSets, ...daemonSets, ...statefulSets].forEach((workload) => {
+        [...deployments, ...replicaSets].forEach((workload) => {
             if (!matchesSelector(selector, getWorkloadPodLabels(workload))) return;
             if (workloadHasMatchedPod(workload)) return; // already connected to its pods
             // Skip nested ReplicaSets — connect to their owning Deployment instead
@@ -2228,10 +1907,10 @@ export function buildGraph(
         });
     });
 
-    // HorizontalPodAutoscaler → scale target (Deployment/ReplicaSet/StatefulSet)
+    // HorizontalPodAutoscaler → scale target (Deployment/ReplicaSet)
     const workloadIdByName = new Map<string, string>();
     nodes.forEach((n) => {
-        if (n.data.kind === 'Deployment' || n.data.kind === 'ReplicaSet' || n.data.kind === 'StatefulSet') {
+        if (n.data.kind === 'Deployment' || n.data.kind === 'ReplicaSet') {
             const key = `${n.data.kind}:${n.data.name}`;
             if (!workloadIdByName.has(key)) workloadIdByName.set(key, n.id);
         }
@@ -2250,25 +1929,16 @@ export function buildGraph(
     // a VPA right-sizes the Pods of the resource it points at, so the edge goes
     // to the targetRef node itself — never to the Pods nested inside it.
     const vpaTargetIdByName = new Map<string, string>();
-    const vpaMultiTargetIds = new Map<string, string[]>();
     nodes.forEach((n) => {
         if (
             n.data.kind === 'Deployment' ||
             n.data.kind === 'ReplicaSet' ||
-            n.data.kind === 'StatefulSet' ||
             n.data.kind === 'Pod' ||
             n.data.kind === 'Job' ||
             n.data.kind === 'CronJob'
         ) {
             const key = `${n.data.kind}:${n.data.name}`;
             if (!vpaTargetIdByName.has(key)) vpaTargetIdByName.set(key, n.id);
-        } else if (n.data.kind === 'DaemonSet') {
-            // A DaemonSet renders one box per hosting node — the VPA edge goes
-            // to EVERY box (the DS is right-sized everywhere it runs).
-            const key = `${n.data.kind}:${n.data.name}`;
-            const list = vpaMultiTargetIds.get(key) ?? [];
-            list.push(n.id);
-            vpaMultiTargetIds.set(key, list);
         }
     });
 
@@ -2277,11 +1947,6 @@ export function buildGraph(
         if (!vpaId) return;
         const target = getVpaTarget(vpa);
         if (!target) return;
-        const multiIds = vpaMultiTargetIds.get(`${target.kind}:${target.name}`);
-        if (multiIds && multiIds.length > 0) {
-            multiIds.forEach((targetId) => addEdge(vpaId, targetId, 'right-sizes'));
-            return;
-        }
         const targetId = vpaTargetIdByName.get(`${target.kind}:${target.name}`);
         if (targetId) addEdge(vpaId, targetId, 'right-sizes');
     });
@@ -2296,17 +1961,15 @@ export function buildGraph(
         }
     });
 
-    /** Node IDs a workload's semantic edges originate from: a DaemonSet's
-     *  per-node boxes (every box draws the edge — it runs everywhere), otherwise
-     *  the single node carrying the resource. */
+    /** The node ID a workload's semantic edges originate from: the single node
+     *  carrying the resource. */
     const workloadIdsOf = (workload: K8sResource): string[] => {
-        if (workload.kind === 'DaemonSet') return daemonSetBoxes.get(workload) ?? [];
         const id = idByResource.get(workload);
         return id ? [id] : [];
     };
 
     resources.forEach((workload) => {
-        if (workload.kind !== 'Deployment' && workload.kind !== 'DaemonSet' && workload.kind !== 'StatefulSet' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod' && workload.kind !== 'Job' && workload.kind !== 'CronJob') {
+        if (workload.kind !== 'Deployment' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod' && workload.kind !== 'Job' && workload.kind !== 'CronJob') {
             return;
         }
         const refs = getConfigMapRefs(workload);
@@ -2330,7 +1993,7 @@ export function buildGraph(
     });
 
     resources.forEach((workload) => {
-        if (workload.kind !== 'Deployment' && workload.kind !== 'DaemonSet' && workload.kind !== 'StatefulSet' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod' && workload.kind !== 'Job' && workload.kind !== 'CronJob') {
+        if (workload.kind !== 'Deployment' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod' && workload.kind !== 'Job' && workload.kind !== 'CronJob') {
             return;
         }
         const refs = getSecretRefs(workload);
@@ -2367,7 +2030,7 @@ export function buildGraph(
     });
 
     resources.forEach((workload) => {
-        if (workload.kind !== 'Deployment' && workload.kind !== 'DaemonSet' && workload.kind !== 'StatefulSet' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod' && workload.kind !== 'Job' && workload.kind !== 'CronJob') {
+        if (workload.kind !== 'Deployment' && workload.kind !== 'ReplicaSet' && workload.kind !== 'Pod' && workload.kind !== 'Job' && workload.kind !== 'CronJob') {
             return;
         }
         const refs = getPvcRefs(workload);
@@ -2406,37 +2069,6 @@ export function buildGraph(
             const scId = storageClassIdByName.get(scName);
             if (scId) addEdge(pvcId, scId, 'binds');
         }
-    });
-
-    // StatefulSet → PVC "claims": each spec.volumeClaimTemplates entry declares a
-    // claim the StatefulSet controller provisions per Pod. Explicit-only like the
-    // storage lanes — the edge draws only when a PVC whose name matches the
-    // template's metadata.name (same namespace) exists on the canvas.
-    statefulSets.forEach((ss) => {
-        const ssId = idByResource.get(ss);
-        if (!ssId) return;
-        const spec = ss.spec as
-            | { volumeClaimTemplates?: Array<{ metadata?: { name?: unknown } }> }
-            | undefined;
-        const templates = Array.isArray(spec?.volumeClaimTemplates)
-            ? spec.volumeClaimTemplates
-            : [];
-        templates.forEach((template) => {
-            const claimName = template?.metadata?.name;
-            if (typeof claimName !== 'string' || !claimName) return;
-            const pvcId = pvcIdByName.get(claimName);
-            if (!pvcId) return;
-            const pvcNode = byId.get(pvcId);
-            if (
-                pvcNode &&
-                ss.metadata.namespace &&
-                pvcNode.data.namespace &&
-                pvcNode.data.namespace !== ss.metadata.namespace
-            ) {
-                return;
-            }
-            addEdge(ssId, pvcId, 'claims');
-        });
     });
 
     // Gateway API: Gateway → GatewayClass "class" (spec.gatewayClassName, 1:1),
@@ -2484,9 +2116,6 @@ export function buildGraph(
     const autoPlacedIds = new Set<string>();
     nodes.forEach((n) => {
         if (n.parentId) return;
-        // DaemonSet boxes are geometry-driven — the placement repair pass must
-        // never re-position them (their spot inside the node rect is final).
-        if (n.data.assignedNode !== undefined) return;
         const key = `${n.data.kind}:${n.data.name}`;
         if (!prevCoords.has(key) && !getSavedPosition(n.data.kind, n.data.name)) {
             autoPlacedIds.add(n.id);
@@ -2690,7 +2319,7 @@ export function getIngressTlsSecretNames(resource: K8sResource): string[] {
 /** The workload a HorizontalPodAutoscaler scales (from spec.scaleTargetRef). */
 export function getHpaTarget(
     resource: K8sResource
-): { kind: 'Deployment' | 'ReplicaSet' | 'StatefulSet'; name: string } | undefined {
+): { kind: 'Deployment' | 'ReplicaSet'; name: string } | undefined {
     const spec = resource.spec as
         | { scaleTargetRef?: { kind?: string; name?: string } }
         | undefined;
@@ -2698,7 +2327,7 @@ export function getHpaTarget(
     if (
         !ref ||
         !ref.name ||
-        (ref.kind !== 'Deployment' && ref.kind !== 'ReplicaSet' && ref.kind !== 'StatefulSet')
+        (ref.kind !== 'Deployment' && ref.kind !== 'ReplicaSet')
     ) {
         return undefined;
     }
@@ -2706,12 +2335,12 @@ export function getHpaTarget(
 }
 
 /** The resource a VerticalPodAutoscaler right-sizes (from spec.targetRef). A VPA
- *  points at the pod controller — Deployment/ReplicaSet/DaemonSet/Job/CronJob —
+ *  points at the pod controller — Deployment/ReplicaSet/Job/CronJob —
  *  or at a standalone Pod, never at Pods nested inside a controller. */
 export function getVpaTarget(
     resource: K8sResource
 ):
-    | { kind: 'Deployment' | 'ReplicaSet' | 'DaemonSet' | 'StatefulSet' | 'Pod' | 'Job' | 'CronJob'; name: string }
+    | { kind: 'Deployment' | 'ReplicaSet' | 'Pod' | 'Job' | 'CronJob'; name: string }
     | undefined {
     const spec = resource.spec as
         | { targetRef?: { kind?: string; name?: string } }
@@ -2722,8 +2351,6 @@ export function getVpaTarget(
         !ref.name ||
         (ref.kind !== 'Deployment' &&
             ref.kind !== 'ReplicaSet' &&
-            ref.kind !== 'DaemonSet' &&
-            ref.kind !== 'StatefulSet' &&
             ref.kind !== 'Pod' &&
             ref.kind !== 'Job' &&
             ref.kind !== 'CronJob')
@@ -2737,7 +2364,7 @@ export function getVpaTarget(
  *  target's "Vertical scaled by" inspector projection). */
 export function getResourcesTargetedByVpa(
     resources: K8sResource[],
-    kind: 'Deployment' | 'ReplicaSet' | 'DaemonSet' | 'StatefulSet' | 'Pod' | 'Job' | 'CronJob',
+    kind: 'Deployment' | 'ReplicaSet' | 'Pod' | 'Job' | 'CronJob',
     name: string
 ): K8sResource[] {
     return resources.filter(
@@ -2817,8 +2444,6 @@ export function getResourcesUsingPvc(resources: K8sResource[], claimName: string
     return resources.filter(
         (r) =>
             r.kind === 'Deployment' ||
-            r.kind === 'DaemonSet' ||
-            r.kind === 'StatefulSet' ||
             r.kind === 'ReplicaSet' ||
             r.kind === 'Pod' ||
             r.kind === 'Job' ||
@@ -2878,8 +2503,6 @@ export function getResourcesUsingConfigMap(resources: K8sResource[], cmName: str
     return resources.filter(
         (r) =>
             r.kind === 'Deployment' ||
-            r.kind === 'DaemonSet' ||
-            r.kind === 'StatefulSet' ||
             r.kind === 'ReplicaSet' ||
             r.kind === 'Pod' ||
             r.kind === 'Job' ||
@@ -3034,8 +2657,6 @@ export function getResourcesUsingSecret(resources: K8sResource[], secretName: st
     return resources.filter(
         (r) =>
             r.kind === 'Deployment' ||
-            r.kind === 'DaemonSet' ||
-            r.kind === 'StatefulSet' ||
             r.kind === 'ReplicaSet' ||
             r.kind === 'Pod' ||
             r.kind === 'Job' ||

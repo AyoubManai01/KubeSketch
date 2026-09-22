@@ -15,21 +15,9 @@ export interface NamespaceRect extends Rect {
     name: string;
 }
 
-/**
- * A canvas-only physical k8s node rectangle: `name` is the unique key.
- * Node rects live inside the cluster, never overlap each other, and hold
- * namespace rectangles — but namespaces may straddle any number of node
- * rects (the geometric overlap IS the node membership).
- */
-export interface NodeRect extends Rect {
-    name: string;
-}
-
-/** The cluster rectangle + all node/namespace rectangles (user-editable layout). */
+/** The cluster rectangle + namespace rectangles (user-editable layout). */
 export interface NsLayout {
     cluster: Rect;
-    /** Physical nodes — never auto-derived, present only once the user creates them. */
-    nodes: NodeRect[];
     namespaces: NamespaceRect[];
 }
 
@@ -41,9 +29,6 @@ export const FALLBACK_NODE_HEIGHT = 130;
 
 /** Smallest a namespace rectangle may be shrunk to (resize handles). */
 export const NAMESPACE_MIN_RECT = 80;
-
-/** Smallest a physical node rectangle may be shrunk to (resize handles). */
-export const NODE_MIN_RECT = 120;
 
 /**
  * Compute the Cluster/namespace guide frames from the *top-level* nodes only,
@@ -76,7 +61,7 @@ export function buildTeachingFrame(nodes: Node<K8sNodeData>[]): NsLayout | null 
 
     // Physical nodes are never auto-derived from the graph — they exist only
     // once the user creates them (persisted in the layout).
-    return { cluster, nodes: [], namespaces };
+    return { cluster, namespaces };
 }
 
 /**
@@ -91,13 +76,12 @@ export function effectiveNsLayout(
 ): NsLayout {
     const auto = buildTeachingFrame(nodes);
     const cluster = nsLayout?.cluster ?? auto?.cluster ?? { ...DEFAULT_CLUSTER_RECT };
-    const nodeRects = nsLayout?.nodes ?? [];
     const merged = new Map((nsLayout?.namespaces ?? []).map((ns) => [ns.name, ns]));
     const discovered = new Map((auto?.namespaces ?? []).map((ns) => [ns.name, ns]));
     discovered.forEach((ns, name) => {
         if (!merged.has(name)) merged.set(name, ns);
     });
-    return { cluster, nodes: nodeRects, namespaces: Array.from(merged.values()) };
+    return { cluster, namespaces: Array.from(merged.values()) };
 }
 
 /** True when the point lies inside the rectangle. */
@@ -118,22 +102,6 @@ export function rectContainsRect(inner: Rect, outer: Rect): boolean {
         inner.x + inner.width <= outer.x + outer.width &&
         inner.y + inner.height <= outer.y + outer.height
     );
-}
-
-/** The physical node rectangles a namespace rect overlaps (straddles). */
-export function nodesOfNamespace(
-    ns: NamespaceRect,
-    nodes: NodeRect[]
-): NodeRect[] {
-    return nodes.filter((n) => rectsOverlap(ns, n));
-}
-
-/** The namespace rectangles a physical node rect overlaps (contains or straddles). */
-export function namespacesOfNode(
-    node: NodeRect,
-    namespaces: NamespaceRect[]
-): NamespaceRect[] {
-    return namespaces.filter((ns) => rectsOverlap(node, ns));
 }
 
 /** True when two axis-aligned rectangles overlap (strict, touching edges don't collide). */

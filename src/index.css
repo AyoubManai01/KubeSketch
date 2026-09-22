@@ -23,8 +23,6 @@
 
   /* Harmonized Accent Colors */
   --accent-deployment: #10b981;  /* Emerald */
-  --accent-daemonset: #a855f7;   /* Purple */
-  --accent-statefulset: #059669; /* Emerald (dark) */
   --accent-replicaset: #f97316;  /* Orange */
   --accent-pod: #14b8a6;         /* Teal */
   --accent-service: #3b82f6;     /* Blue */
@@ -1054,10 +1052,6 @@ body,
   --kind-color: var(--accent-pod);
 }
 
-.k8s-node--daemonset {
-  --kind-color: var(--accent-daemonset);
-}
-
 .k8s-node--service {
   --kind-color: var(--accent-service);
 }
@@ -1137,22 +1131,6 @@ body,
 
 .k8s-node--deployment .k8s-node__header {
   border-bottom: 1px dashed rgba(16, 185, 129, 0.15);
-}
-
-/* StatefulSet Container (Pods nested directly, no ReplicaSet layer) */
-.k8s-node--statefulset {
-  --kind-color: var(--accent-statefulset);
-  border: 1px solid rgba(5, 150, 105, 0.25);
-  background: rgba(5, 150, 105, 0.015);
-}
-
-.k8s-node--statefulset:hover {
-  border-color: rgba(5, 150, 105, 0.5);
-  box-shadow: 0 0 20px rgba(5, 150, 105, 0.08);
-}
-
-.k8s-node--statefulset .k8s-node__header {
-  border-bottom: 1px dashed rgba(5, 150, 105, 0.15);
 }
 
 /* ReplicaSet Container (Nested) */
@@ -1311,11 +1289,6 @@ body,
   background: rgba(20, 184, 166, 0.004);
 }
 
-.teaching-frame--node {
-  border: 1px dashed rgba(245, 158, 11, 0.28);
-  background: rgba(245, 158, 11, 0.03);
-}
-
 .teaching-frame__title {
   position: absolute;
   top: -10px;
@@ -1375,12 +1348,6 @@ body,
 .teaching-frame--inner.teaching-frame--editable {
   border-color: rgba(20, 184, 166, 0.4);
   background: rgba(20, 184, 166, 0.06);
-}
-
-.teaching-frame--node.teaching-frame--editable {
-  border-style: solid;
-  border-color: rgba(245, 158, 11, 0.55);
-  background: rgba(245, 158, 11, 0.07);
 }
 
 .teaching-frame__resize-handle {
@@ -1608,13 +1575,6 @@ body,
   font-size: 10px;
   color: var(--text-muted);
   margin-top: 3px;
-  font-family: 'JetBrains Mono', monospace;
-}
-
-.inspector-hero__node {
-  font-size: 10px;
-  color: rgba(245, 158, 11, 0.9);
-  margin-top: 2px;
   font-family: 'JetBrains Mono', monospace;
 }
 
@@ -2274,8 +2234,7 @@ body,
   background-repeat: no-repeat;
 }
 
-/* Grouped optional sections inside a modal (e.g. the StatefulSet volume claim
-   template fields). The --claim variant carries the PVC accent. */
+/* Grouped optional sections inside a modal. */
 .modal-subsection {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
@@ -2284,11 +2243,6 @@ body,
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-
-.modal-subsection--claim {
-  border-color: rgba(236, 72, 153, 0.28);
-  background: rgba(236, 72, 153, 0.04);
 }
 
 .modal-subsection__header {
@@ -2843,14 +2797,6 @@ body,
   border-bottom-color: rgba(16, 185, 129, 0.15);
 }
 
-.react-flow.veltra-export-light .k8s-node--statefulset {
-  border-color: rgba(5, 150, 105, 0.25);
-}
-
-.react-flow.veltra-export-light .k8s-node--statefulset .k8s-node__header {
-  border-bottom-color: rgba(5, 150, 105, 0.15);
-}
-
 .react-flow.veltra-export-light .k8s-node--replicaset {
   border-color: rgba(249, 115, 22, 0.22);
 }
@@ -2887,7 +2833,6 @@ body,
 
 .react-flow.veltra-export-light .k8s-node--container,
 .react-flow.veltra-export-light .k8s-node--deployment,
-.react-flow.veltra-export-light .k8s-node--statefulset,
 .react-flow.veltra-export-light .k8s-node--replicaset {
   background: #ffffff;
 }

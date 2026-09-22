@@ -6,8 +6,6 @@ import {
     buildGraph,
     collectGatewayApiFamily,
     cronParallelismOf,
-    daemonSetBoxPinKey,
-    isDaemonSetSibling,
     isGatewayApiKind,
     isRouteKind,
     isSingleNodeAccessMode,
@@ -30,7 +28,7 @@ import {
 } from '../utils/linkResources';
 import { isClusterScoped } from '../utils/k8sScope';
 import { computeFileOf, fileViewOf, resourceKeyOf } from '../utils/fileTree';
-import { repairPlacements, placeNewNamespaceRect, placeNewNodeRect, tileNodesOverNamespace } from '../utils/placement';
+import { repairPlacements, placeNewNamespaceRect } from '../utils/placement';
 import {
     buildTeachingFrame,
     clampRectToRect,
@@ -38,9 +36,6 @@ import {
     FALLBACK_NODE_HEIGHT,
     FALLBACK_NODE_WIDTH,
     NAMESPACE_MIN_RECT,
-    NODE_MIN_RECT,
-    rectContainsRect,
-    rectsOverlap,
     resolveMoveCollision,
     resolveResizeCollision,
     type NamespaceRect,
@@ -58,17 +53,13 @@ const ACTIVE_FILE_KEY = 'veltra_active_file';
 
 /** Default YAML shown when the app first loads */
 export const DEFAULT_YAML = `# Paste your Kubernetes YAML here (multi-document with ---)
-# Recognized resources: Deployment, DaemonSet, StatefulSet, Service, Ingress, ReplicaSet, Pod, HorizontalPodAutoscaler,
+# Recognized resources: Deployment, Service, Ingress, ReplicaSet, Pod, HorizontalPodAutoscaler,
 # ConfigMap, PersistentVolumeClaim, PersistentVolume, StorageClass, Secret, Job,
 # CronJob, VerticalPodAutoscaler, GatewayClass, Gateway, HTTPRoute, GRPCRoute,
 # TCPRoute, TLSRoute, UDPRoute
 #
 # Like a real cluster, Veltra materializes a Deployment's ReplicaSet and
 # Pods on the canvas automatically — you only declare the Deployment.
-# A DaemonSet places one Pod on every node its namespace covers — each Pod
-# renders inside its own DaemonSet box on that node.
-# A StatefulSet nests its Pods directly (no ReplicaSet) — its optional
-# volumeClaimTemplates draw a "claims" edge to same-named PVCs.
 # A CronJob's Job (and its Pods) are materialized the same way.
 
 apiVersion: apps/v1
@@ -158,12 +149,12 @@ export interface CanvasNotice {
  */
 export interface PendingConfigMapLink {
     cm: { name: string };
-    target: { kind: 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob'; name: string };
+    target: { kind: 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job' | 'CronJob'; name: string };
 }
 
 /** Target + mechanism for writing a ConfigMap reference (create-modal path). */
 export interface ConfigMapLinkPayload {
-    targetKind: 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob';
+    targetKind: 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job' | 'CronJob';
     targetName: string;
     mechanism: ConfigMapMechanism;
     key?: string;
@@ -176,12 +167,12 @@ export interface ConfigMapLinkPayload {
  */
 export interface PendingSecretLink {
     secret: { name: string };
-    target: { kind: 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob'; name: string };
+    target: { kind: 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job' | 'CronJob'; name: string };
 }
 
 /** Target + mechanism for writing a Secret reference (create-modal path). */
 export interface SecretLinkPayload {
-    targetKind: 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob';
+    targetKind: 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job' | 'CronJob';
     targetName: string;
     mechanism: SecretMechanism;
     key?: string;
@@ -212,7 +203,7 @@ export interface IngressTlsPayload {
  */
 export interface PendingPvcLink {
     pvc: { name: string };
-    target: { kind: 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob'; name: string };
+    target: { kind: 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job' | 'CronJob'; name: string };
 }
 
 /**
@@ -222,7 +213,7 @@ export interface PendingPvcLink {
  * a StorageClass. Setting one bind kind clears the other field on the PVC.
  */
 export interface PvcLinkPayload {
-    mountTarget?: { kind: 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob'; name: string; volumeName: string };
+    mountTarget?: { kind: 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job' | 'CronJob'; name: string; volumeName: string };
     bindTarget?: { kind: 'PersistentVolume' | 'StorageClass'; name: string };
 }
 
@@ -278,11 +269,6 @@ interface VeltraState {
      *  their rectangle) and can be dragged onto another rectangle to reassign. */
     nsEditMode: boolean;
 
-    /** Dedicated physical-node editing mode: node/cluster rectangles become
-     *  draggable, resizeable and addable (namespaces stay decorative). Mutually
-     *  exclusive with `nsEditMode` — entering one exits the other. */
-    nodeEditMode: boolean;
-
     /** Cluster + namespace rectangles (positions/sizes). Null until the user
      *  edits them — the rendered layout then derives from the live graph every
      *  time. Persisted on exit of namespace editing. */
@@ -324,8 +310,7 @@ interface VeltraState {
     addConfiguredNode: (
         kind: SupportedKind,
         resource: K8sResource,
-        link?: ConfigMapLinkPayload | PvcLinkPayload | SecretLinkPayload | IngressTlsPayload,
-        opts?: { desiredNodes?: number }
+        link?: ConfigMapLinkPayload | PvcLinkPayload | SecretLinkPayload | IngressTlsPayload
     ) => void;
     /** Add a batch of fully configured, already cross-referenced resources in a
      *  single commit (Gateway API bundles from the combined creation modal). */
@@ -356,9 +341,6 @@ interface VeltraState {
     clearAll: () => void;
     /** Enter/exit namespace editing mode; exiting persists the layout. */
     setNsEditMode: (on: boolean) => void;
-    /** Enter/exit the dedicated physical-node editing mode; exiting persists the
-     *  layout. Entering either frame mode exits the other (they share one layout). */
-    setNodeEditMode: (on: boolean) => void;
     /** Move a namespace rectangle (and every contained top-level node with it).
      *  The node translation is derived by diffing `rect` against the current
      *  rectangle, so callers may pass absolute (drag-start-anchored) rects. */
@@ -375,23 +357,6 @@ interface VeltraState {
     /** Delete a namespace: removes its rectangle and cascade-deletes every
      *  resource living in it (K8s-style). No namespace is protected. */
     deleteNamespace: (name: string) => void;
-    /** Move a physical node rectangle (and every namespace rectangle fully
-     *  contained in it, with their resources). Straddling namespaces stay put —
-     *  they belong to other nodes too. Translation derived from the rect diff. */
-    moveNodeRect: (name: string, rect: Rect) => void;
-    /** Resize a physical node rectangle (no namespace/resource movement).
-     *  Growth stops at sibling node rects; a shrink can't evict a namespace
-     *  rectangle it fully contains. */
-    resizeNodeRect: (name: string, rect: Rect) => void;
-    /** Add an empty physical node rectangle (swept into the first free pocket;
-     *  the cluster grows when there is no room). */
-    addNode: (name: string, rect?: Rect) => void;
-    /** Delete a physical node rectangle. Namespaces/resources are untouched —
-     *  nodes are canvas-only chrome that never own resources. */
-    deleteNode: (name: string) => void;
-    /** Re-derive the graph from the current layout (DaemonSet boxes/pod counts
-     *  follow node/namespace rect edits). Never touches YAML. */
-    refreshLayoutDerived: () => void;
     /** Enter/exit VSCode-style file explorer mode (persisted). Entering picks a
      *  sensible active file (the selected resource's, else the first one). */
     setFileExplorerMode: (on: boolean) => void;
@@ -413,12 +378,9 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         userEdges: Edge[],
         nsLayout: NsLayout | null
     ) => {
-        // The persisted layout drives DaemonSet materialization: one box+Pod per
-        // physical node rect the DaemonSet's namespace straddles.
         const { nodes, edges: inferredEdges, autoPlacedIds } = buildGraph(
             resources,
-            prevNodes,
-            nsLayout
+            prevNodes
         );
         const placed = repairPlacements(nodes, autoPlacedIds, nsLayout);
         return {
@@ -451,9 +413,6 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         // Note: positions are only persisted when the user drags a node —
         // pinning auto-layout positions here would permanently disable
         // alignment and collision handling for every node after the first edit.
-        // DaemonSet creation may have created new physical node rects first —
-        // the caller can pass the grown layout so this commit's buildGraph
-        // materializes the DaemonSet's per-node Pods immediately.
         const nsLayout = opts.nsLayout ?? state.nsLayout;
         const derived = deriveGraph(resources, prevNodes, userEdges, nsLayout);
         // A repair that grew a persisted namespace/cluster box is written back so
@@ -464,12 +423,6 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         }
 
         const result: Partial<VeltraState> = { ...derivedRest, userEdges, hpaOverrides };
-        // DaemonSet creation may have created new node rects first: surface them in
-        // state even when the repair pass didn't need to grow anything (otherwise
-        // a fresh auto layout would stay null and the node rects would not render).
-        if (opts.nsLayout) {
-            result.nsLayout = derived.nsLayout ?? opts.nsLayout;
-        }
         if ('selectedResource' in opts) {
             result.selectedResource = opts.selectedResource ?? null;
         }
@@ -486,24 +439,6 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         result.yaml = nextYaml;
         result.yamlError = null;
         return result;
-    };
-
-    /**
-     * Re-derive the graph from a changed LAYOUT only — used after physical node
-     * rect / namespace rect edits so DaemonSet boxes (and their Pod counts)
-     * follow the geometry. Never serializes YAML: the resource model is
-     * unchanged, so the editor text/comments are preserved (invariant 3).
-     */
-    const refreshDerived = (
-        state: VeltraState,
-        nsLayout: NsLayout
-    ): Partial<VeltraState> => {
-        const derived = deriveGraph(toResources(state.nodes), state.nodes, state.userEdges, nsLayout);
-        const { layoutChanged, ...rest } = derived;
-        if (layoutChanged && derived.nsLayout) {
-            persistNsLayout(derived.nsLayout);
-        }
-        return { ...rest, nsLayout: derived.nsLayout ?? nsLayout };
     };
 
     // ── Initial load ──────────────────────────────────────────────────────
@@ -578,7 +513,6 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         pendingSecretLink: null,
         pendingIngressTlsLink: null,
         nsEditMode: false,
-        nodeEditMode: false,
         nsLayout: initialGraph.nsLayout ?? savedNsLayout,
         fileExplorerMode: savedFileExplorerMode,
         activeFile: initialFileView.activeFile,
@@ -642,13 +576,6 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                         .filter((n) => !n.data.synthetic)
                         .map((n) => `${n.data.kind}:${n.data.name}`)
                 );
-                // Deleting the real DaemonSet node (its boxes/card) leaves no
-                // per-box RELATIVE pins behind.
-                new Set(
-                    removed
-                        .filter((n) => !n.data.synthetic && n.data.kind === 'DaemonSet')
-                        .map((n) => n.data.name)
-                ).forEach((dsName) => clearDaemonSetBoxPins(dsName));
                 const userEdges = removedIds.size
                     ? state.userEdges.filter((e) => !removedIds.has(e.source) && !removedIds.has(e.target))
                     : state.userEdges;
@@ -676,33 +603,12 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
         persistNodePositions: (draggedIds: string[]) => {
             const state = get();
             const dragged = state.nodes.filter((n) => !n.parentId && draggedIds.includes(n.id));
-            // Regular nodes pin absolute positions under `${kind}:${name}`;
-            // DaemonSet boxes pin RELATIVE offsets inside their node rect (under
-            // `DaemonSetBox:<ds>:<node>`), so node/cluster moves never invalidate
-            // them and boxes never collide on the shared `DaemonSet:<name>` key.
-            const regular = dragged.filter((n) => n.data.assignedNode === undefined);
             mergePositionsIntoStorage(
-                regular.map((n) => ({
+                dragged.map((n) => ({
                     key: `${n.data.kind}:${n.data.name}`,
                     value: n.position,
                 }))
             );
-            const boxes = dragged.filter((n) => n.data.assignedNode !== undefined);
-            if (boxes.length && state.nsLayout) {
-                const entries: Array<{ key: string; value: { x: number; y: number } }> = [];
-                boxes.forEach((box) => {
-                    const rect = state.nsLayout!.nodes.find((nd) => nd.name === box.data.assignedNode);
-                    if (!rect) return;
-                    entries.push({
-                        key: daemonSetBoxPinKey(box.data.name, rect.name),
-                        value: {
-                            x: box.position.x - rect.x,
-                            y: box.position.y - rect.y,
-                        },
-                    });
-                });
-                mergePositionsIntoStorage(entries);
-            }
         },
 
         updateNodeFromCanvas: (nodeId, patch) =>
@@ -723,17 +629,11 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     : node.data.namespace;
 
                 if (!name) return {}; // never allow a nameless resource
-                // A DaemonSet's sibling boxes share its kind+name — they are the
-                // SAME logical resource, never a clash (one box per hosting node).
                 const duplicate = state.nodes.some(
                     (n) =>
                         n.id !== nodeId &&
                         n.data.kind === kind &&
-                        n.data.name === name &&
-                        !isDaemonSetSibling(n, {
-                            kind: node.data.kind,
-                            name: node.data.name,
-                        })
+                        n.data.name === name
                 );
                 if (duplicate) return {}; // caller (inspector/modal) surfaces the error
 
@@ -768,19 +668,19 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                     updatedNodes = renameRouteBackendReferences(updatedNodes, node.data.name, name);
                 }
                 if (
-                    (node.data.kind === 'Deployment' || node.data.kind === 'ReplicaSet' || node.data.kind === 'StatefulSet') &&
+                    (node.data.kind === 'Deployment' || node.data.kind === 'ReplicaSet') &&
                     kind === node.data.kind &&
                     name !== node.data.name
                 ) {
                     updatedNodes = renameWorkloadReferences(
                         updatedNodes,
-                        node.data.kind as 'Deployment' | 'ReplicaSet' | 'StatefulSet',
+                        node.data.kind as 'Deployment' | 'ReplicaSet',
                         node.data.name,
                         name
                     );
                     updatedNodes = renameVpaTargetReferences(
                         updatedNodes,
-                        node.data.kind as 'Deployment' | 'ReplicaSet' | 'StatefulSet',
+                        node.data.kind as 'Deployment' | 'ReplicaSet',
                         node.data.name,
                         name
                     );
@@ -793,9 +693,6 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                 }
                 if (node.data.kind === 'CronJob' && kind === 'CronJob' && name !== node.data.name) {
                     updatedNodes = renameVpaTargetReferences(updatedNodes, 'CronJob', node.data.name, name);
-                }
-                if (node.data.kind === 'DaemonSet' && kind === 'DaemonSet' && name !== node.data.name) {
-                    updatedNodes = renameVpaTargetReferences(updatedNodes, 'DaemonSet', node.data.name, name);
                 }
                 if (node.data.kind === 'ConfigMap' && kind === 'ConfigMap' && name !== node.data.name) {
                     updatedNodes = renameConfigMapReferences(updatedNodes, node.data.name, name);
@@ -850,10 +747,6 @@ export const useVeltraStore = create<VeltraState>((set, get) => {
                         `${node.data.kind}:${node.data.name}`,
                         `${kind}:${name}`
                     );
-                    // A renamed DaemonSet takes its per-box RELATIVE pins along.
-                    if (node.data.kind === 'DaemonSet' && kind === 'DaemonSet') {
-                        renameDaemonSetBoxPins(node.data.name, name);
-                    }
                 }
 
                 const sel = state.selectedResource;
@@ -948,13 +841,6 @@ if (isNsReassignment) {
                         .filter((n) => doomed.has(n.id))
                         .map((n) => `${n.data.kind}:${n.data.name}`)
                 );
-                // A deleted DaemonSet (any of its boxes/card removes the whole
-                // resource) leaves no per-box RELATIVE pins behind.
-                new Set(
-                    state.nodes
-                        .filter((n) => doomed.has(n.id) && n.data.kind === 'DaemonSet')
-                        .map((n) => n.data.name)
-                ).forEach((dsName) => clearDaemonSetBoxPins(dsName));
 
                 const remaining = state.nodes.filter((n) => !doomed.has(n.id));
                 const userEdges = state.userEdges.filter(
@@ -1036,7 +922,7 @@ if (isNsReassignment) {
                 // the post-drag prompt instead of committing immediately. `sourceNode`/
                 // `targetNode` are real (synthetic targets were redirected to their owner).
                 const isConfigMapTarget = (kind: string) =>
-                    kind === 'Pod' || kind === 'Deployment' || kind === 'DaemonSet' || kind === 'StatefulSet' || kind === 'ReplicaSet' || kind === 'Job' || kind === 'CronJob';
+                    kind === 'Pod' || kind === 'Deployment' || kind === 'ReplicaSet' || kind === 'Job' || kind === 'CronJob';
                 if (
                     (sourceNode.data.kind === 'ConfigMap' && isConfigMapTarget(targetNode.data.kind)) ||
                     (targetNode.data.kind === 'ConfigMap' && isConfigMapTarget(sourceNode.data.kind))
@@ -1047,7 +933,7 @@ if (isNsReassignment) {
                         pendingConfigMapLink: {
                             cm: { name: cm.data.name },
                             target: {
-                                kind: workload.data.kind as 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob',
+                                kind: workload.data.kind as 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job' | 'CronJob',
                                 name: workload.data.name,
                             },
                         },
@@ -1059,7 +945,7 @@ if (isNsReassignment) {
                 // Single-node claims (ReadWriteOnce/ReadWriteOncePod) cannot serve a
                 // workload that runs more than one replica — reject those up front.
                 const isPvcMountTarget = (kind: string) =>
-                    kind === 'Pod' || kind === 'Deployment' || kind === 'DaemonSet' || kind === 'StatefulSet' || kind === 'ReplicaSet' || kind === 'Job' || kind === 'CronJob';
+                    kind === 'Pod' || kind === 'Deployment' || kind === 'ReplicaSet' || kind === 'Job' || kind === 'CronJob';
                 if (
                     (sourceNode.data.kind === 'PersistentVolumeClaim' && isPvcMountTarget(targetNode.data.kind)) ||
                     (targetNode.data.kind === 'PersistentVolumeClaim' && isPvcMountTarget(sourceNode.data.kind))
@@ -1087,7 +973,7 @@ if (isNsReassignment) {
                         pendingPvcLink: {
                             pvc: { name: pvc.data.name },
                             target: {
-                                kind: mountTarget.data.kind as 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob',
+                                kind: mountTarget.data.kind as 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job' | 'CronJob',
                                 name: mountTarget.data.name,
                             },
                         },
@@ -1098,7 +984,7 @@ if (isNsReassignment) {
                 // the consumption mechanism (envFrom / volumes / env-key) first —
                 // surface the post-drag prompt instead of committing immediately.
                 const isSecretTarget = (kind: string) =>
-                    kind === 'Pod' || kind === 'Deployment' || kind === 'DaemonSet' || kind === 'StatefulSet' || kind === 'ReplicaSet' || kind === 'Job' || kind === 'CronJob';
+                    kind === 'Pod' || kind === 'Deployment' || kind === 'ReplicaSet' || kind === 'Job' || kind === 'CronJob';
                 if (
                     (sourceNode.data.kind === 'Secret' && isSecretTarget(targetNode.data.kind)) ||
                     (targetNode.data.kind === 'Secret' && isSecretTarget(sourceNode.data.kind))
@@ -1109,7 +995,7 @@ if (isNsReassignment) {
                         pendingSecretLink: {
                             secret: { name: secret.data.name },
                             target: {
-                                kind: workload.data.kind as 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob',
+                                kind: workload.data.kind as 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job' | 'CronJob',
                                 name: workload.data.name,
                             },
                         },
@@ -1289,8 +1175,7 @@ if (isNsReassignment) {
         addConfiguredNode: (
             kind: SupportedKind,
             resource: K8sResource,
-            link?: ConfigMapLinkPayload | PvcLinkPayload | SecretLinkPayload | IngressTlsPayload,
-            opts?: { desiredNodes?: number }
+            link?: ConfigMapLinkPayload | PvcLinkPayload | SecretLinkPayload | IngressTlsPayload
         ) =>
             set((state) => {
                 const name = resource.metadata?.name?.trim();
@@ -1303,57 +1188,6 @@ if (isNsReassignment) {
                 // the same kind+name would bypass the lane AND the placement
                 // repair — clear it so the node lands fresh, inside its box.
                 clearSavedPositions([`${kind}:${name}`]);
-                // Same for a re-created DaemonSet's per-box RELATIVE pins.
-                if (kind === 'DaemonSet') clearDaemonSetBoxPins(name);
-                // A DaemonSet creation also materializes physical node rects:
-                // the modal's "Nodes" field is the desired TOTAL count of nodes
-                // HOSTING the DaemonSet's namespace — existing node rects that
-                // already overlap the namespace rect count toward it, so only
-                // the shortfall is tiled over the namespace (canvas-only chrome,
-                // never in YAML).
-                let nsLayout: NsLayout | null | undefined = undefined;
-                if (kind === 'DaemonSet' && opts?.desiredNodes && opts.desiredNodes > 0) {
-                    const layout = ensureNsLayout(state);
-                    let next = { ...layout };
-                    const nsName = resource.metadata.namespace ?? 'default';
-                    // Ensure the namespace has a rectangle to cover: fresh
-                    // namespaces have none (auto-derived rects only hug
-                    // namespaces that already contain resources).
-                    let nsRect = next.namespaces.find((n) => n.name === nsName);
-                    if (!nsRect) {
-                        const placed = placeNewNamespaceRect(next, 320, 240, {
-                            x: next.cluster.x + 20,
-                            y: next.cluster.y + 20,
-                        });
-                        next = {
-                            ...next,
-                            cluster: placed.cluster,
-                            namespaces: [...next.namespaces, { name: nsName, ...placed.rect }],
-                        };
-                        nsRect = { name: nsName, ...placed.rect };
-                    }
-                    const existing = next.nodes.filter((n) => rectsOverlap(nsRect!, n)).length;
-                    const missing = Math.max(opts.desiredNodes - existing, 0);
-                    if (missing > 0) {
-                        const tiled = tileNodesOverNamespace(next, nsName, missing);
-                        let nextWithTiles = {
-                            ...next,
-                            cluster: tiled.cluster,
-                            namespaces: tiled.namespaces,
-                        };
-                        tiled.rects.forEach((rect) => {
-                            nextWithTiles = {
-                                ...nextWithTiles,
-                                nodes: [
-                                    ...nextWithTiles.nodes,
-                                    { name: nextNodeName(nextWithTiles, 1), ...rect },
-                                ],
-                            };
-                        });
-                        persistNsLayout(nextWithTiles);
-                        nsLayout = nextWithTiles;
-                    }
-                }
                 let resources = [...toResources(state.nodes), resource];
                 const newIdx = resources.length - 1;
                 // Create-modal ConfigMap link: also write the reference into the target
@@ -1439,7 +1273,6 @@ if (isNsReassignment) {
                 }
                 return commitResources(state, resources, state.nodes, {
                     selectedResource: { kind, name },
-                    ...(nsLayout ? { nsLayout } : {}),
                 });
             }),
 
@@ -1517,7 +1350,6 @@ if (isNsReassignment) {
                 pendingSecretLink: null,
                 pendingIngressTlsLink: null,
                 nsEditMode: false,
-                nodeEditMode: false,
                 nsLayout: null,
                 activeFile: null,
                 activeFileText: '',
@@ -1526,13 +1358,6 @@ if (isNsReassignment) {
         },
 
         setNsEditMode: (on) => {
-            // The two frame modes share one layout — leaving one for the other
-            // persists it, exactly like pressing Done.
-            if (on && get().nodeEditMode) {
-                const current = get().nsLayout;
-                if (current) persistNsLayout(current);
-                set({ nodeEditMode: false });
-            }
             if (!on) {
                 // Auto-persist the layout when leaving namespace editing mode —
                 // but only if the user actually edited it (null = pure auto-layout).
@@ -1540,19 +1365,6 @@ if (isNsReassignment) {
                 if (layout) persistNsLayout(layout);
             }
             set({ nsEditMode: on });
-        },
-
-        setNodeEditMode: (on) => {
-            if (on && get().nsEditMode) {
-                const current = get().nsLayout;
-                if (current) persistNsLayout(current);
-                set({ nsEditMode: false });
-            }
-            if (!on) {
-                const layout = get().nsLayout;
-                if (layout) persistNsLayout(layout);
-            }
-            set({ nodeEditMode: on });
         },
 
         moveNamespace: (name, rect) =>
@@ -1580,9 +1392,6 @@ if (isNsReassignment) {
                 // with a namespace.
                 const nextNodes = state.nodes.map((n) => {
                     if (n.parentId) return n;
-                    // DaemonSet boxes are node-bound — a namespace drag must not
-                    // pull them along (they follow their node rect instead).
-                    if (n.data.assignedNode !== undefined) return n;
                     if (isClusterScoped(n.data.kind)) return n;
                     if ((n.data.namespace ?? 'default') !== name) return n;
                     return { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } };
@@ -1602,21 +1411,16 @@ if (isNsReassignment) {
                 const dx = cluster.x - layout.cluster.x;
                 const dy = cluster.y - layout.cluster.y;
                 // The whole cluster translates: every top-level node (namespaced
-                // and cluster-scoped alike) plus all node and namespace rectangles.
+                // and cluster-scoped alike) plus all namespace rectangles.
                 const nextNodes = state.nodes.map((n) =>
                     n.parentId ? n : { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } }
                 );
-                const nodes = layout.nodes.map((nd) => ({
-                    ...nd,
-                    x: nd.x + dx,
-                    y: nd.y + dy,
-                }));
                 const namespaces = layout.namespaces.map((ns) => ({
                     ...ns,
                     x: ns.x + dx,
                     y: ns.y + dy,
                 }));
-                return { nodes: nextNodes, nsLayout: { cluster, nodes, namespaces } };
+                return { nodes: nextNodes, nsLayout: { cluster, namespaces } };
             }),
 
         resizeNsRect: (name, rect) =>
@@ -1649,14 +1453,14 @@ if (isNsReassignment) {
         resizeClusterRect: (rect) =>
             set((state) => {
                 const layout = ensureNsLayout(state);
-                // The cluster can't shrink past its node or namespace boxes either
-                // (they act as its content) — otherwise a box would end up outside.
+                // The cluster can't shrink past its namespace boxes either (they
+                // act as its content) — otherwise a box would end up outside.
                 const clamped = resolveResizeCollision(
                     layout.cluster,
                     rect,
                     [],
                     NAMESPACE_MIN_RECT,
-                    [...layout.nodes, ...layout.namespaces]
+                    [...layout.namespaces]
                 );
                 return { nsLayout: { ...layout, cluster: clamped } };
             }),
@@ -1778,196 +1582,6 @@ if (isNsReassignment) {
                 };
             }),
 
-        moveNodeRect: (name, rect) =>
-            set((state) => {
-                const layout = ensureNsLayout(state);
-                // Node rectangles never collide (physical exclusivity): the
-                // dragged rect is pushed out of every other node rect before the
-                // translation is computed. Namespace rects are NOT blockers —
-                // they may straddle any number of nodes.
-                const others = layout.nodes.filter((nd) => nd.name !== name);
-                // …and it can never leave the cluster: sibling resolution first,
-                // then a final clamp to the cluster bounds wins.
-                const clamped = clampRectToRect(
-                    resolveMoveCollision(rect, others),
-                    layout.cluster
-                );
-                const old = layout.nodes.find((nd) => nd.name === name);
-                if (!old) {
-                    return {
-                        nsLayout: {
-                            ...layout,
-                            nodes: upsertNamedRect(layout.nodes, name, clamped),
-                        },
-                    };
-                }
-                // Translation is the diff between the passed rect and the one the
-                // layout currently holds — the caller may pass absolute rects
-                // anchored at drag start without double-applying.
-                const dx = clamped.x - old.x;
-                const dy = clamped.y - old.y;
-                // Only namespaces FULLY contained in the node's pre-move rect ride
-                // along (with their top-level resources); a straddling namespace
-                // belongs to other nodes too, so it stays put — the node slides
-                // out from under it instead of dragging it along.
-                const rideAlong = new Set(
-                    layout.namespaces
-                        .filter((ns) => rectContainsRect(ns, old))
-                        .map((ns) => ns.name)
-                );
-                const nextNodes = state.nodes.map((n) => {
-                    if (n.parentId) return n;
-                    // DaemonSet boxes follow THEIR node rect (never the
-                    // namespace ride-along — they are node-bound chrome).
-                    if (n.data.assignedNode === name) {
-                        return { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } };
-                    }
-                    if (isClusterScoped(n.data.kind)) return n;
-                    if (!rideAlong.has(n.data.namespace ?? 'default')) return n;
-                    return { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } };
-                });
-                const namespaces = layout.namespaces.map((ns) =>
-                    rideAlong.has(ns.name)
-                        ? { ...ns, x: ns.x + dx, y: ns.y + dy }
-                        : ns
-                );
-                return {
-                    nodes: nextNodes,
-                    nsLayout: {
-                        ...layout,
-                        nodes: upsertNamedRect(layout.nodes, name, clamped),
-                        namespaces,
-                    },
-                };
-            }),
-
-        resizeNodeRect: (name, rect) =>
-            set((state) => {
-                const layout = ensureNsLayout(state);
-                const old = layout.nodes.find((nd) => nd.name === name);
-                const others = layout.nodes.filter((nd) => nd.name !== name);
-                // Content = the namespace rects fully contained in the node's
-                // pre-resize box: the box can never shrink past a namespace it
-                // holds (a node can't evict one). Straddling namespaces are cut
-                // freely — they live on other nodes too.
-                const content = old
-                    ? layout.namespaces.filter((ns) => rectContainsRect(ns, old))
-                    : [];
-                const clamped = old
-                    ? resolveResizeCollision(
-                          old,
-                          rect,
-                          others,
-                          NODE_MIN_RECT,
-                          content,
-                          layout.cluster
-                      )
-                    : rect;
-                // DaemonSet boxes on this node follow the rect live (clamped
-                // inside it, anchored at its top-left when the box no longer
-                // fits) so a shrinking node never leaves its boxes visually
-                // stranded — the end-of-gesture refresh re-sweeps properly.
-                const clampInto = (
-                    x: number,
-                    y: number,
-                    w: number,
-                    h: number,
-                    c: Rect
-                ): { x: number; y: number } => ({
-                    x: Math.min(Math.max(x, c.x), Math.max(c.x, c.x + c.width - w)),
-                    y: Math.min(Math.max(y, c.y), Math.max(c.y, c.y + c.height - h)),
-                });
-                const nextNodes = state.nodes.map((n) => {
-                    if (n.data.assignedNode !== name) return n;
-                    const w = typeof n.style?.width === 'number' ? n.style.width : FALLBACK_NODE_WIDTH;
-                    const h = typeof n.style?.height === 'number' ? n.style.height : FALLBACK_NODE_HEIGHT;
-                    return { ...n, position: clampInto(n.position.x, n.position.y, w, h, clamped) };
-                });
-                return {
-                    nodes: nextNodes,
-                    nsLayout: {
-                        ...layout,
-                        nodes: upsertNamedRect(layout.nodes, name, clamped),
-                    },
-                };
-            }),
-
-        addNode: (name, rect) =>
-            set((state) => {
-                const layout = ensureNsLayout(state);
-                const trimmed = (name ?? '').trim();
-                if (!trimmed) {
-                    return { notice: makeNotice('error', 'Node name cannot be empty.') };
-                }
-                // Nodes are never graph-derived, so only persisted rects can clash.
-                if (layout.nodes.some((nd) => nd.name === trimmed)) {
-                    return {
-                        notice: makeNotice(
-                            'error',
-                            `Node “${trimmed}” already exists on the canvas.`
-                        ),
-                    };
-                }
-                // The new rect always lands INSIDE the cluster (first free pocket
-                // avoiding node AND namespace rects — a fresh node starts empty);
-                // when there is no room, the cluster grows to fit it.
-                const placed = placeNewNodeRect(
-                    layout,
-                    rect?.width ?? 480,
-                    rect?.height ?? 360,
-                    {
-                        x: rect?.x ?? layout.cluster.x + 20,
-                        y: rect?.y ?? layout.cluster.y + 20,
-                    }
-                );
-                const nextLayout: NsLayout = {
-                    ...layout,
-                    cluster: placed.cluster,
-                    nodes: [...layout.nodes, { name: trimmed, ...placed.rect }],
-                };
-                return {
-                    ...refreshDerived(state, nextLayout),
-                    notice: makeNotice(
-                        'success',
-                        `Node “${trimmed}” added — drag namespaces onto it to place them on the node.`
-                    ),
-                };
-            }),
-
-        deleteNode: (name) =>
-            set((state) => {
-                const trimmed = (name ?? '').trim();
-                if (!trimmed) {
-                    return { notice: makeNotice('error', 'Node name cannot be empty.') };
-                }
-                const layout = ensureNsLayout(state);
-                const nodes = layout.nodes.filter((nd) => nd.name !== trimmed);
-                if (nodes.length === layout.nodes.length) {
-                    return {
-                        notice: makeNotice('error', `Node “${trimmed}” not found.`),
-                    };
-                }
-                // Pure layout change: nodes are canvas-only chrome that never own
-                // resources — namespaces merely lose one node when they straddled
-                // it, and the model/YAML stay untouched. DaemonSet boxes and Pod
-                // counts follow the node list, so the graph is re-derived (never
-                // serialized — the resource model is unchanged).
-                const nextLayout = { ...layout, nodes };
-                return {
-                    ...refreshDerived(state, nextLayout),
-                    notice: makeNotice(
-                        'success',
-                        `Node “${trimmed}” deleted — its namespaces stay on the cluster.`
-                    ),
-                };
-            }),
-
-        refreshLayoutDerived: () =>
-            set((state) => {
-                if (!state.nsLayout) return {};
-                return refreshDerived(state, state.nsLayout);
-            }),
-
         setFileExplorerMode: (on) => {
             localStorage.setItem(FILE_EXPLORER_KEY, on ? '1' : '0');
             set((state) => {
@@ -2083,7 +1697,7 @@ function toResources(nodes: Node<K8sNodeData>[]): K8sResource[] {
 }
 
 export function apiVersionForKind(kind: SupportedKind): string {
-    if (kind === 'Deployment' || kind === 'DaemonSet' || kind === 'StatefulSet' || kind === 'ReplicaSet') return 'apps/v1';
+    if (kind === 'Deployment' || kind === 'ReplicaSet') return 'apps/v1';
     if (kind === 'Ingress') return 'networking.k8s.io/v1';
     if (kind === 'HorizontalPodAutoscaler') return 'autoscaling/v2';
     if (kind === 'VerticalPodAutoscaler') return 'autoscaling.k8s.io/v1';
@@ -2133,10 +1747,10 @@ function renameServiceReferences(
     });
 }
 
-/** Rewrite HorizontalPodAutoscaler scaleTargetRef names when a Deployment/ReplicaSet/StatefulSet is renamed. */
+/** Rewrite HorizontalPodAutoscaler scaleTargetRef names when a Deployment/ReplicaSet is renamed. */
 function renameWorkloadReferences(
     nodes: Node<K8sNodeData>[],
-    kind: 'Deployment' | 'ReplicaSet' | 'StatefulSet',
+    kind: 'Deployment' | 'ReplicaSet',
     oldName: string,
     newName: string
 ): Node<K8sNodeData>[] {
@@ -2158,10 +1772,10 @@ function renameWorkloadReferences(
 }
 
 /** Rewrite VerticalPodAutoscaler spec.targetRef names when their target
- *  (Deployment/ReplicaSet/DaemonSet/StatefulSet/Pod/Job/CronJob) is renamed. */
+ *  (Deployment/ReplicaSet/Pod/Job/CronJob) is renamed. */
 function renameVpaTargetReferences(
     nodes: Node<K8sNodeData>[],
-    kind: 'Deployment' | 'ReplicaSet' | 'DaemonSet' | 'StatefulSet' | 'Pod' | 'Job' | 'CronJob',
+    kind: 'Deployment' | 'ReplicaSet' | 'Pod' | 'Job' | 'CronJob',
     oldName: string,
     newName: string
 ): Node<K8sNodeData>[] {
@@ -2189,7 +1803,7 @@ function renameConfigMapReferences(
     newName: string
 ): Node<K8sNodeData>[] {
     return nodes.map((n) => {
-        if (n.data.kind !== 'Deployment' && n.data.kind !== 'DaemonSet' && n.data.kind !== 'StatefulSet' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod' && n.data.kind !== 'Job' && n.data.kind !== 'CronJob') {
+        if (n.data.kind !== 'Deployment' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod' && n.data.kind !== 'Job' && n.data.kind !== 'CronJob') {
             return n;
         }
         const spec = n.data.resource.spec as Record<string, any> | undefined;
@@ -2286,7 +1900,7 @@ function renameSecretReferences(
             });
             return { ...n, data: { ...n.data, resource } };
         }
-        if (n.data.kind !== 'Deployment' && n.data.kind !== 'DaemonSet' && n.data.kind !== 'StatefulSet' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod' && n.data.kind !== 'Job' && n.data.kind !== 'CronJob') {
+        if (n.data.kind !== 'Deployment' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod' && n.data.kind !== 'Job' && n.data.kind !== 'CronJob') {
             return n;
         }
         const spec = n.data.resource.spec as Record<string, any> | undefined;
@@ -2349,16 +1963,14 @@ function rewriteSecretNames(podSpec: Record<string, any>, oldName: string, newNa
 }
 
 /** Rewrite Pod-spec PersistentVolumeClaim references when a PVC is renamed
- *  (volumes[].persistentVolumeClaim.claimName). A StatefulSet's
- *  volumeClaimTemplates entries match their PVCs by name too — the template's
- *  metadata.name is rewritten so the "claims" edge stays stable. */
+ *  (volumes[].persistentVolumeClaim.claimName). */
 function renamePvcReferences(
     nodes: Node<K8sNodeData>[],
     oldName: string,
     newName: string
 ): Node<K8sNodeData>[] {
     return nodes.map((n) => {
-        if (n.data.kind !== 'Deployment' && n.data.kind !== 'DaemonSet' && n.data.kind !== 'StatefulSet' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod' && n.data.kind !== 'Job' && n.data.kind !== 'CronJob') {
+        if (n.data.kind !== 'Deployment' && n.data.kind !== 'ReplicaSet' && n.data.kind !== 'Pod' && n.data.kind !== 'Job' && n.data.kind !== 'CronJob') {
             return n;
         }
         const spec = n.data.resource.spec as Record<string, any> | undefined;
@@ -2366,11 +1978,7 @@ function renamePvcReferences(
         const referencesPvc = Array.isArray(podSpec?.volumes) && podSpec.volumes.some(
             (v: any) => v?.persistentVolumeClaim?.claimName === oldName
         );
-        const templates = n.data.kind === 'StatefulSet' ? spec?.volumeClaimTemplates : undefined;
-        const referencesTemplate = Array.isArray(templates) && templates.some(
-            (t: any) => t?.metadata?.name === oldName
-        );
-        if (!referencesPvc && !referencesTemplate) return n;
+        if (!referencesPvc) return n;
 
         const resource = structuredClone(n.data.resource);
         const clonedSpec = resource.spec as Record<string, any>;
@@ -2380,13 +1988,6 @@ function renamePvcReferences(
                 volume.persistentVolumeClaim.claimName = newName;
             }
         });
-        if (referencesTemplate && Array.isArray(clonedSpec.volumeClaimTemplates)) {
-            clonedSpec.volumeClaimTemplates.forEach((template: any) => {
-                if (template?.metadata?.name === oldName) {
-                    template.metadata.name = newName;
-                }
-            });
-        }
         return { ...n, data: { ...n.data, resource } };
     });
 }
@@ -2563,44 +2164,6 @@ function renameStoredPosition(oldKey: string, newKey: string) {
     } catch {}
 }
 
-/** Rewrite a renamed DaemonSet's per-box RELATIVE pins (`DaemonSetBox:old:node` → `:new:node`). */
-function renameDaemonSetBoxPins(oldName: string, newName: string) {
-    try {
-        const saved = localStorage.getItem(POSITIONS_KEY);
-        if (!saved) return;
-        const positions = JSON.parse(saved);
-        const prefix = `DaemonSetBox:${oldName}:`;
-        let changed = false;
-        Object.keys(positions).forEach((key) => {
-            if (key.startsWith(prefix)) {
-                positions[`DaemonSetBox:${newName}:${key.slice(prefix.length)}`] = positions[key];
-                delete positions[key];
-                changed = true;
-            }
-        });
-        if (changed) localStorage.setItem(POSITIONS_KEY, JSON.stringify(positions));
-    } catch {}
-}
-
-/** Remove every saved DaemonSet box pin for the given DaemonSet (invariant 17:
- *  creation and deletion never inherit stale box positions). */
-function clearDaemonSetBoxPins(dsName: string) {
-    try {
-        const saved = localStorage.getItem(POSITIONS_KEY);
-        if (!saved) return;
-        const positions = JSON.parse(saved);
-        const prefix = `DaemonSetBox:${dsName}:`;
-        let changed = false;
-        Object.keys(positions).forEach((key) => {
-            if (key.startsWith(prefix)) {
-                delete positions[key];
-                changed = true;
-            }
-        });
-        if (changed) localStorage.setItem(POSITIONS_KEY, JSON.stringify(positions));
-    } catch {}
-}
-
 /** Remove saved positions for the given `Kind:name` keys. Used so a re-created
  *  resource never inherits a stale pinned position from a previously deleted
  *  one — creation and namespace reassignment always get fresh, repaired
@@ -2625,30 +2188,15 @@ function clearSavedPositions(keys: string[]) {
 // ─── Namespace layout storage helpers ────────────────────────────────────────
 
 /** The layout to edit: the persisted one, or a fresh auto-derivation from the
- *  current graph (so unedited layouts always hug the live nodes). Physical
- *  nodes are never auto-derived — a never-edited layout has none. */
+ *  current graph (so unedited layouts always hug the live nodes). */
 function ensureNsLayout(state: VeltraState): NsLayout {
     if (state.nsLayout) return state.nsLayout;
     return (
         buildTeachingFrame(state.nodes) ?? {
             cluster: { ...DEFAULT_CLUSTER_RECT },
-            nodes: [],
             namespaces: [],
         }
     );
-}
-
-/** The first free `worker-N` name for an auto-created physical node rect
- *  (never collides with existing rect names, whatever they are). */
-function nextNodeName(layout: NsLayout, startIndex: number): string {
-    const taken = new Set(layout.nodes.map((nd) => nd.name));
-    let i = startIndex;
-    let name = `worker-${i}`;
-    while (taken.has(name)) {
-        i += 1;
-        name = `worker-${i}`;
-    }
-    return name;
 }
 
 /** The top-level real resources living in the given namespace, as rectangles —
@@ -2689,13 +2237,10 @@ export function readNsLayout(): NsLayout | null {
         const namespaces = Array.isArray(parsed?.namespaces)
             ? (parsed.namespaces as unknown[]).filter(isNamedRect)
             : [];
-        // Back-compat: layouts persisted before physical nodes existed have no
-        // `nodes` key — treat it as an empty list instead of discarding the
-        // whole layout (the cluster/namespaces are still valid).
-        const nodes = Array.isArray(parsed?.nodes)
-            ? (parsed.nodes as unknown[]).filter(isNamedRect)
-            : [];
-        return { cluster: parsed.cluster, nodes, namespaces };
+        // Back-compat: layouts persisted while physical nodes existed may carry
+        // a `nodes` key — it is ignored (nodes are gone; the cluster/namespaces
+        // are still valid).
+        return { cluster: parsed.cluster, namespaces };
     } catch {
         return null;
     }

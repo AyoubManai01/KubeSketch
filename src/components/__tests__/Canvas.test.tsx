@@ -50,12 +50,11 @@ describe('Canvas', () => {
 
     // ── Empty state ──────────────────────────────────────────────────────────
     describe('empty state', () => {
-        it('shows the prompt with Node/Namespace CTAs only on a truly fresh canvas', () => {
+        it('shows the prompt with a Namespace CTA only on a truly fresh canvas', () => {
             setMockStoreState({ nodes: [], nsLayout: null });
             render(<Canvas />);
             expect(dom.getByText('Empty Infrastructure Canvas')).toBeInTheDocument();
             expect(dom.getByText('+ Add Namespace')).toBeInTheDocument();
-            expect(dom.getByText('+ Add Node')).toBeInTheDocument();
         });
 
         it('hides the empty state once at least one resource node exists', () => {
@@ -69,21 +68,7 @@ describe('Canvas', () => {
                 nodes: [],
                 nsLayout: {
                     cluster: { x: 20, y: 20, width: 1200, height: 1400 },
-                    nodes: [],
                     namespaces: [{ name: 'team-a', x: 40, y: 40, width: 320, height: 240 }],
-                },
-            });
-            render(<Canvas />);
-            expect(dom.queryByText('Empty Infrastructure Canvas')).toBeNull();
-        });
-
-        it('hides the empty state when only a physical node rectangle exists (no resources yet)', () => {
-            setMockStoreState({
-                nodes: [],
-                nsLayout: {
-                    cluster: { x: 20, y: 20, width: 1200, height: 1400 },
-                    nodes: [{ name: 'worker-1', x: 40, y: 40, width: 480, height: 360 }],
-                    namespaces: [],
                 },
             });
             render(<Canvas />);
@@ -95,13 +80,6 @@ describe('Canvas', () => {
             render(<Canvas />);
             fireEvent.click(dom.getByText('+ Add Namespace'));
             expect(dom.getByText('New Namespace')).toBeInTheDocument();
-        });
-
-        it('the "+ Add Node" CTA opens the New Node modal', () => {
-            setMockStoreState({ nodes: [], nsLayout: null });
-            render(<Canvas />);
-            fireEvent.click(dom.getByText('+ Add Node'));
-            expect(dom.getByText('New Node')).toBeInTheDocument();
         });
     });
 
@@ -224,84 +202,6 @@ describe('Canvas', () => {
             getCapturedReactFlowProps().onNodeDragStop(null, node, []);
 
             expect(persistNodePositions).toHaveBeenCalledWith([node.id]);
-        });
-    });
-
-    // ── DaemonSet sibling boxes drag independently ──────────────────────────────
-    // All sibling boxes of a DaemonSet share the {kind, name} selection, so React
-    // Flow reports them all as "dragged" even though only one box was grabbed —
-    // only the grabbed box may move (and be pinned), its siblings stay put.
-    describe('DaemonSet sibling boxes — independent drags', () => {
-        const box = (id: string, x: number, y: number, node: string) =>
-            createMockNode(
-                {
-                    kind: 'DaemonSet',
-                    name: 'collector',
-                    assignedNode: node,
-                    synthetic: true,
-                    managedBy: { kind: 'DaemonSet', name: 'collector' },
-                    resource: {
-                        apiVersion: 'apps/v1',
-                        kind: 'DaemonSet',
-                        metadata: { name: 'collector' },
-                        spec: {},
-                    },
-                },
-                { id, position: { x, y } },
-            );
-        const box1 = () => box('DaemonSet-collector-worker-1', 100, 100, 'worker-1');
-        const box2 = () => box('DaemonSet-collector-worker-2', 500, 100, 'worker-2');
-
-        it('applies the grabbed box\'s position change but drops the sibling\'s', () => {
-            const setCanvasNodesPositionOnly = vi.fn();
-            setMockStoreState({
-                nodes: [box1(), box2()],
-                selectedResource: { kind: 'DaemonSet', name: 'collector' },
-                setCanvasNodesPositionOnly,
-            });
-            render(<Canvas />);
-            const props = getCapturedReactFlowProps();
-
-            // The user clicked one box (every sibling highlights as one logical
-            // resource), then grabbed it — React Flow drags the whole batch.
-            props.onNodeDragStart(null, box1(), [box1(), box2()]);
-            props.onNodesChange([
-                { type: 'position', id: 'DaemonSet-collector-worker-1', position: { x: 120, y: 110 }, dragging: true } as NodeChange,
-                { type: 'position', id: 'DaemonSet-collector-worker-2', position: { x: 520, y: 110 }, dragging: true } as NodeChange,
-            ]);
-
-            const next = setCanvasNodesPositionOnly.mock.calls[0][0] as Array<{
-                id: string;
-                position: { x: number; y: number };
-            }>;
-            expect(next.find((n) => n.id === 'DaemonSet-collector-worker-1')?.position).toEqual({
-                x: 120,
-                y: 110,
-            });
-            expect(next.find((n) => n.id === 'DaemonSet-collector-worker-2')?.position).toEqual({
-                x: 500,
-                y: 100,
-            });
-        });
-
-        it('pins only the grabbed box on drop — the sibling keeps its placement', () => {
-            const persistNodePositions = vi.fn();
-            setMockStoreState({
-                nodes: [box1(), box2()],
-                selectedResource: { kind: 'DaemonSet', name: 'collector' },
-                persistNodePositions,
-            });
-            render(<Canvas />);
-            const props = getCapturedReactFlowProps();
-
-            props.onNodeDragStart(null, box1(), [box1(), box2()]);
-            props.onNodesChange([
-                { type: 'position', id: 'DaemonSet-collector-worker-1', position: { x: 120, y: 110 }, dragging: true } as NodeChange,
-                { type: 'position', id: 'DaemonSet-collector-worker-2', position: { x: 520, y: 110 }, dragging: true } as NodeChange,
-            ]);
-            props.onNodeDragStop(null, box1(), [box1(), box2()]);
-
-            expect(persistNodePositions).toHaveBeenCalledWith(['DaemonSet-collector-worker-1']);
         });
     });
 

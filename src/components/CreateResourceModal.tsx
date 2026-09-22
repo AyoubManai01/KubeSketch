@@ -21,8 +21,6 @@ interface Props {
 
 const KIND_COLORS: Record<string, string> = {
     Deployment: '#10b981',
-    DaemonSet: '#a855f7',
-    StatefulSet: '#059669',
     ReplicaSet: '#f97316',
     Pod: '#14b8a6',
     Service: '#3b82f6',
@@ -59,22 +57,6 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
             <rect x="3" y="3" width="10" height="10" rx="2" />
             <rect x="11" y="11" width="10" height="10" rx="2" strokeDasharray="2 2" />
             <path d="M13 8h3v3" strokeDasharray="2 2" />
-        </svg>
-    ),
-    DaemonSet: (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="3" y1="6" x2="21" y2="6" />
-            <circle cx="7" cy="12" r="2.5" />
-            <circle cx="12" cy="16" r="2.5" />
-            <circle cx="17" cy="12" r="2.5" />
-        </svg>
-    ),
-    StatefulSet: (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="3" width="18" height="8" rx="2" />
-            <path d="M7 3v8M12 3v8M17 3v8" />
-            <rect x="3" y="13" width="18" height="8" rx="2" />
-            <path d="M7 13v8M12 13v8M17 13v8" />
         </svg>
     ),
     Pod: (
@@ -225,7 +207,6 @@ function hexToRgba(hex: string, alpha: number): string {
 export default function CreateResourceModal({ kind, onClose }: Props) {
     const nodes = useVeltraStore((s) => s.nodes);
     const addConfiguredNode = useVeltraStore((s) => s.addConfiguredNode);
-    const addConfiguredNodes = useVeltraStore((s) => s.addConfiguredNodes);
     const nsLayout = useVeltraStore((s) => s.nsLayout);
 
     const suggestedName = useMemo(() => {
@@ -313,13 +294,6 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     const [restartPolicy, setRestartPolicy] = useState('OnFailure');
     const [parallelism, setParallelism] = useState('1');
     const [completions, setCompletions] = useState('1');
-    // DaemonSet fields
-    const [desiredNodes, setDesiredNodes] = useState('3');
-    // StatefulSet fields: optional volumeClaimTemplates (one template → one PVC)
-    const [stsVolumeClaims, setStsVolumeClaims] = useState(false);
-    const [stsClaimName, setStsClaimName] = useState('data');
-    const [stsClaimSize, setStsClaimSize] = useState('1Gi');
-    const [stsClaimAccessMode, setStsClaimAccessMode] = useState('ReadWriteOnce');
     // CronJob fields
     const [schedule, setSchedule] = useState('* * * * *');
     const [shellCommandEnabled, setShellCommandEnabled] = useState(false);
@@ -348,39 +322,15 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
 
     const firstInputRef = useRef<HTMLInputElement>(null);
 
-    // DaemonSet cluster node count: a whole number of at least 1 (the desired
-    // TOTAL node rects — existing ones count toward it).
-    const daemonSetNodesError =
-        kind === 'DaemonSet'
-            ? /^\d+$/.test(desiredNodes.trim()) && parseInt(desiredNodes, 10) >= 1
-                ? ''
-                : 'Nodes must be a whole number of at least 1.'
-            : '';
-
-    // StatefulSet volume claim template: a name is required when enabled, and
-    // the generated PVC must not collide with an existing claim on the canvas.
-    const stsClaimNameError =
-        kind === 'StatefulSet' && stsVolumeClaims
-            ? !stsClaimName.trim()
-                ? 'The volume claim template needs a name.'
-                : nodes.some(
-                      (n) =>
-                          n.data.kind === 'PersistentVolumeClaim' &&
-                          n.data.name === stsClaimName.trim()
-                  )
-                ? `A PersistentVolumeClaim named “${stsClaimName.trim()}” already exists.`
-                : ''
-            : '';
-
     const color = KIND_COLORS[kind] ?? '#3b82f6';
     const icon = KIND_ICONS[kind];
 
-    const isWorkload = kind === 'Deployment' || kind === 'ReplicaSet' || kind === 'StatefulSet';
+    const isWorkload = kind === 'Deployment' || kind === 'ReplicaSet';
 
     // Auto-generated label follows the resource name until the user overrides it
     const appLabel = appLabelTouched
         ? appLabelDraft
-        : isWorkload || kind === 'Pod' || kind === 'Job' || kind === 'CronJob' || kind === 'DaemonSet'
+        : isWorkload || kind === 'Pod' || kind === 'Job' || kind === 'CronJob'
         ? name.trim() || suggestedName
         : appLabelDraft;
 
@@ -408,15 +358,14 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         [nodes]
     );
 
-    // HorizontalPodAutoscaler scale targets: Deployments, ReplicaSets and StatefulSets on the canvas
+    // HorizontalPodAutoscaler scale targets: Deployments and ReplicaSets on the canvas
     const workloadOptions = useMemo(
         () =>
             nodes
                 .filter(
                     (n) =>
                         n.data.kind === 'Deployment' ||
-                        n.data.kind === 'ReplicaSet' ||
-                        n.data.kind === 'StatefulSet'
+                        n.data.kind === 'ReplicaSet'
                 )
                 .map((n) => ({ kind: n.data.kind as string, name: n.data.name as string }))
                 .sort((a, b) => `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`)),
@@ -432,8 +381,6 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                     (n) =>
                         !n.data.synthetic &&
                         (n.data.kind === 'Deployment' ||
-                            n.data.kind === 'DaemonSet' ||
-                            n.data.kind === 'StatefulSet' ||
                             n.data.kind === 'ReplicaSet' ||
                             n.data.kind === 'Pod' ||
                             n.data.kind === 'Job' ||
@@ -451,7 +398,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
             if (n.data.synthetic) return;
             const k = n.data.kind;
             let value: string | undefined;
-            if (k === 'Deployment' || k === 'DaemonSet' || k === 'StatefulSet' || k === 'ReplicaSet' || k === 'Job' || k === 'CronJob') {
+            if (k === 'Deployment' || k === 'ReplicaSet' || k === 'Job' || k === 'CronJob') {
                 value = getWorkloadPodLabels(n.data.resource)?.app;
             } else if (k === 'Pod') {
                 value = n.data.resource.metadata?.labels?.app;
@@ -480,7 +427,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         const options: Array<{ label: string; value: string }> = [];
         nodes.forEach((n) => {
             const k = n.data.kind;
-            if (k !== 'Pod' && k !== 'Deployment' && k !== 'DaemonSet' && k !== 'StatefulSet' && k !== 'ReplicaSet' && k !== 'Job' && k !== 'CronJob') return;
+            if (k !== 'Pod' && k !== 'Deployment' && k !== 'ReplicaSet' && k !== 'Job' && k !== 'CronJob') return;
             let realKind: string = k;
             let realName: string = n.data.name;
             let label = `${k} ${n.data.name}`;
@@ -506,7 +453,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         const options: Array<{ label: string; value: string }> = [];
         nodes.forEach((n) => {
             const k = n.data.kind;
-            if (k !== 'Pod' && k !== 'Deployment' && k !== 'DaemonSet' && k !== 'StatefulSet' && k !== 'ReplicaSet' && k !== 'Job' && k !== 'CronJob') return;
+            if (k !== 'Pod' && k !== 'Deployment' && k !== 'ReplicaSet' && k !== 'Job' && k !== 'CronJob') return;
             let realKind: string = k;
             let realName: string = n.data.name;
             let label = `${k} ${n.data.name}`;
@@ -544,7 +491,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         const options: Array<{ label: string; value: string }> = [];
         nodes.forEach((n) => {
             const k = n.data.kind;
-            if (k !== 'Pod' && k !== 'Deployment' && k !== 'DaemonSet' && k !== 'StatefulSet' && k !== 'ReplicaSet' && k !== 'Job' && k !== 'CronJob') return;
+            if (k !== 'Pod' && k !== 'Deployment' && k !== 'ReplicaSet' && k !== 'Job' && k !== 'CronJob') return;
             let realKind: string = k;
             let realName: string = n.data.name;
             let label = `${k} ${n.data.name}`;
@@ -640,66 +587,6 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                             },
                         },
                     },
-                };
-            }
-            case 'DaemonSet': {
-                const label = appLabel.trim() || meta.name;
-                return {
-                    apiVersion: 'apps/v1',
-                    kind,
-                    metadata: { ...meta, labels: { app: label } },
-                    spec: {
-                        selector: { matchLabels: { app: label } },
-                        template: {
-                            metadata: { labels: { app: label } },
-                            spec: {
-                                containers: [
-                                    {
-                                        name: containerName.trim() || 'app',
-                                        image: containerImage.trim() || 'nginx:latest',
-                                    },
-                                ],
-                            },
-                        },
-                    },
-                };
-            }
-            case 'StatefulSet': {
-                const replicaNum = parseInt(replicas, 10);
-                const label = appLabel.trim() || meta.name;
-                const spec: Record<string, unknown> = {
-                    replicas: Number.isFinite(replicaNum) ? replicaNum : 1,
-                    selector: { matchLabels: { app: label } },
-                    template: {
-                        metadata: { labels: { app: label } },
-                        spec: {
-                            containers: [
-                                {
-                                    name: containerName.trim() || 'app',
-                                    image: containerImage.trim() || 'nginx:latest',
-                                },
-                            ],
-                        },
-                    },
-                };
-                if (stsVolumeClaims) {
-                    spec.volumeClaimTemplates = [
-                        {
-                            metadata: { name: stsClaimName.trim() },
-                            spec: {
-                                accessModes: [stsClaimAccessMode],
-                                resources: {
-                                    requests: { storage: stsClaimSize.trim() || '1Gi' },
-                                },
-                            },
-                        },
-                    ];
-                }
-                return {
-                    apiVersion: 'apps/v1',
-                    kind,
-                    metadata: { ...meta, labels: { app: label } },
-                    spec,
                 };
             }
             case 'Pod':
@@ -942,7 +829,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                 const targetKind = targetKindRaw || fallback?.kind || 'Deployment';
                 const targetName = targetNameRaw || fallback?.name || '';
                 const targetApiVersion =
-                    targetKind === 'Deployment' || targetKind === 'DaemonSet' || targetKind === 'StatefulSet' || targetKind === 'ReplicaSet'
+                    targetKind === 'Deployment' || targetKind === 'ReplicaSet'
                         ? 'apps/v1'
                         : targetKind === 'Job' || targetKind === 'CronJob'
                         ? 'batch/v1'
@@ -1040,7 +927,6 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
     function handleCreate() {
         if (nameError) return;
         if (namespaceError) return;
-        if (stsClaimNameError) return;
         if (cmTarget && cmMechanism === 'envKey' && !cmKey) return;
         if (secretTarget && secretMechanism === 'envKey' && !secretKey) return;
         if (pvcMountTarget && (!pvcVolumeName.trim() || !!pvcMountReplicasError)) return;
@@ -1048,7 +934,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         if (cmTarget) {
             const [targetKind, targetName] = cmTarget.split('|');
             link = {
-                targetKind: targetKind as 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob',
+                targetKind: targetKind as 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job' | 'CronJob',
                 targetName,
                 mechanism: cmMechanism,
                 ...(cmMechanism === 'envKey' && cmKey ? { key: cmKey } : {}),
@@ -1057,7 +943,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
         if (kind === 'Secret' && secretTarget) {
             const [targetKind, targetName] = secretTarget.split('|');
             link = {
-                targetKind: targetKind as 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob',
+                targetKind: targetKind as 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job' | 'CronJob',
                 targetName,
                 mechanism: secretMechanism,
                 ...(secretMechanism === 'envKey' && secretKey ? { key: secretKey } : {}),
@@ -1080,7 +966,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
             if (pvcMountTarget) {
                 const [targetKind, targetName] = pvcMountTarget.split('|');
                 mountTarget = {
-                    kind: targetKind as 'Pod' | 'Deployment' | 'DaemonSet' | 'StatefulSet' | 'ReplicaSet' | 'Job' | 'CronJob',
+                    kind: targetKind as 'Pod' | 'Deployment' | 'ReplicaSet' | 'Job' | 'CronJob',
                     name: targetName,
                     volumeName: pvcVolumeName.trim(),
                 };
@@ -1098,31 +984,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
             }
         }
         const resource = buildResource();
-        if (kind === 'DaemonSet') {
-            addConfiguredNode(kind, resource, undefined, {
-                desiredNodes: parseInt(desiredNodes, 10) || 1,
-            });
-        } else if (kind === 'StatefulSet' && stsVolumeClaims) {
-            // The volume claim template materializes as a REAL PVC resource in
-            // the same commit — the "claims" edge draws from the name match.
-            const pvc: K8sResource = {
-                apiVersion: 'v1',
-                kind: 'PersistentVolumeClaim',
-                metadata: {
-                    name: stsClaimName.trim(),
-                    namespace: namespace.trim(),
-                    labels: { app: appLabel.trim() || name.trim() || suggestedName },
-                },
-                spec: {
-                    accessModes: [stsClaimAccessMode],
-                    resources: { requests: { storage: stsClaimSize.trim() || '1Gi' } },
-                },
-            };
-            addConfiguredNodes([resource, pvc], {
-                kind: 'StatefulSet',
-                name: resource.metadata.name,
-            });
-        } else if (link) {
+        if (link) {
             addConfiguredNode(kind, resource, link);
         } else {
             addConfiguredNode(kind, resource);
@@ -1195,12 +1057,12 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                     </div>
 
                     {/* App Label — auto-generated for workloads/Pods, target picker for Services */}
-                    {(isWorkload || kind === 'Pod' || kind === 'Job' || kind === 'CronJob' || kind === 'DaemonSet') && (
+                    {(isWorkload || kind === 'Pod' || kind === 'Job' || kind === 'CronJob') && (
                         <div className="modal-field">
                             <label className="modal-field__label">
                                 App Label
                                 <span className="modal-field__hint">
-                                    {isWorkload || kind === 'Job' || kind === 'CronJob' || kind === 'DaemonSet'
+                                    {isWorkload || kind === 'Job' || kind === 'CronJob'
                                         ? 'Auto-generated from the name. Sets metadata.labels.app and spec.selector.matchLabels.app.'
                                         : 'Auto-generated from the name. Sets metadata.labels.app — enables containment inside matching ReplicaSets.'}
                                 </span>
@@ -1262,164 +1124,6 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                                 placeholder="3"
                             />
                         </div>
-                    )}
-
-                    {/* DaemonSet: container + cluster node count (one Pod per node) */}
-                    {kind === 'DaemonSet' && (
-                        <>
-                            <div className="modal-row">
-                                <div className="modal-field">
-                                    <label className="modal-field__label">Container Name</label>
-                                    <input
-                                        className="modal-field__input"
-                                        value={containerName}
-                                        onChange={(e) => setContainerName(e.target.value)}
-                                        placeholder="app"
-                                    />
-                                </div>
-                                <div className="modal-field">
-                                    <label className="modal-field__label">Image</label>
-                                    <input
-                                        className="modal-field__input"
-                                        value={containerImage}
-                                        onChange={(e) => setContainerImage(e.target.value)}
-                                        placeholder="nginx:latest"
-                                    />
-                                </div>
-                            </div>
-                            <div className="modal-field">
-                                <label className="modal-field__label">
-                                    Nodes
-                                    <span className="modal-field__hint">
-                                        Desired total nodes covering this
-                                        namespace — existing nodes already over
-                                        it count toward the total; missing ones
-                                        are tiled over the namespace as
-                                        canvas-only node rects. One DaemonSet
-                                        box with one Pod runs on each.
-                                    </span>
-                                </label>
-                                <input
-                                    className="modal-field__input"
-                                    type="number"
-                                    min={1}
-                                    value={desiredNodes}
-                                    onChange={(e) => setDesiredNodes(e.target.value)}
-                                    placeholder="3"
-                                />
-                                {daemonSetNodesError && (
-                                    <span className="modal-field__error">{daemonSetNodesError}</span>
-                                )}
-                            </div>
-                        </>
-                    )}
-
-                    {/* StatefulSet: container + optional volume claim template */}
-                    {kind === 'StatefulSet' && (
-                        <>
-                            <div className="modal-row">
-                                <div className="modal-field">
-                                    <label className="modal-field__label">Container Name</label>
-                                    <input
-                                        className="modal-field__input"
-                                        value={containerName}
-                                        onChange={(e) => setContainerName(e.target.value)}
-                                        placeholder="app"
-                                    />
-                                </div>
-                                <div className="modal-field">
-                                    <label className="modal-field__label">Image</label>
-                                    <input
-                                        className="modal-field__input"
-                                        value={containerImage}
-                                        onChange={(e) => setContainerImage(e.target.value)}
-                                        placeholder="nginx:latest"
-                                    />
-                                </div>
-                            </div>
-                            <div className="modal-field">
-                                <label className="modal-field__label">
-                                    <span className="modal-field__checkrow">
-                                        <input
-                                            type="checkbox"
-                                            className="modal-field__checkbox"
-                                            checked={stsVolumeClaims}
-                                            onChange={(e) => setStsVolumeClaims(e.target.checked)}
-                                        />
-                                        <span className="modal-field__checkrow-text">
-                                            Add a volume claim template (optional)
-                                        </span>
-                                    </span>
-                                    <span className="modal-field__hint">
-                                        Writes spec.volumeClaimTemplates — a PersistentVolumeClaim
-                                        named after the template is created and linked to this
-                                        StatefulSet (&quot;claims&quot; edge). In a real cluster
-                                        each Pod gets its own claim.
-                                    </span>
-                                </label>
-                            </div>
-                            {stsVolumeClaims && (
-                                <div className="modal-subsection modal-subsection--claim">
-                                    <div className="modal-subsection__header">
-                                        <svg
-                                            className="modal-subsection__icon"
-                                            viewBox="0 0 24 24"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            strokeWidth="2"
-                                            strokeLinecap="round"
-                                            strokeLinejoin="round"
-                                        >
-                                            <ellipse cx="12" cy="5" rx="8" ry="3" />
-                                            <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
-                                            <path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6" />
-                                        </svg>
-                                        <span className="modal-subsection__title">
-                                            Volume claim template
-                                        </span>
-                                        <span className="modal-subsection__badge">
-                                            1 PVC per Pod
-                                        </span>
-                                    </div>
-                                    <div className="modal-row">
-                                        <div className="modal-field">
-                                            <label className="modal-field__label">Claim name</label>
-                                            <input
-                                                className={`modal-field__input ${stsClaimNameError ? 'modal-field__input--invalid' : ''}`}
-                                                value={stsClaimName}
-                                                onChange={(e) => setStsClaimName(e.target.value)}
-                                                placeholder="data"
-                                            />
-                                            {stsClaimNameError && (
-                                                <span className="modal-field__error">{stsClaimNameError}</span>
-                                            )}
-                                        </div>
-                                        <div className="modal-field">
-                                            <label className="modal-field__label">Size Request</label>
-                                            <input
-                                                className="modal-field__input"
-                                                value={stsClaimSize}
-                                                onChange={(e) => setStsClaimSize(e.target.value)}
-                                                placeholder="1Gi"
-                                            />
-                                        </div>
-                                    </div>
-                                    <div className="modal-field">
-                                        <label className="modal-field__label">Access Mode</label>
-                                        <select
-                                            className="modal-field__input modal-field__input--select"
-                                            value={stsClaimAccessMode}
-                                            onChange={(e) => setStsClaimAccessMode(e.target.value)}
-                                        >
-                                            <option>ReadWriteOnce</option>
-                                            <option>ReadOnlyMany</option>
-                                            <option>ReadWriteMany</option>
-                                            <option>ReadWriteOncePod</option>
-                                        </select>
-                                    </div>
-                                </div>
-                            )}
-                        </>
                     )}
 
                     {/* Pod: container */}
@@ -1780,7 +1484,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                                 <label className="modal-field__label">
                                     Scale target
                                     <span className="modal-field__hint">
-                                        Sets spec.scaleTargetRef — the Deployment, ReplicaSet or StatefulSet this HorizontalPodAutoscaler scales.
+                                        Sets spec.scaleTargetRef — the Deployment or ReplicaSet this HorizontalPodAutoscaler scales.
                                     </span>
                                 </label>
                                 <select
@@ -1847,7 +1551,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                                 <label className="modal-field__label">
                                     Target (targetRef)
                                     <span className="modal-field__hint">
-                                        Sets spec.targetRef — the Deployment, ReplicaSet, DaemonSet, StatefulSet, Pod, Job or CronJob whose Pod container requests this VPA adjusts.
+                                        Sets spec.targetRef — the Deployment, ReplicaSet, Pod, Job or CronJob whose Pod container requests this VPA adjusts.
                                     </span>
                                 </label>
                                 <select
@@ -2503,9 +2207,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                         disabled={
                             !!nameError ||
                             !!namespaceError ||
-                            !!stsClaimNameError ||
                             !!scheduleError ||
-                            !!daemonSetNodesError ||
                             (kind === 'ConfigMap' && !!cmTarget && cmMechanism === 'envKey' && !cmKey) ||
                             (kind === 'Secret' && !!secretTarget && secretMechanism === 'envKey' && !secretKey) ||
                             (kind === 'PersistentVolumeClaim' && !!pvcMountTarget && (!pvcVolumeName.trim() || !!pvcMountReplicasError))
@@ -2513,9 +2215,7 @@ export default function CreateResourceModal({ kind, onClose }: Props) {
                         title={
                             nameError ||
                             namespaceError ||
-                            stsClaimNameError ||
                             scheduleError ||
-                            daemonSetNodesError ||
                             (kind === 'ConfigMap' && cmTarget && cmMechanism === 'envKey' && !cmKey
                                 ? 'Select a data key first'
                                 : kind === 'Secret' && secretTarget && secretMechanism === 'envKey' && !secretKey

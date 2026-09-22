@@ -31,7 +31,7 @@ export function connectResources(
     if (pair('Service', 'Pod')) {
         return linkServiceToPod(resources, byKind('Service'), byKind('Pod'));
     }
-    if (pair('Service', 'Deployment') || pair('Service', 'DaemonSet') || pair('Service', 'StatefulSet') || pair('Service', 'ReplicaSet') || pair('Service', 'Job')) {
+    if (pair('Service', 'Deployment') || pair('Service', 'ReplicaSet') || pair('Service', 'Job')) {
         const workloadIdx = source.kind === 'Service' ? targetIdx : sourceIdx;
         return linkServiceToWorkload(resources, byKind('Service'), workloadIdx);
     }
@@ -43,11 +43,6 @@ export function connectResources(
     }
     if (pair('Job', 'Pod')) {
         return linkOwnership(resources, byKind('Job'), byKind('Pod'));
-    }
-    if (pair('StatefulSet', 'Pod')) {
-        // A StatefulSet owns its Pods directly (no ReplicaSet layer) — labeling
-        // the Pod lets the StatefulSet claim and nest it.
-        return linkOwnership(resources, byKind('StatefulSet'), byKind('Pod'));
     }
     if (pair('CronJob', 'Job')) {
         // A CronJob never links to an existing Job — it creates its own (shown as a
@@ -65,7 +60,7 @@ export function connectResources(
             description: `${podName} adopted by ${depName}'s ReplicaSet (Deployments own Pods via ReplicaSets)`,
         };
     }
-    if (pair('HorizontalPodAutoscaler', 'Deployment') || pair('HorizontalPodAutoscaler', 'ReplicaSet') || pair('HorizontalPodAutoscaler', 'StatefulSet')) {
+    if (pair('HorizontalPodAutoscaler', 'Deployment') || pair('HorizontalPodAutoscaler', 'ReplicaSet')) {
         return linkHpaToWorkload(
             resources,
             byKind('HorizontalPodAutoscaler'),
@@ -74,8 +69,6 @@ export function connectResources(
     }
     if (
         pair('VerticalPodAutoscaler', 'Deployment') ||
-        pair('VerticalPodAutoscaler', 'DaemonSet') ||
-        pair('VerticalPodAutoscaler', 'StatefulSet') ||
         pair('VerticalPodAutoscaler', 'ReplicaSet') ||
         pair('VerticalPodAutoscaler', 'Pod') ||
         pair('VerticalPodAutoscaler', 'Job') ||
@@ -148,21 +141,21 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
         if (pair('PersistentVolumeClaim', 'StorageClass')) {
             return 'A PVC already references this StorageClass (spec.storageClassName).';
         }
-        if (other === 'Deployment' || other === 'DaemonSet' || other === 'StatefulSet' || other === 'ReplicaSet' || other === 'Job') {
+        if (other === 'Deployment' || other === 'ReplicaSet' || other === 'Job') {
             return `A PVC mounts into a ${other}'s Pod template — a single-node access mode (ReadWriteOnce/ReadWriteOncePod) cannot serve every replica when the ${other} runs more than one.`;
         }
         return `A PVC is claimed by a Pod and binds to a PV or StorageClass — it has no direct relationship with a ${other}.`;
     }
     if (a === 'PersistentVolume' || b === 'PersistentVolume') {
         const other = a === 'PersistentVolume' ? b : a;
-        if (other === 'Pod' || other === 'Deployment' || other === 'DaemonSet' || other === 'StatefulSet' || other === 'ReplicaSet' || other === 'Job') {
+        if (other === 'Pod' || other === 'Deployment' || other === 'ReplicaSet' || other === 'Job') {
             return `A ${other} cannot use a PV directly — claim it with a PVC (spec.volumeName) and mount the PVC into the Pod.`;
         }
         return `A PV is bound by a PVC via the claim's spec.volumeName — it has no direct relationship with a ${other}.`;
     }
     if (a === 'StorageClass' || b === 'StorageClass') {
         const other = a === 'StorageClass' ? b : a;
-        if (other === 'Pod' || other === 'Deployment' || other === 'DaemonSet' || other === 'StatefulSet' || other === 'ReplicaSet' || other === 'Job') {
+        if (other === 'Pod' || other === 'Deployment' || other === 'ReplicaSet' || other === 'Job') {
             return `A ${other} cannot reference a StorageClass directly — a PVC with spec.storageClassName provisions storage that the Pod then claims.`;
         }
         return `A StorageClass is referenced by a PVC via spec.storageClassName — it has no direct relationship with a ${other}.`;
@@ -181,7 +174,7 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
             return 'An Ingress consumes a Secret via spec.tls[].secretName — drag an Ingress onto a Secret to configure TLS.';
         }
         if (other === 'HorizontalPodAutoscaler') {
-            return 'A HorizontalPodAutoscaler scales Deployments/ReplicaSets/StatefulSets, not Secrets.';
+            return 'A HorizontalPodAutoscaler scales Deployments/ReplicaSets, not Secrets.';
         }
         return `A Secret is consumed by a Pod spec (envFrom, env.valueFrom or volumes) or referenced by Ingress TLS, not linked to a ${other} directly.`;
     }
@@ -203,43 +196,21 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
             return 'An Ingress cannot route to a CronJob — expose its Pods with a Service first.';
         }
         if (other === 'HorizontalPodAutoscaler') {
-            return 'A HorizontalPodAutoscaler scales Deployments/ReplicaSets/StatefulSets, not CronJobs.';
+            return 'A HorizontalPodAutoscaler scales Deployments/ReplicaSets, not CronJobs.';
         }
         return `A CronJob runs batch Jobs on a schedule — it has no direct relationship with a ${other}.`;
     }
-    if (a === 'DaemonSet' || b === 'DaemonSet') {
-        const other = a === 'DaemonSet' ? b : a;
-        if (other === 'Pod') {
-            return 'A DaemonSet places exactly one Pod on every node itself — its Pods are controller-managed. Connect a Service, ConfigMap, Secret, PVC or VPA to the DaemonSet instead.';
-        }
-        if (other === 'ReplicaSet') {
-            return 'A DaemonSet and a ReplicaSet are independent pod controllers — they never own each other.';
-        }
-        if (other === 'Job') {
-            return 'A DaemonSet runs one Pod per node, independently of Jobs — they have no ownership relationship.';
-        }
-        if (other === 'Service') {
-            return 'A Service selects Pods by labels — it already routes to a DaemonSet\u2019s Pods if their labels match.';
-        }
-        if (other === 'Ingress') {
-            return 'An Ingress cannot route to a DaemonSet — expose its Pods with a Service first.';
-        }
-        if (other === 'HorizontalPodAutoscaler') {
-            return 'A HorizontalPodAutoscaler can only scale Deployments/ReplicaSets/StatefulSets, not DaemonSets — a DaemonSet scales with the number of cluster nodes.';
-        }
-        return `A DaemonSet places one Pod per node — it has no direct relationship with a ${other}.`;
-    }
-    if (pair('Ingress', 'Deployment') || pair('Ingress', 'ReplicaSet') || pair('Ingress', 'StatefulSet') || pair('Ingress', 'Job')) {
+    if (pair('Ingress', 'Deployment') || pair('Ingress', 'ReplicaSet') || pair('Ingress', 'Job')) {
         return `An Ingress cannot route to a ${a === 'Ingress' ? b : a} — expose the workload with a Service first, then route the Ingress to it.`;
     }
     if (pair('HorizontalPodAutoscaler', 'Service') || pair('HorizontalPodAutoscaler', 'Ingress') || pair('HorizontalPodAutoscaler', 'Pod') || pair('HorizontalPodAutoscaler', 'Job')) {
         const other = a === 'HorizontalPodAutoscaler' ? b : a;
-        return `A HorizontalPodAutoscaler can only scale a Deployment, ReplicaSet or StatefulSet, not a ${other}.`;
+        return `A HorizontalPodAutoscaler can only scale a Deployment or ReplicaSet, not a ${other}.`;
     }
     if (a === 'VerticalPodAutoscaler' || b === 'VerticalPodAutoscaler') {
         const other = a === 'VerticalPodAutoscaler' ? b : a;
         if (other === 'Service') {
-            return 'A VPA right-sizes Pods (via a Deployment/ReplicaSet/DaemonSet/StatefulSet/Pod/Job/CronJob), not Services.';
+            return 'A VPA right-sizes Pods (via a Deployment/ReplicaSet/Pod/Job/CronJob), not Services.';
         }
         if (other === 'Ingress') {
             return 'A VPA right-sizes Pods, not Ingresses.';
@@ -278,7 +249,7 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
         if (other === 'Service') {
             return `A ${routeKind} already routes to this Service via spec.backendRefs.`;
         }
-        if (other === 'Deployment' || other === 'ReplicaSet' || other === 'StatefulSet' || other === 'Pod' || other === 'Job' || other === 'CronJob') {
+        if (other === 'Deployment' || other === 'ReplicaSet' || other === 'Pod' || other === 'Job' || other === 'CronJob') {
             return `A ${routeKind} can only route to Services, not a ${other} — expose the workload with a Service first.`;
         }
         return `A ${routeKind} attaches to a Gateway (spec.parentRefs) and routes to Services (spec.backendRefs) — it has no direct relationship with a ${other}.`;
@@ -453,7 +424,7 @@ function linkVpaToTarget(
     const next = [...resources];
     const target = resources[targetIdx];
     const targetApiVersion =
-        target.kind === 'Deployment' || target.kind === 'DaemonSet' || target.kind === 'StatefulSet' || target.kind === 'ReplicaSet'
+        target.kind === 'Deployment' || target.kind === 'ReplicaSet'
             ? 'apps/v1'
             : target.kind === 'Job' || target.kind === 'CronJob'
             ? 'batch/v1'
@@ -510,7 +481,7 @@ export function linkConfigMapToWorkload(
         spec.jobTemplate.spec.template = spec.jobTemplate.spec.template ?? {};
         spec.jobTemplate.spec.template.spec = spec.jobTemplate.spec.template.spec ?? {};
         podSpec = spec.jobTemplate.spec.template.spec;
-    } else if (patched.kind === 'Deployment' || patched.kind === 'DaemonSet' || patched.kind === 'StatefulSet' || patched.kind === 'ReplicaSet' || patched.kind === 'Job') {
+    } else if (patched.kind === 'Deployment' || patched.kind === 'ReplicaSet' || patched.kind === 'Job') {
         spec.template = spec.template ?? {};
         spec.template.spec = spec.template.spec ?? {};
         podSpec = spec.template.spec;
@@ -585,7 +556,7 @@ export function linkSecretToWorkload(
         spec.jobTemplate.spec.template = spec.jobTemplate.spec.template ?? {};
         spec.jobTemplate.spec.template.spec = spec.jobTemplate.spec.template.spec ?? {};
         podSpec = spec.jobTemplate.spec.template.spec;
-    } else if (patched.kind === 'Deployment' || patched.kind === 'DaemonSet' || patched.kind === 'StatefulSet' || patched.kind === 'ReplicaSet' || patched.kind === 'Job') {
+    } else if (patched.kind === 'Deployment' || patched.kind === 'ReplicaSet' || patched.kind === 'Job') {
         spec.template = spec.template ?? {};
         spec.template.spec = spec.template.spec ?? {};
         podSpec = spec.template.spec;
@@ -703,7 +674,7 @@ export function linkPvcToWorkload(
         spec.jobTemplate.spec.template = spec.jobTemplate.spec.template ?? {};
         spec.jobTemplate.spec.template.spec = spec.jobTemplate.spec.template.spec ?? {};
         podSpec = spec.jobTemplate.spec.template.spec;
-    } else if (patched.kind === 'Deployment' || patched.kind === 'DaemonSet' || patched.kind === 'StatefulSet' || patched.kind === 'ReplicaSet' || patched.kind === 'Job') {
+    } else if (patched.kind === 'Deployment' || patched.kind === 'ReplicaSet' || patched.kind === 'Job') {
         spec.template = spec.template ?? {};
         spec.template.spec = spec.template.spec ?? {};
         podSpec = spec.template.spec;

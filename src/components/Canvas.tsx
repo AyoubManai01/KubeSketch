@@ -35,7 +35,6 @@ import { isClusterScoped } from "../utils/k8sScope";
 import {
   effectiveNsLayout,
   rectContains,
-  rectsOverlap,
   clampPositionToRect,
   resolveNodeCollision,
   FALLBACK_NODE_WIDTH,
@@ -60,7 +59,6 @@ import {
   getRoutesForGateway,
   getRoutesForService,
   isGatewayApiKind,
-  isDaemonSetSibling,
   kindGroupLabel,
   isSingleNodeAccessMode,
   nodeIdFor,
@@ -79,7 +77,6 @@ import PvcLinkModal from "./PvcLinkModal";
 import SecretLinkModal from "./SecretLinkModal";
 import IngressTlsLinkModal from "./IngressTlsLinkModal";
 import NamespaceModal from "./NamespaceModal";
-import NodeModal from "./NodeModal";
 import DeleteNamespaceModal from "./DeleteNamespaceModal";
 
 /** Register our custom node type so React Flow can render it */
@@ -104,8 +101,6 @@ const MIN_ZOOM = 0.5 / 1.2 ** 3;
 
 const KIND_COLORS: Record<string, string> = {
   Deployment: "#10b981",
-  DaemonSet: "#a855f7",
-  StatefulSet: "#059669",
   ReplicaSet: "#f97316",
   Pod: "#14b8a6",
   Service: "#3b82f6",
@@ -156,36 +151,6 @@ const KIND_ICONS: Record<string, React.ReactNode> = {
       <rect x="3" y="3" width="10" height="10" rx="2" />
       <rect x="11" y="11" width="10" height="10" rx="2" strokeDasharray="2 2" />
       <path d="M13 8h3v3" strokeDasharray="2 2" />
-    </svg>
-  ),
-  DaemonSet: (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <line x1="3" y1="6" x2="21" y2="6" />
-      <circle cx="7" cy="12" r="2.5" />
-      <circle cx="12" cy="16" r="2.5" />
-      <circle cx="17" cy="12" r="2.5" />
-    </svg>
-  ),
-  StatefulSet: (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect x="3" y="3" width="18" height="8" rx="2" />
-      <path d="M7 3v8M12 3v8M17 3v8" />
-      <rect x="3" y="13" width="18" height="8" rx="2" />
-      <path d="M7 13v8M12 13v8M17 13v8" />
     </svg>
   ),
   Pod: (
@@ -466,22 +431,6 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${parseInt(result[1], 16)},${parseInt(result[2], 16)},${parseInt(result[3], 16)},${alpha})`;
 }
 
-/** True when `n` is a sibling DaemonSet box of the box the user grabbed
- *  (`grab` = the node under the pointer). React Flow drags every *selected*
- *  node, and all sibling boxes of a DaemonSet share the selection — the grabbed
- *  box must move alone, so tag-along siblings are filtered out of the drag. */
-function isDaemonSetDragSibling(
-  grab: Node<K8sNodeData> | null,
-  n: Node<K8sNodeData>,
-): boolean {
-  return (
-    grab !== null &&
-    grab.data.kind === "DaemonSet" &&
-    n.id !== grab.id &&
-    isDaemonSetSibling(n, { kind: grab.data.kind, name: grab.data.name })
-  );
-}
-
 /**
  * React Flow canvas displaying K8s resource nodes.
  * Reads nodes/edges from the Zustand store — the store is the single source of truth
@@ -571,9 +520,6 @@ export default function Canvas() {
 
   // Selection lives in the store as {kind, name} so it survives node ID changes
   // (renames, kind changes) — the node is looked up fresh on every render.
-  // DaemonSets render one box per hosting node (synthetic copies share the real
-  // resource's kind+name), so prefer the REAL node: clicking any box opens the
-  // same editable inspector.
   const selectedNode = useMemo(() => {
     if (!selectedResource) return null;
     return (
@@ -607,12 +553,10 @@ export default function Canvas() {
   const nsLayout = useVeltraStore((s) => s.nsLayout);
   const nsEditMode = useVeltraStore((s) => s.nsEditMode);
   const setNsEditMode = useVeltraStore((s) => s.setNsEditMode);
-  const nodeEditMode = useVeltraStore((s) => s.nodeEditMode);
-  const setNodeEditMode = useVeltraStore((s) => s.setNodeEditMode);
   const deleteNamespace = useVeltraStore((s) => s.deleteNamespace);
-  // Either frame editing mode is active — resources become fixed / connections
+  // Namespace editing mode is active — resources become fixed / connections
   // and edge auto-pan switch off while arranging frames.
-  const anyFrameEditMode = nsEditMode || nodeEditMode;
+  const anyFrameEditMode = nsEditMode;
   // Persisted + auto-discovered cluster/namespace rectangles — the drop targets
   // for namespace reassignment and the frames NsFrame renders.
   const effectiveLayout = useMemo(
@@ -620,59 +564,28 @@ export default function Canvas() {
     [nsLayout, nodes],
   );
   // The full-canvas empty prompt is only for a truly fresh canvas: namespace
-  // and physical node rectangles are canvas-only frames (never React Flow
-  // nodes), so once one exists the prompt must disappear instead of covering
-  // the cluster structure the user just created.
-  const hasStructureFrames =
-    effectiveLayout.namespaces.length > 0 || effectiveLayout.nodes.length > 0;
-  // The physical node the selected resource is "running on" — derived read-only
-  // from geometry: walk up to the selected node's top-level ancestor (nested
-  // pods report their workload's node) and hit-test its center against the node
-  // rectangles. Nodes are canvas-only chrome, so this never touches the model.
-  const selectedResourceNode = useMemo(() => {
-    if (!selectedNode) return null;
-    if (isClusterScoped(selectedNode.data.kind)) return null;
-    let top = selectedNode;
-    while (top.parentId) {
-      top = nodes.find((n) => n.id === top.parentId) ?? top;
-    }
-    const width =
-      typeof top.style?.width === "number"
-        ? top.style.width
-        : FALLBACK_NODE_WIDTH;
-    const height =
-      typeof top.style?.height === "number"
-        ? top.style.height
-        : FALLBACK_NODE_HEIGHT;
-    const center = {
-      x: top.position.x + width / 2,
-      y: top.position.y + height / 2,
-    };
-    return (
-      effectiveLayout.nodes.find((nd) => rectContains(nd, center))?.name ?? null
-    );
-  }, [selectedNode, nodes, effectiveLayout]);
-  // In a frame editing mode cluster-scoped kinds (PV/StorageClass) and DaemonSet
-  // boxes are fixed — boxes are node-bound (drag within their node rect only
-  // happens in normal mode; reassignment semantics don't apply to them). The
-  // React Flow `selected` flag follows the store selection (single source of
-  // truth), so the visual highlight also lands on nodes selected from the file
-  // explorer.
+  // rectangles are canvas-only frames (never React Flow nodes), so once one
+  // exists the prompt must disappear instead of covering the cluster structure
+  // the user just created.
+  const hasStructureFrames = effectiveLayout.namespaces.length > 0;
+  // In namespace editing mode cluster-scoped kinds (PV/StorageClass) are fixed.
+  // The React Flow `selected` flag follows the store selection (single source
+  // of truth), so the visual highlight also lands on nodes selected from the
+  // file explorer.
   const displayNodes = useMemo(() => {
     const selKey = selectedResource
       ? `${selectedResource.kind}:${selectedResource.name}`
       : "";
     return nodes.map((n) => {
       const node =
-        (nsEditMode || nodeEditMode) &&
-        (isClusterScoped(n.data.kind) || n.data.assignedNode !== undefined)
+        nsEditMode && isClusterScoped(n.data.kind)
           ? { ...n, draggable: false }
           : n;
       const selected =
         selKey !== "" && `${n.data.kind}:${n.data.name}` === selKey;
       return node.selected === selected ? node : { ...node, selected };
     });
-  }, [nodes, nsEditMode, nodeEditMode, selectedResource]);
+  }, [nodes, nsEditMode, selectedResource]);
 
   const namespaceOptions = useMemo(() => {
     const discovered = new Set<string>();
@@ -693,8 +606,6 @@ export default function Canvas() {
       let value: string | undefined;
       if (
         kind === "Deployment" ||
-        kind === "DaemonSet" ||
-        kind === "StatefulSet" ||
         kind === "ReplicaSet" ||
         kind === "Job"
       ) {
@@ -721,15 +632,14 @@ export default function Canvas() {
     [nodes],
   );
 
-  // HorizontalPodAutoscaler scale targets: Deployments, ReplicaSets and StatefulSets on the canvas
+  // HorizontalPodAutoscaler scale targets: Deployments and ReplicaSets on the canvas
   const workloadOptions = useMemo(
     () =>
       nodes
         .filter(
           (node) =>
             node.data.kind === "Deployment" ||
-            node.data.kind === "ReplicaSet" ||
-            node.data.kind === "StatefulSet",
+            node.data.kind === "ReplicaSet",
         )
         .map((node) => ({
           kind: node.data.kind as string,
@@ -742,7 +652,7 @@ export default function Canvas() {
   );
 
   // VPA targetRef candidates: every real pod-bearing resource on the canvas
-  // (Deployments/ReplicaSets/DaemonSets/Pods/Jobs/CronJobs). Synthetic nodes are excluded —
+  // (Deployments/ReplicaSets/Pods/Jobs/CronJobs). Synthetic nodes are excluded —
   // a targetRef must point at a manifest resource, not a controller-materialized one.
   const vpaTargetOptions = useMemo(
     () =>
@@ -751,8 +661,6 @@ export default function Canvas() {
           (node) =>
             !node.data.synthetic &&
             (node.data.kind === "Deployment" ||
-              node.data.kind === "DaemonSet" ||
-              node.data.kind === "StatefulSet" ||
               node.data.kind === "ReplicaSet" ||
               node.data.kind === "Pod" ||
               node.data.kind === "Job" ||
@@ -775,8 +683,6 @@ export default function Canvas() {
     const kind = selectedNode.data.kind;
     if (
       kind !== "Deployment" &&
-      kind !== "DaemonSet" &&
-      kind !== "StatefulSet" &&
       kind !== "ReplicaSet" &&
       kind !== "Pod" &&
       kind !== "Job" &&
@@ -801,8 +707,7 @@ export default function Canvas() {
     if (
       !selectedNode ||
       (selectedNode.data.kind !== "Deployment" &&
-        selectedNode.data.kind !== "ReplicaSet" &&
-        selectedNode.data.kind !== "StatefulSet")
+        selectedNode.data.kind !== "ReplicaSet")
     ) {
       return null;
     }
@@ -831,8 +736,6 @@ export default function Canvas() {
     if (
       kind !== "Pod" &&
       kind !== "Deployment" &&
-      kind !== "DaemonSet" &&
-      kind !== "StatefulSet" &&
       kind !== "ReplicaSet" &&
       kind !== "Job" &&
       kind !== "CronJob"
@@ -851,8 +754,6 @@ export default function Canvas() {
         (n) =>
           !n.data.synthetic &&
           (n.data.kind === "Deployment" ||
-            n.data.kind === "DaemonSet" ||
-            n.data.kind === "StatefulSet" ||
             n.data.kind === "ReplicaSet" ||
             n.data.kind === "Pod" ||
             n.data.kind === "Job" ||
@@ -870,8 +771,6 @@ export default function Canvas() {
     if (
       kind !== "Pod" &&
       kind !== "Deployment" &&
-      kind !== "DaemonSet" &&
-      kind !== "StatefulSet" &&
       kind !== "ReplicaSet" &&
       kind !== "Job" &&
       kind !== "CronJob"
@@ -890,8 +789,6 @@ export default function Canvas() {
         (n) =>
           !n.data.synthetic &&
           (n.data.kind === "Deployment" ||
-            n.data.kind === "DaemonSet" ||
-            n.data.kind === "StatefulSet" ||
             n.data.kind === "ReplicaSet" ||
             n.data.kind === "Pod" ||
             n.data.kind === "Job" ||
@@ -918,8 +815,6 @@ export default function Canvas() {
     if (
       kind !== "Pod" &&
       kind !== "Deployment" &&
-      kind !== "DaemonSet" &&
-      kind !== "StatefulSet" &&
       kind !== "ReplicaSet" &&
       kind !== "Job" &&
       kind !== "CronJob"
@@ -939,8 +834,6 @@ export default function Canvas() {
         (n) =>
           !n.data.synthetic &&
           (n.data.kind === "Deployment" ||
-            n.data.kind === "DaemonSet" ||
-            n.data.kind === "StatefulSet" ||
             n.data.kind === "ReplicaSet" ||
             n.data.kind === "Pod" ||
             n.data.kind === "Job" ||
@@ -949,20 +842,6 @@ export default function Canvas() {
       )
       .map((n) => ({ kind: n.data.kind, name: n.data.name }));
   }, [nodes, selectedNode]);
-
-  // The physical node rects a DaemonSet runs one box on: every node rect the
-  // DaemonSet's namespace rect overlaps (canvas-only chrome — read-only
-  // projection of the persisted layout).
-  const daemonSetNodeNames = useMemo(() => {
-    if (!selectedNode || selectedNode.data.kind !== "DaemonSet") return [];
-    const layout = effectiveNsLayout(nsLayout, nodes);
-    const nsName = selectedNode.data.namespace ?? "default";
-    const nsRect = layout.namespaces.find((n) => n.name === nsName);
-    if (!nsRect) return [];
-    return layout.nodes
-      .filter((nd) => rectsOverlap(nsRect, nd))
-      .map((nd) => nd.name);
-  }, [selectedNode, nsLayout, nodes]);
 
   // The single bind target of the selected PVC: PV via volumeName or StorageClass via
   // storageClassName (a PVC binds to exactly one — volumeName wins over storageClassName).
@@ -1243,8 +1122,7 @@ export default function Canvas() {
       }
       if (
         ref.kind !== "Deployment" &&
-        ref.kind !== "ReplicaSet" &&
-        ref.kind !== "StatefulSet"
+        ref.kind !== "ReplicaSet"
       )
         return false;
       const node = nodes.find(
@@ -1274,13 +1152,7 @@ export default function Canvas() {
         (n) =>
           n.id !== selectedNode?.id &&
           n.data.kind === kind &&
-          n.data.name === trimmed &&
-          // A DaemonSet renders one box per hosting node — its sibling boxes
-          // share kind+name and are the SAME logical resource, never a clash.
-          !isDaemonSetSibling(n, {
-            kind: selectedNode?.data.kind ?? "",
-            name: selectedNode?.data.name ?? "",
-          }),
+          n.data.name === trimmed,
       );
       if (clash) return `A ${kind} named “${trimmed}” already exists.`;
       return "";
@@ -1521,23 +1393,7 @@ export default function Canvas() {
       (c) =>
         c.type !== "select" && c.type !== "position" && c.type !== "dimensions",
     );
-    // React Flow moves every *selected* node while dragging, and all DaemonSet
-    // sibling boxes share the selection — drop position changes for tag-along
-    // siblings so the grabbed box moves independently (identity fields are
-    // stable during a drag, so the render-scope lookup is safe).
-    let applied = changes;
-    const grabId = dragGrabIdRef.current;
-    if (grabId) {
-      const grab = nodes.find((n) => n.id === grabId) ?? null;
-      if (grab) {
-        applied = changes.filter((c) => {
-          if (c.type !== "position") return true;
-          const target = nodes.find((n) => n.id === c.id);
-          return target ? !isDaemonSetDragSibling(grab, target) : true;
-        });
-      }
-    }
-    const nextNodes = applyNodeChanges(applied, nodes) as Node<K8sNodeData>[];
+    const nextNodes = applyNodeChanges(changes, nodes) as Node<K8sNodeData>[];
     if (hasResourceChanges) {
       setCanvasNodes(nextNodes);
     } else {
@@ -1564,18 +1420,12 @@ export default function Canvas() {
   // layout would let a dragged node drag its own boundary along — the captured
   // layout is a stable constraint for the whole gesture.
   const dragLayoutRef = useRef<NsLayout | null>(null);
-  // The node id under the pointer at drag start. React Flow moves every selected
-  // node together and all DaemonSet sibling boxes share the selection, so this
-  // id is what keeps the grabbed box's drag independent (onNodesChange filters
-  // the tag-along siblings' position changes while it is set).
-  const dragGrabIdRef = useRef<string | null>(null);
 
   const onNodeDragStart = (
     _: unknown,
     node: Node<K8sNodeData>,
     draggedNodes: Node<K8sNodeData>[],
   ) => {
-    dragGrabIdRef.current = node.id;
     const moved = draggedNodes?.length ? draggedNodes : [node];
     moved.forEach((n) => dragOriginRef.current.set(n.id, { ...n.position }));
     dragLayoutRef.current = effectiveLayout;
@@ -1591,21 +1441,6 @@ export default function Canvas() {
       typeof n.style?.height === "number"
         ? n.style.height
         : FALLBACK_NODE_HEIGHT;
-    // DaemonSet boxes can only live inside their own node rect.
-    if (n.data.assignedNode !== undefined) {
-      const hostRect = layout.nodes.find(
-        (nd) => nd.name === n.data.assignedNode,
-      );
-      return hostRect
-        ? clampPositionToRect(
-            n.position.x,
-            n.position.y,
-            width,
-            height,
-            hostRect,
-          )
-        : n.position;
-    }
     if (isClusterScoped(n.data.kind)) {
       return resolveNodeCollision(
         n.position.x,
@@ -1613,7 +1448,7 @@ export default function Canvas() {
         width,
         height,
         layout.cluster,
-        [...layout.namespaces, ...layout.nodes],
+        [...layout.namespaces],
       );
     }
     const nsRect = layout.namespaces.find(
@@ -1636,13 +1471,7 @@ export default function Canvas() {
     if (nsEditMode) return;
     const layout = dragLayoutRef.current;
     if (!layout) return;
-    // Only the grabbed node moves — sibling DaemonSet boxes were never dragged,
-    // they just shared the selection (React Flow drags all selected nodes).
-    const grabId = dragGrabIdRef.current;
-    const grab = grabId ? nodes.find((n) => n.id === grabId) ?? null : null;
-    const moved = (draggedNodes?.length ? draggedNodes : [node]).filter(
-      (mn) => !isDaemonSetDragSibling(grab, mn),
-    );
+    const moved = draggedNodes?.length ? draggedNodes : [node];
     // React Flow emits onNodesChange before onNodeDrag in the same event, and
     // re-renders are batched — the render-scope `nodes` is one frame behind, so
     // clamp against the fresh store state.
@@ -1667,14 +1496,7 @@ export default function Canvas() {
     node: Node<K8sNodeData>,
     draggedNodes: Node<K8sNodeData>[],
   ) => {
-    // Sibling DaemonSet boxes share the selection but were never actually
-    // grabbed — only the box under the pointer is clamped and pinned.
-    const grabId = dragGrabIdRef.current;
-    const grab = grabId ? nodes.find((n) => n.id === grabId) ?? null : null;
-    const moved = (draggedNodes?.length ? draggedNodes : [node]).filter(
-      (mn) => !isDaemonSetDragSibling(grab, mn),
-    );
-    dragGrabIdRef.current = null;
+    const moved = draggedNodes?.length ? draggedNodes : [node];
     if (!nsEditMode) {
       const layout = dragLayoutRef.current;
       dragLayoutRef.current = null;
@@ -1720,28 +1542,14 @@ export default function Canvas() {
             )
             .map(nodeRect);
           let pos;
-          if (n.data.assignedNode !== undefined) {
-            // DaemonSet box: the drop stays inside its node rect, pushed off
-            // any resource it overlaps.
-            const hostRect = layout.nodes.find(
-              (nd) => nd.name === n.data.assignedNode,
-            );
-            pos = resolveNodeCollision(
-              clamped.x,
-              clamped.y,
-              width,
-              height,
-              hostRect ?? layout.cluster,
-              blockers,
-            );
-          } else if (isClusterScoped(n.data.kind)) {
+          if (isClusterScoped(n.data.kind)) {
             pos = resolveNodeCollision(
               clamped.x,
               clamped.y,
               width,
               height,
               layout.cluster,
-              [...blockers, ...layout.namespaces, ...layout.nodes],
+              [...blockers, ...layout.namespaces],
             );
           } else {
             const nsRect = layout.namespaces.find(
@@ -1846,9 +1654,6 @@ export default function Canvas() {
   // rectangle is dropped below the cluster. Validation is inline in the modal
   // and re-checked by the store.
   const [namespaceModalOpen, setNamespaceModalOpen] = useState(false);
-
-  // Add a canvas-only physical node rectangle (namespace editing mode).
-  const [nodeModalOpen, setNodeModalOpen] = useState(false);
 
   // Namespace awaiting cascade-delete confirmation (only opened when it has
   // resources — empty boxes are deleted immediately).
@@ -2006,16 +1811,6 @@ export default function Canvas() {
               + Namespace
             </button>
           )}
-          {(nsEditMode || nodeEditMode) && (
-            <button
-              type="button"
-              className="canvas-button"
-              onClick={() => setNodeModalOpen(true)}
-              title="Add a canvas-only physical node rectangle to the cluster"
-            >
-              + Node
-            </button>
-          )}
           <button
             type="button"
             className={`canvas-button canvas-button--nsmode${nsEditMode ? " canvas-button--active" : ""}`}
@@ -2023,7 +1818,7 @@ export default function Canvas() {
             title={
               nsEditMode
                 ? "Exit namespace editing mode (layout is saved)"
-                : "Enter namespace editing mode — drag, resize and add node and namespace boxes"
+                : "Enter namespace editing mode — drag, resize and add namespace boxes"
             }
           >
             <svg
@@ -2040,31 +1835,6 @@ export default function Canvas() {
               <rect x="13" y="13" width="8" height="8" rx="1.5" />
             </svg>
             {nsEditMode ? "Done" : "Namespaces"}
-          </button>
-          <button
-            type="button"
-            className={`canvas-button canvas-button--nsmode${nodeEditMode ? " canvas-button--active" : ""}`}
-            onClick={() => setNodeEditMode(!nodeEditMode)}
-            title={
-              nodeEditMode
-                ? "Exit node editing mode (layout is saved)"
-                : "Enter node editing mode — drag, resize and add physical node boxes"
-            }
-          >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <rect x="2.5" y="5" width="19" height="6" rx="1.5" />
-              <rect x="2.5" y="13" width="19" height="6" rx="1.5" />
-              <line x1="7" y1="8" x2="7" y2="8" />
-              <line x1="7" y1="16" x2="7" y2="16" />
-            </svg>
-            {nodeEditMode ? "Done" : "Nodes"}
           </button>
         </div>
       </div>
@@ -2203,8 +1973,8 @@ export default function Canvas() {
                 </h3>
                 <p className="canvas-empty-state__desc">
                   Start with your cluster layout: add a namespace to group your
-                  resources, and physical nodes to host them. Then add resources
-                  using the toolbar above or paste a YAML manifest in the editor.
+                  resources. Then add resources using the toolbar above or paste
+                  a YAML manifest in the editor.
                 </p>
                 <div className="canvas-empty-state__actions">
                   <button
@@ -2213,13 +1983,6 @@ export default function Canvas() {
                     onClick={() => setNamespaceModalOpen(true)}
                   >
                     + Add Namespace
-                  </button>
-                  <button
-                    type="button"
-                    className="canvas-button"
-                    onClick={() => setNodeModalOpen(true)}
-                  >
-                    + Add Node
                   </button>
                 </div>
               </div>
@@ -2359,15 +2122,6 @@ export default function Canvas() {
                           ns/{inspectorData.namespace}
                         </div>
                       )}
-                    {selectedResourceNode &&
-                      !isClusterScoped(inspectorData.kind) && (
-                        <div
-                          className="inspector-hero__node"
-                          title="Derived from the node rectangle the resource's top-level owner sits in — canvas-only, not part of the manifest"
-                        >
-                          node: {selectedResourceNode}
-                        </div>
-                      )}
                   </div>
                 </div>
 
@@ -2435,15 +2189,6 @@ export default function Canvas() {
                             k: "Namespace",
                             v: inspectorData.namespace,
                           });
-                        if (
-                          inspectorData.kind === "Pod" &&
-                          typeof selectedNode.data.assignedNode === "string"
-                        ) {
-                          rows.push({
-                            k: "Node",
-                            v: selectedNode.data.assignedNode,
-                          });
-                        }
                         if (
                           inspectorData.kind === "ReplicaSet" &&
                           typeof spec.replicas === "number"
@@ -2655,11 +2400,10 @@ export default function Canvas() {
                   </div>
                 )}
 
-                {/* ── Section: Scaling (Deployment / ReplicaSet / StatefulSet) ── */}
+                {/* ── Section: Scaling (Deployment / ReplicaSet) ── */}
                 {!isManaged &&
                   (draftKind === "Deployment" ||
-                    draftKind === "ReplicaSet" ||
-                    draftKind === "StatefulSet") && (
+                    draftKind === "ReplicaSet") && (
                     <div className="inspector-section">
                       <div className="inspector-section__header">
                         <svg
@@ -2773,379 +2517,6 @@ export default function Canvas() {
                       </div>
                     </div>
                   )}
-
-                {/* ── Section: StatefulSet (container/volume claims) ── */}
-                {!isManaged && draftKind === "StatefulSet" && (
-                  <div className="inspector-section">
-                    <div className="inspector-section__header">
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <rect x="3" y="3" width="18" height="8" rx="2" />
-                        <path d="M7 3v8M12 3v8M17 3v8" />
-                        <rect x="3" y="13" width="18" height="8" rx="2" />
-                        <path d="M7 13v8M12 13v8M17 13v8" />
-                      </svg>
-                      StatefulSet
-                    </div>
-                    <div className="inspector-section__body">
-                      <div className="inspector-field">
-                        <label className="inspector-field__label">
-                          Container Name
-                        </label>
-                        <input
-                          className="inspector-field__input"
-                          value={String(
-                            draftSpec?.template?.spec?.containers?.[0]?.name ??
-                              "",
-                          )}
-                          onChange={(e) =>
-                            patchDraft({
-                              spec: {
-                                ...draftSpec,
-                                template: {
-                                  ...(draftSpec?.template ?? {}),
-                                  spec: {
-                                    ...(draftSpec?.template?.spec ?? {}),
-                                    containers: [
-                                      {
-                                        ...(draftSpec?.template?.spec
-                                          ?.containers?.[0] ?? {}),
-                                        name: e.target.value,
-                                      },
-                                    ],
-                                  },
-                                },
-                              },
-                            })
-                          }
-                          placeholder="app"
-                        />
-                      </div>
-                      <div className="inspector-field">
-                        <label className="inspector-field__label">Image</label>
-                        <input
-                          className="inspector-field__input"
-                          value={String(
-                            draftSpec?.template?.spec?.containers?.[0]?.image ??
-                              "",
-                          )}
-                          onChange={(e) =>
-                            patchDraft({
-                              spec: {
-                                ...draftSpec,
-                                template: {
-                                  ...(draftSpec?.template ?? {}),
-                                  spec: {
-                                    ...(draftSpec?.template?.spec ?? {}),
-                                    containers: [
-                                      {
-                                        ...(draftSpec?.template?.spec
-                                          ?.containers?.[0] ?? {}),
-                                        image: e.target.value,
-                                      },
-                                    ],
-                                  },
-                                },
-                              },
-                            })
-                          }
-                          placeholder="nginx:latest"
-                        />
-                      </div>
-                      <div className="inspector-field">
-                        <label className="inspector-field__label">
-                          Volume claims
-                        </label>
-                        {(() => {
-                          const templates: any[] = Array.isArray(
-                            draftSpec?.volumeClaimTemplates,
-                          )
-                            ? draftSpec.volumeClaimTemplates
-                            : [];
-                          if (templates.length === 0) {
-                            return (
-                              <span className="inspector-field__hint">
-                                No volume claim templates — add one under
-                                spec.volumeClaimTemplates in the YAML.
-                              </span>
-                            );
-                          }
-                          return (
-                            <div className="inspector-rel-list">
-                              {templates.map((template, idx) => {
-                                const claimName =
-                                  typeof template?.metadata?.name === "string"
-                                    ? template.metadata.name
-                                    : "";
-                                const storage =
-                                  template?.spec?.resources?.requests?.storage;
-                                const accessMode = Array.isArray(
-                                  template?.spec?.accessModes,
-                                )
-                                  ? template.spec.accessModes[0]
-                                  : undefined;
-                                const exists =
-                                  !!claimName &&
-                                  nodes.some(
-                                    (n) =>
-                                      n.data.kind === "PersistentVolumeClaim" &&
-                                      n.data.name === claimName,
-                                  );
-                                return (
-                                  <button
-                                    key={`${claimName}:${idx}`}
-                                    type="button"
-                                    className="inspector-rel-item inspector-rel-item--link"
-                                    title={
-                                      exists
-                                        ? `Select PVC ${claimName}`
-                                        : `PVC ${claimName} is declared but not on the canvas`
-                                    }
-                                    onClick={() =>
-                                      claimName &&
-                                      setSelectedResource({
-                                        kind: "PersistentVolumeClaim",
-                                        name: claimName,
-                                      })
-                                    }
-                                  >
-                                    <span
-                                      className="inspector-rel-arrow inspector-rel-arrow--outgoing"
-                                      title="claims"
-                                    >
-                                      ▤
-                                    </span>
-                                    <div className="inspector-rel-info">
-                                      <span className="inspector-rel-kind">
-                                        PersistentVolumeClaim
-                                      </span>
-                                      <span className="inspector-rel-name">
-                                        {claimName || "(unnamed template)"}
-                                      </span>
-                                    </div>
-                                    {storage && (
-                                      <span className="inspector-rel-badge">
-                                        {String(storage)}
-                                      </span>
-                                    )}
-                                    {accessMode && (
-                                      <span className="inspector-rel-badge">
-                                        {String(accessMode)}
-                                      </span>
-                                    )}
-                                    {!exists && (
-                                      <span className="inspector-rel-badge">
-                                        missing
-                                      </span>
-                                    )}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          );
-                        })()}
-                        <span className="inspector-field__hint">
-                          Declared in spec.volumeClaimTemplates — the template
-                          name links to a PVC of the same name on the canvas
-                          (&quot;claims&quot; edge). Editable in the YAML.
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* ── Section: DaemonSet (selector/container/nodes) ── */}
-                {!isManaged && draftKind === "DaemonSet" && (
-                  <div className="inspector-section">
-                    <div className="inspector-section__header">
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <line x1="3" y1="6" x2="21" y2="6" />
-                        <circle cx="7" cy="12" r="2.5" />
-                        <circle cx="12" cy="16" r="2.5" />
-                        <circle cx="17" cy="12" r="2.5" />
-                      </svg>
-                      DaemonSet
-                    </div>
-                    <div className="inspector-section__body">
-                      <div className="inspector-field">
-                        <label className="inspector-field__label">
-                          Selector (app=)
-                        </label>
-                        {(() => {
-                          const current =
-                            (draftSpec?.selector?.matchLabels?.app as
-                              | string
-                              | undefined) ?? "";
-                          const ownName =
-                            nameDraft.trim() ||
-                            (selectedNode.data.name as string);
-                          const known = selectorOptions.some(
-                            (o) => o.value === current,
-                          );
-                          return (
-                            <select
-                              className="inspector-field__input inspector-field__input--select"
-                              value={current}
-                              onChange={(e) =>
-                                patchDraft({
-                                  spec: {
-                                    ...draftSpec,
-                                    selector: e.target.value
-                                      ? {
-                                          ...(draftSpec?.selector ?? {}),
-                                          matchLabels: {
-                                            app: e.target.value,
-                                          },
-                                        }
-                                      : undefined,
-                                  },
-                                })
-                              }
-                            >
-                              <option value="">(no selector)</option>
-                              {selectorOptions.map((o) => (
-                                <option key={o.value} value={o.value}>
-                                  {o.value} — {o.owners}
-                                </option>
-                              ))}
-                              {!selectorOptions.some(
-                                (o) => o.value === ownName,
-                              ) &&
-                                current !== ownName && (
-                                  <option value={ownName}>
-                                    {ownName} (create new label)
-                                  </option>
-                                )}
-                              {current && !known && (
-                                <option value={current}>
-                                  {current} (no match on canvas)
-                                </option>
-                              )}
-                            </select>
-                          );
-                        })()}
-                        <span className="inspector-field__hint">
-                          One Pod is placed on every node with matching labels —
-                          the Pods are nested inside this DaemonSet.
-                        </span>
-                      </div>
-                      <div className="inspector-field">
-                        <label className="inspector-field__label">
-                          Container Name
-                        </label>
-                        <input
-                          className="inspector-field__input"
-                          value={String(
-                            draftSpec?.template?.spec?.containers?.[0]?.name ??
-                              "",
-                          )}
-                          onChange={(e) =>
-                            patchDraft({
-                              spec: {
-                                ...draftSpec,
-                                template: {
-                                  ...(draftSpec?.template ?? {}),
-                                  spec: {
-                                    ...(draftSpec?.template?.spec ?? {}),
-                                    containers: [
-                                      {
-                                        ...(draftSpec?.template?.spec
-                                          ?.containers?.[0] ?? {}),
-                                        name: e.target.value,
-                                      },
-                                    ],
-                                  },
-                                },
-                              },
-                            })
-                          }
-                          placeholder="app"
-                        />
-                      </div>
-                      <div className="inspector-field">
-                        <label className="inspector-field__label">Image</label>
-                        <input
-                          className="inspector-field__input"
-                          value={String(
-                            draftSpec?.template?.spec?.containers?.[0]?.image ??
-                              "",
-                          )}
-                          onChange={(e) =>
-                            patchDraft({
-                              spec: {
-                                ...draftSpec,
-                                template: {
-                                  ...(draftSpec?.template ?? {}),
-                                  spec: {
-                                    ...(draftSpec?.template?.spec ?? {}),
-                                    containers: [
-                                      {
-                                        ...(draftSpec?.template?.spec
-                                          ?.containers?.[0] ?? {}),
-                                        image: e.target.value,
-                                      },
-                                    ],
-                                  },
-                                },
-                              },
-                            })
-                          }
-                          placeholder="nginx:latest"
-                        />
-                      </div>
-                      <div className="inspector-field">
-                        <label className="inspector-field__label">Nodes</label>
-                        <div className="inspector-rel-list">
-                          {daemonSetNodeNames.length === 0 ? (
-                            <span className="inspector-field__hint">
-                              This namespace covers no physical nodes — add
-                              Nodes over it (or create this DaemonSet with a
-                              node count) and one Pod will run on each.
-                            </span>
-                          ) : (
-                            daemonSetNodeNames.map((nodeName) => (
-                              <div
-                                key={nodeName}
-                                className="inspector-rel-item"
-                              >
-                                <span className="inspector-rel-info">
-                                  <span className="inspector-rel-kind">
-                                    Node
-                                  </span>
-                                  <span className="inspector-rel-name">
-                                    {nodeName}
-                                  </span>
-                                </span>
-                                <span className="inspector-rel-badge">
-                                  1 pod
-                                </span>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                        <span className="inspector-field__hint">
-                          A DaemonSet runs exactly one Pod on every node rect
-                          its namespace covers (canvas-only node rects). Each
-                          Pod is nested inside its own DaemonSet box on that
-                          node; the count follows the node/namespace geometry.
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
 
                 {/* ── Section: Job (parallelism/completions/restart) ── */}
                 {!isManaged && draftKind === "Job" && (
@@ -3706,8 +3077,6 @@ export default function Canvas() {
                 {!isManaged &&
                   (inspectorData.kind === "Pod" ||
                     inspectorData.kind === "Deployment" ||
-                    inspectorData.kind === "DaemonSet" ||
-                    inspectorData.kind === "StatefulSet" ||
                     inspectorData.kind === "ReplicaSet" ||
                     inspectorData.kind === "Job" ||
                     inspectorData.kind === "CronJob") &&
@@ -3795,8 +3164,6 @@ export default function Canvas() {
                 {!isManaged &&
                   (inspectorData.kind === "Pod" ||
                     inspectorData.kind === "Deployment" ||
-                    inspectorData.kind === "DaemonSet" ||
-                    inspectorData.kind === "StatefulSet" ||
                     inspectorData.kind === "ReplicaSet" ||
                     inspectorData.kind === "Job" ||
                     inspectorData.kind === "CronJob") &&
@@ -3885,8 +3252,6 @@ export default function Canvas() {
                 {!isManaged &&
                   (inspectorData.kind === "Pod" ||
                     inspectorData.kind === "Deployment" ||
-                    inspectorData.kind === "DaemonSet" ||
-                    inspectorData.kind === "StatefulSet" ||
                     inspectorData.kind === "ReplicaSet" ||
                     inspectorData.kind === "Job" ||
                     inspectorData.kind === "CronJob") &&
@@ -4973,8 +4338,6 @@ export default function Canvas() {
                                               e.target.value.split("|")[0];
                                             return targetKind ===
                                               "Deployment" ||
-                                              targetKind === "DaemonSet" ||
-                                              targetKind === "StatefulSet" ||
                                               targetKind === "ReplicaSet"
                                               ? "apps/v1"
                                               : targetKind === "Job" ||
@@ -5008,9 +4371,8 @@ export default function Canvas() {
                           );
                         })()}
                         <span className="inspector-field__hint">
-                          Lists the Deployments, DaemonSets, StatefulSets,
-                          ReplicaSets, Pods, Jobs and CronJobs currently on the
-                          canvas.
+                          Lists the Deployments, ReplicaSets, Pods, Jobs and
+                          CronJobs currently on the canvas.
                         </span>
                       </div>
                       <div className="inspector-field">
@@ -5467,8 +4829,6 @@ export default function Canvas() {
 
                 {/* ── Section: Vertical scaled by (VPA targets) ── */}
                 {(inspectorData.kind === "Deployment" ||
-                  inspectorData.kind === "DaemonSet" ||
-                  inspectorData.kind === "StatefulSet" ||
                   inspectorData.kind === "ReplicaSet" ||
                   inspectorData.kind === "Pod" ||
                   inspectorData.kind === "Job" ||
@@ -6203,9 +5563,6 @@ export default function Canvas() {
       {namespaceModalOpen && (
         <NamespaceModal onClose={() => setNamespaceModalOpen(false)} />
       )}
-
-      {/* New-physical-node prompt (namespace editing mode) */}
-      {nodeModalOpen && <NodeModal onClose={() => setNodeModalOpen(false)} />}
 
       {/* Cascade-delete confirmation (non-empty namespace) */}
       {deleteNsTarget && (

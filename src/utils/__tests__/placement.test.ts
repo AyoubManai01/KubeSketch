@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Node } from '@xyflow/react';
-import { repairPlacements, placeNewNamespaceRect, placeNewNodeRect } from '../placement';
+import { repairPlacements, placeNewNamespaceRect } from '../placement';
 import { buildGraph, type K8sNodeData } from '../buildGraph';
 import type { NsLayout } from '../teachingFrame';
 import type { K8sResource, SupportedKind } from '../../types/types';
@@ -37,7 +37,6 @@ describe('placeNewNamespaceRect', () => {
     it('places a new namespace rect inside the cluster at the preferred spot', () => {
         const layout: NsLayout = {
             cluster: { x: 0, y: 0, width: 1200, height: 900 },
-            nodes: [],
             namespaces: [{ name: 'a', x: 100, y: 100, width: 300, height: 200 }],
         };
         const { rect, cluster } = placeNewNamespaceRect(layout, 320, 240, { x: 40, y: 40 });
@@ -52,7 +51,6 @@ describe('placeNewNamespaceRect', () => {
         // The preferred spot overlaps ns 'a'; the pocket to its right is free.
         const layout: NsLayout = {
             cluster: { x: 0, y: 0, width: 1200, height: 900 },
-            nodes: [],
             namespaces: [{ name: 'a', x: 100, y: 100, width: 700, height: 700 }],
         };
         const { rect, cluster } = placeNewNamespaceRect(layout, 320, 240, { x: 150, y: 150 });
@@ -71,7 +69,6 @@ describe('placeNewNamespaceRect', () => {
     it('grows the cluster when there is no free space inside', () => {
         const layout: NsLayout = {
             cluster: { x: 0, y: 0, width: 400, height: 300 },
-            nodes: [],
             namespaces: [{ name: 'a', x: 10, y: 10, width: 380, height: 280 }],
         };
         const { rect, cluster } = placeNewNamespaceRect(layout, 320, 240, { x: 20, y: 20 });
@@ -89,7 +86,6 @@ describe('repairPlacements', () => {
     it('keeps an already valid auto-placed node untouched (idempotent)', () => {
         const layout: NsLayout = {
             cluster: { x: 0, y: 0, width: 1200, height: 900 },
-            nodes: [],
             namespaces: [{ name: 'default', x: 100, y: 100, width: 500, height: 500 }],
         };
         const nodes = [node('ConfigMap', 'cm', 150, 150)];
@@ -101,7 +97,6 @@ describe('repairPlacements', () => {
     it('pulls an auto-placed node that landed outside its namespace box back inside', () => {
         const layout: NsLayout = {
             cluster: { x: 0, y: 0, width: 1200, height: 900 },
-            nodes: [],
             namespaces: [{ name: 'default', x: 100, y: 100, width: 500, height: 500 }],
         };
         // Lane position (x=50, y=320) is outside the box (box starts at x=100).
@@ -118,7 +113,6 @@ describe('repairPlacements', () => {
     it('moves an auto-placed node off a pinned resource inside the box', () => {
         const layout: NsLayout = {
             cluster: { x: 0, y: 0, width: 1200, height: 900 },
-            nodes: [],
             namespaces: [{ name: 'default', x: 100, y: 100, width: 700, height: 700 }],
         };
         // Pinned ConfigMap at (100, 175); auto Deployment lands on top of it.
@@ -135,7 +129,6 @@ describe('repairPlacements', () => {
     it('grows a box too small for the new resource so it fits inside', () => {
         const layout: NsLayout = {
             cluster: { x: 0, y: 0, width: 1200, height: 900 },
-            nodes: [],
             namespaces: [{ name: 'default', x: 100, y: 100, width: 120, height: 90 }],
         };
         const nodes = [node('ConfigMap', 'cm', 50, 680)];
@@ -154,7 +147,6 @@ describe('repairPlacements', () => {
     it('pushes a sibling namespace (and its resources) down when growth is blocked', () => {
         const layout: NsLayout = {
             cluster: { x: 0, y: 0, width: 1600, height: 1200 },
-            nodes: [],
             namespaces: [
                 { name: 'a', x: 100, y: 100, width: 300, height: 100 },
                 { name: 'b', x: 100, y: 320, width: 300, height: 200 },
@@ -181,7 +173,6 @@ describe('repairPlacements', () => {
     it('keeps cluster-scoped resources out of namespace boxes and inside the cluster', () => {
         const layout: NsLayout = {
             cluster: { x: 0, y: 0, width: 1300, height: 900 },
-            nodes: [],
             namespaces: [{ name: 'default', x: 100, y: 100, width: 500, height: 500 }],
         };
         // A PV placed inside the namespace box must be pushed out — it belongs
@@ -220,7 +211,6 @@ describe('repairPlacements', () => {
     it('places a new namespace’s first resource in free cluster space, not inside another namespace', () => {
         const layout: NsLayout = {
             cluster: { x: 0, y: 0, width: 1600, height: 1200 },
-            nodes: [],
             namespaces: [{ name: 'default', x: 100, y: 100, width: 500, height: 500 }],
         };
         // Lane position lands inside ns 'default'; the node belongs to 'team-b'.
@@ -236,7 +226,6 @@ describe('repairPlacements', () => {
     it('never leaves a rect-less namespace’s resource outside the cluster', () => {
         const layout: NsLayout = {
             cluster: { x: 0, y: 0, width: 800, height: 600 },
-            nodes: [],
             namespaces: [{ name: 'default', x: 100, y: 100, width: 400, height: 400 }],
         };
         // Route-lane position (y=1640) is far below the cluster bottom (600).
@@ -260,7 +249,6 @@ describe('repairPlacements', () => {
         // inside the cluster (cluster-edge candidates), not below it.
         const layout: NsLayout = {
             cluster: { x: 600, y: 400, width: 800, height: 600 },
-            nodes: [],
             namespaces: [],
         };
         const nodes = [node('Deployment', 'web', 50, 320, 220, 150, 'team-b')];
@@ -294,7 +282,6 @@ describe('repairPlacements', () => {
         };
         const layout: NsLayout = {
             cluster: { x: 0, y: 0, width: 1600, height: 1400 },
-            nodes: [],
             namespaces: [
                 { name: 'ops', x: 300, y: 300, width: 500, height: 500 },
                 { name: 'default', x: 100, y: 100, width: 400, height: 400 },
@@ -333,76 +320,6 @@ describe('repairPlacements', () => {
         }
     });
 
-    it('repairs the DaemonSet fallback card (no hosting nodes) into its namespace', () => {
-        const ds: K8sResource = {
-            apiVersion: 'apps/v1',
-            kind: 'DaemonSet',
-            metadata: { name: 'collector', namespace: 'ops' },
-            spec: {
-                selector: { matchLabels: { app: 'collector' } },
-                template: {
-                    metadata: { labels: { app: 'collector' } },
-                    spec: { containers: [{ name: 'app', image: 'fluentd:latest' }] },
-                },
-            },
-        };
-        const layout: NsLayout = {
-            cluster: { x: 0, y: 0, width: 1600, height: 1400 },
-            nodes: [{ name: 'worker-1', x: 700, y: 100, width: 300, height: 200 }],
-            namespaces: [
-                { name: 'ops', x: 300, y: 300, width: 500, height: 500 },
-                { name: 'default', x: 100, y: 100, width: 400, height: 400 },
-            ],
-        };
-        const { nodes: built, autoPlacedIds } = buildGraph([ds], [], layout);
-        expect(autoPlacedIds.size).toBeGreaterThan(0); // the fallback card is auto-placed
-        const result = repairPlacements(built, autoPlacedIds, layout);
-        const dsNode = result.nodes.find((n) => n.data.kind === 'DaemonSet')!;
-        expect(dsNode.data.assignedNode).toBeUndefined();
-        expect(dsNode.position.x).toBeGreaterThanOrEqual(300);
-        expect(dsNode.position.y).toBeGreaterThanOrEqual(300);
-        // No hosting nodes → no per-node boxes or Pods.
-        expect(result.nodes.filter((n) => n.data.managedBy?.kind === 'DaemonSet')).toHaveLength(0);
-    });
-
-    it('never repairs DaemonSet boxes (they are geometry-driven inside their node rects)', () => {
-        const ds: K8sResource = {
-            apiVersion: 'apps/v1',
-            kind: 'DaemonSet',
-            metadata: { name: 'collector', namespace: 'default' },
-            spec: {
-                selector: { matchLabels: { app: 'collector' } },
-                template: {
-                    metadata: { labels: { app: 'collector' } },
-                    spec: { containers: [{ name: 'app', image: 'fluentd:latest' }] },
-                },
-            },
-        };
-        const layout: NsLayout = {
-            cluster: { x: 0, y: 0, width: 1600, height: 1400 },
-            nodes: [
-                { name: 'worker-1', x: 300, y: 300, width: 340, height: 280 },
-                { name: 'worker-2', x: 700, y: 300, width: 340, height: 280 },
-            ],
-            namespaces: [
-                { name: 'default', x: 100, y: 100, width: 1200, height: 800 },
-            ],
-        };
-        const { nodes: built, autoPlacedIds } = buildGraph([ds], [], layout);
-        const boxes = built.filter((n) => n.data.kind === 'DaemonSet');
-        expect(boxes).toHaveLength(2);
-        // Boxes are never auto-placed/repaired.
-        boxes.forEach((box) => expect(autoPlacedIds.has(box.id)).toBe(false));
-        const result = repairPlacements(built, autoPlacedIds, layout);
-        result.nodes
-            .filter((n) => n.data.kind === 'DaemonSet')
-            .forEach((box) => {
-                const host = layout.nodes.find((nd) => nd.name === box.data.assignedNode)!;
-                expect(box.position.x).toBeGreaterThanOrEqual(host.x);
-                expect(box.position.y).toBeGreaterThanOrEqual(host.y);
-            });
-    });
-
     it('does not treat previously-positioned (pinned) nodes as repairable', () => {
         const prev = [node('Deployment', 'web', 500, 300, 220, 150)];
         const { autoPlacedIds } = buildGraph([prev[0].data.resource], prev);
@@ -410,80 +327,3 @@ describe('repairPlacements', () => {
     });
 });
 
-describe('placeNewNodeRect', () => {
-    it('places a new node rect inside the cluster, avoiding node AND namespace rects', () => {
-        const layout: NsLayout = {
-            cluster: { x: 0, y: 0, width: 1200, height: 900 },
-            nodes: [{ name: 'n1', x: 100, y: 100, width: 500, height: 400 }],
-            namespaces: [{ name: 'default', x: 100, y: 520, width: 300, height: 200 }],
-        };
-        const { rect, cluster } = placeNewNodeRect(layout, 480, 360, { x: 40, y: 40 });
-        const noOverlap = (r: { x: number; y: number; width: number; height: number }) =>
-            !(
-                rect.x < r.x + r.width &&
-                rect.x + 480 > r.x &&
-                rect.y < r.y + r.height &&
-                rect.y + 360 > r.y
-            );
-        expect(noOverlap(layout.nodes[0])).toBe(true);
-        expect(noOverlap(layout.namespaces[0])).toBe(true);
-        expect(rect.x + 480).toBeLessThanOrEqual(1200);
-        expect(rect.y + 360).toBeLessThanOrEqual(900);
-        expect(cluster).toEqual(layout.cluster); // no growth needed
-    });
-
-    it('grows the cluster when there is no free pocket for a new node rect', () => {
-        const layout: NsLayout = {
-            cluster: { x: 0, y: 0, width: 500, height: 400 },
-            nodes: [{ name: 'n1', x: 10, y: 10, width: 480, height: 380 }],
-            namespaces: [],
-        };
-        const { rect, cluster } = placeNewNodeRect(layout, 480, 360, { x: 20, y: 20 });
-        expect(rect.x).toBeGreaterThanOrEqual(cluster.x);
-        expect(rect.y).toBeGreaterThanOrEqual(cluster.y);
-        expect(rect.x + 480).toBeLessThanOrEqual(cluster.x + cluster.width);
-        expect(rect.y + 360).toBeLessThanOrEqual(cluster.y + cluster.height);
-        expect(cluster.height).toBeGreaterThan(400); // grew to fit the appended rect
-        expect(cluster.width).toBeGreaterThanOrEqual(500); // grow-only
-    });
-});
-
-describe('repairPlacements with physical nodes', () => {
-    it('keeps cluster-scoped resources out of physical node rects too', () => {
-        const layout: NsLayout = {
-            cluster: { x: 0, y: 0, width: 1300, height: 1000 },
-            nodes: [{ name: 'worker-1', x: 100, y: 100, width: 500, height: 500 }],
-            namespaces: [{ name: 'default', x: 100, y: 100, width: 500, height: 500 }],
-        };
-        // A PV whose lane spot sits inside the node rect must be pushed out —
-        // storage infra never sits "on" a node box.
-        const pv = node('PersistentVolume', 'pv', 120, 130, 175, 124);
-        const result = repairPlacements([pv], new Set(['PersistentVolume-pv']), layout);
-        const pos = result.nodes[0].position;
-        const nodeRect = layout.nodes[0];
-        const inNode =
-            pos.x < nodeRect.x + nodeRect.width &&
-            pos.x + 175 > nodeRect.x &&
-            pos.y < nodeRect.y + nodeRect.height &&
-            pos.y + 124 > nodeRect.y;
-        expect(inNode).toBe(false);
-        expect(pos.x).toBeGreaterThanOrEqual(0);
-        expect(pos.x + 175).toBeLessThanOrEqual(1300);
-        expect(pos.y + 124).toBeLessThanOrEqual(1000);
-    });
-
-    it('grows the cluster hull over persisted node rects', () => {
-        const layout: NsLayout = {
-            // The node rect extends far past the persisted cluster's right edge.
-            cluster: { x: 0, y: 0, width: 1200, height: 900 },
-            nodes: [{ name: 'worker-1', x: 2000, y: 100, width: 400, height: 300 }],
-            namespaces: [{ name: 'default', x: 100, y: 100, width: 500, height: 500 }],
-        };
-        const nodes = [node('ConfigMap', 'cm', 150, 150)];
-        const result = repairPlacements(nodes, new Set(['ConfigMap-cm']), layout);
-        const cluster = result.nsLayout!.cluster;
-        // The cluster covers the node rect (hull expansion over node boxes).
-        expect(cluster.x + cluster.width).toBeGreaterThanOrEqual(2000 + 400 + 24);
-        expect(result.layoutChanged).toBe(true);
-    });
-});

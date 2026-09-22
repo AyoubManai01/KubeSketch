@@ -6,8 +6,6 @@ export interface K8sResource {
   apiVersion: string;
   kind:
     | 'Deployment'
-    | 'DaemonSet'
-    | 'StatefulSet'
     | 'Service'
     | 'Ingress'
     | 'Pod'
@@ -40,8 +38,6 @@ export interface K8sResource {
 /** The set of Kubernetes resource kinds supported in the canvas */
 export const SUPPORTED_KINDS = [
   'Deployment',
-  'DaemonSet',
-  'StatefulSet',
   'Service',
   'Ingress',
   'Pod',

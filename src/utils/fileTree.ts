@@ -65,7 +65,7 @@ export interface FileExplorerData {
     fileOf: Map<string, string>;
 }
 
-const WORKLOAD_KINDS: SupportedKind[] = ['Deployment', 'DaemonSet', 'StatefulSet', 'ReplicaSet', 'Pod', 'Job', 'CronJob'];
+const WORKLOAD_KINDS: SupportedKind[] = ['Deployment', 'ReplicaSet', 'Pod', 'Job', 'CronJob'];
 
 const CLUSTER_FOLDERS: Record<string, string> = {
     StorageClass: 'storage-classes',
@@ -75,8 +75,6 @@ const CLUSTER_FOLDERS: Record<string, string> = {
 
 const APP_FILE_NAMES: Record<string, string> = {
     Deployment: 'deployment.yaml',
-    DaemonSet: 'daemonset.yaml',
-    StatefulSet: 'statefulset.yaml',
     ReplicaSet: 'replicaset.yaml',
     Pod: 'pod.yaml',
     Job: 'job.yaml',
@@ -90,8 +88,6 @@ const APP_FILE_NAMES: Record<string, string> = {
 
 const FILE_ORDER = [
     'deployment.yaml',
-    'daemonset.yaml',
-    'statefulset.yaml',
     'replicaset.yaml',
     'pod.yaml',
     'job.yaml',

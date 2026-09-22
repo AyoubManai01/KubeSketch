@@ -179,9 +179,8 @@ export default function WelcomeScreen() {
                     <p className="welcome__section-text">
                         Veltra turns a Kubernetes manifest into a picture you can explore.
                         It simulates the controllers, so a Deployment shows its ReplicaSet
-                        and Pods, a CronJob its Job, a DaemonSet one Pod per node, and the
-                        frames show where workloads run: the cluster, the physical nodes
-                        and the namespaces.
+                        and Pods, a CronJob its Job, and the frames show where
+                        workloads run: the cluster and the namespaces.
                     </p>
                     <div className="welcome__preview">
                         <PreviewIcon />
@@ -310,7 +309,7 @@ const CARDS = [
     },
     {
         title: 'Learn by exploring',
-        text: 'Watch a Deployment materialize its ReplicaSet and Pods, a CronJob its Job, a DaemonSet one Pod per node.',
+        text: 'Watch a Deployment materialize its ReplicaSet and Pods, a CronJob its Job.',
         icon: <CompassIcon />,
     },
     {

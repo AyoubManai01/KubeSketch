@@ -24,19 +24,6 @@ function hpa(name: string, targetKind: string, targetName: string, min?: number,
     };
 }
 
-function statefulSet(name: string, replicas: number): K8sResource {
-    return {
-        apiVersion: 'apps/v1',
-        kind: 'StatefulSet',
-        metadata: { name },
-        spec: {
-            replicas,
-            selector: { matchLabels: { app: name } },
-            template: { metadata: { labels: { app: name } }, spec: {} },
-        },
-    };
-}
-
 describe('HorizontalPodAutoscaler replica priority', () => {
     it('clamps Deployment replicas up to minReplicas and writes back', () => {
         const resources = [dep('web', 3), hpa('web-hpa', 'Deployment', 'web', 4, 10)];
@@ -105,22 +92,6 @@ describe('HorizontalPodAutoscaler replica priority', () => {
         const overrides = applyHpaReplicaOverrides(resources);
         expect(replicasOf(resources[0])).toBe(4);
         expect(overrides[0].hpaName).toBe('hpa-a');
-    });
-
-    it('clamps a StatefulSet targeted by its own HorizontalPodAutoscaler (no ReplicaSet propagation)', () => {
-        const resources = [statefulSet('web', 2), hpa('web-hpa', 'StatefulSet', 'web', 4, 10)];
-        const overrides = applyHpaReplicaOverrides(resources);
-        expect(replicasOf(resources[0])).toBe(4);
-        expect(overrides).toHaveLength(1);
-        expect(overrides[0]).toMatchObject({ kind: 'StatefulSet', name: 'web', hpaName: 'web-hpa', reason: 'minReplicas', bound: 4 });
-        expect(overrides[0].viaDeployment).toBeUndefined();
-    });
-
-    it('clamps a StatefulSet down to maxReplicas', () => {
-        const resources = [statefulSet('web', 20), hpa('web-hpa', 'StatefulSet', 'web', 1, 10)];
-        const overrides = applyHpaReplicaOverrides(resources);
-        expect(replicasOf(resources[0])).toBe(10);
-        expect(overrides[0].reason).toBe('maxReplicas');
     });
 
     it('materializes pods at the HorizontalPodAutoscaler-forced count on the canvas', () => {

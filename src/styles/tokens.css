@@ -1,0 +1,81 @@
+/* =========================================================
+   Veltra: Global CSS Design System
+   SaaS-grade Dark-themed Visual Kubernetes IDE
+   ========================================================= */
+
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap');
+
+:root {
+  /* Obsidian Color Palette */
+  --bg-primary: #090d16;
+  --bg-secondary: #0f1422;
+  --bg-elevated: #151d30;
+  --bg-surface: #1a243a;
+  --bg-input: #0d1220;
+  
+  --border-default: rgba(255, 255, 255, 0.08);
+  --border-active: rgba(59, 130, 246, 0.5);
+  --border-muted: rgba(255, 255, 255, 0.04);
+  
+  --text-primary: #f3f4f6;
+  --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
+
+  /* Harmonized Accent Colors */
+  --accent-deployment: #10b981;  /* Emerald */
+  --accent-replicaset: #f97316;  /* Orange */
+  --accent-pod: #14b8a6;         /* Teal */
+  --accent-service: #3b82f6;     /* Blue */
+  --accent-ingress: #8b5cf6;     /* Purple */
+  --accent-pvc: #ec4899;         /* Pink */
+  --accent-pv: #84cc16;          /* Lime */
+  --accent-sc: #6366f1;          /* Indigo */
+  --accent-cronjob: #d946ef;     /* Fuchsia */
+  --accent-gatewayclass: #f43f5e; /* Rose */
+  --accent-gateway: #7c3aed;     /* Violet */
+  --accent-httproute: #0d9488;   /* Dark teal */
+  --accent-grpcroute: #65a30d;   /* Dark lime */
+  --accent-tcproute: #0284c7;    /* Dark sky */
+  --accent-tlsroute: #d97706;    /* Dark amber */
+  --accent-udproute: #16a34a;    /* Green */
+
+  /* UI Tokens */
+  --toolbar-height: 54px;
+  --panel-header-height: 42px;
+  
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.6);
+  --shadow-glow: 0 0 12px rgba(59, 130, 246, 0.15);
+
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ---------- Reset & Base ---------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+

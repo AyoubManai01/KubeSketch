@@ -1,0 +1,286 @@
+/* ---------- App Layout ---------- */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  position: relative;
+  font-family: 'Inter', sans-serif;
+}
+
+.app-brand-watermark {
+  position: absolute;
+  right: 25px;
+  bottom: 25px;
+  width: 200px;
+  height: 200px;
+  background-image: url('/Logo-nobg.png');
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  opacity: 0.02;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ---------- Top Navbar ---------- */
+.toolbar {
+  height: var(--toolbar-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-default);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1100;
+  box-shadow: var(--shadow-sm);
+}
+
+.toolbar__left,
+.toolbar__right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.toolbar__center {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.toolbar__brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.toolbar__logo {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.4));
+}
+
+.toolbar__name {
+  font-family: 'Outfit', sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  color: #ffffff;
+}
+
+.toolbar__tagline {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 2px 8px;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  margin-left: 4px;
+}
+
+/* Toolbar Buttons */
+.toolbar-btn {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all var(--transition-fast);
+}
+
+.toolbar-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.toolbar-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.toolbar-btn--danger {
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.toolbar-btn--danger:hover {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #ef4444;
+}
+
+.toolbar-btn--active {
+  background: rgba(59, 130, 246, 0.18);
+  color: #93c5fd;
+  border-color: rgba(59, 130, 246, 0.4);
+}
+
+.toolbar-btn--active:hover {
+  background: rgba(59, 130, 246, 0.26);
+  color: #bfdbfe;
+  border-color: rgba(59, 130, 246, 0.55);
+}
+
+/* Export Graph split-button (anchors the dropdown below it) */
+.toolbar-export {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.toolbar-btn--export--open {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.toolbar-btn__chevron {
+  transition: transform var(--transition-fast);
+}
+
+.toolbar-btn--export--open .toolbar-btn__chevron {
+  transform: rotate(180deg);
+}
+
+/* The export dropdown panel (mirrors .canvas-toolbar__dropdown) */
+.toolbar-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 150px;
+  z-index: 100;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  animation: modalIn 140ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+}
+
+.toolbar-dropdown__item {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  white-space: nowrap;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.toolbar-dropdown__item:hover {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.4);
+  color: var(--text-primary);
+}
+
+/* ---------- Panels Grid ---------- */
+.panels {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ---------- Panel Header System ---------- */
+.panel-header {
+  height: var(--panel-header-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-default);
+  flex-shrink: 0;
+  position: relative;
+}
+
+.panel-header__left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel-header::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent-service);
+}
+
+.panel-header__accent {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--accent-service);
+  box-shadow: 0 0 8px var(--accent-service);
+}
+
+.panel-header__title {
+  font-family: 'Outfit', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-secondary);
+}
+
+.panel-header__right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Compact panel-header action buttons (Import / Export) */
+.panel-header__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.panel-header__btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.panel-header__btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.yaml-import-input {
+  display: none;
+}
+

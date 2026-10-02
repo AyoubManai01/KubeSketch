@@ -97,7 +97,7 @@ export default function ConfigMapLinkModal() {
                         <label className="modal-field__label">
                             {pending.cm.name} → {pending.target.kind} {pending.target.name}
                             <span className="modal-field__hint">
-                                Choose how the ConfigMap is consumed — the reference is
+                                Choose how the ConfigMap is consumed; the reference is
                                 written into the {pending.target.kind}&apos;s Pod spec
                                 {pending.target.kind === 'Pod'
                                     ? ''
@@ -147,7 +147,7 @@ export default function ConfigMapLinkModal() {
                             </select>
                             {dataKeys.length === 0 && (
                                 <span className="modal-field__error">
-                                    This ConfigMap has no data keys — add some first or pick
+                                    This ConfigMap has no data keys; add some first or pick
                                     envFrom / volumes.
                                 </span>
                             )}

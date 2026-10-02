@@ -7,7 +7,7 @@ import { getSelector, getWorkloadPodLabels, isRouteKind } from './buildGraph';
  * When the user draws a connection between two nodes on the canvas we express
  * that relationship in the actual Kubernetes model (selectors, labels, ingress backends)
  * so it survives re-renders, round-trips through YAML, and shows up as a real inferred
- * relationship. Pairs with no K8s meaning return null — the store rejects them with
+ * relationship. Pairs with no K8s meaning return null; the store rejects them with
  * the message from `explainInvalidLink` instead of drawing a meaningless edge.
  *
  * Direction-agnostic: dragging Service→Pod and Pod→Service mean the same thing.
@@ -45,7 +45,7 @@ export function connectResources(
         return linkOwnership(resources, byKind('Job'), byKind('Pod'));
     }
     if (pair('CronJob', 'Job')) {
-        // A CronJob never links to an existing Job — it creates its own (shown as a
+        // A CronJob never links to an existing Job; it creates its own (shown as a
         // synthetic node). Rejected so no meaningless edge lands on the canvas.
         return null;
     }
@@ -133,7 +133,7 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
     if (a === 'PersistentVolumeClaim' || b === 'PersistentVolumeClaim') {
         const other = a === 'PersistentVolumeClaim' ? b : a;
         if (pair('PersistentVolumeClaim', 'Pod')) {
-            return 'A PVC mounts into a Pod via spec.volumes[].persistentVolumeClaim — connect it to the Pod directly.';
+            return 'A PVC mounts into a Pod via spec.volumes[].persistentVolumeClaim: connect it to the Pod directly.';
         }
         if (pair('PersistentVolumeClaim', 'PersistentVolume')) {
             return 'A PVC already binds to this PV (spec.volumeName).';
@@ -142,23 +142,23 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
             return 'A PVC already references this StorageClass (spec.storageClassName).';
         }
         if (other === 'Deployment' || other === 'ReplicaSet' || other === 'Job') {
-            return `A PVC mounts into a ${other}'s Pod template — a single-node access mode (ReadWriteOnce/ReadWriteOncePod) cannot serve every replica when the ${other} runs more than one.`;
+            return `A PVC mounts into a ${other}'s Pod template; a single-node access mode (ReadWriteOnce/ReadWriteOncePod) cannot serve every replica when the ${other} runs more than one.`;
         }
-        return `A PVC is claimed by a Pod and binds to a PV or StorageClass — it has no direct relationship with a ${other}.`;
+        return `A PVC is claimed by a Pod and binds to a PV or StorageClass; it has no direct relationship with a ${other}.`;
     }
     if (a === 'PersistentVolume' || b === 'PersistentVolume') {
         const other = a === 'PersistentVolume' ? b : a;
         if (other === 'Pod' || other === 'Deployment' || other === 'ReplicaSet' || other === 'Job') {
-            return `A ${other} cannot use a PV directly — claim it with a PVC (spec.volumeName) and mount the PVC into the Pod.`;
+            return `A ${other} cannot use a PV directly: claim it with a PVC (spec.volumeName) and mount the PVC into the Pod.`;
         }
-        return `A PV is bound by a PVC via the claim's spec.volumeName — it has no direct relationship with a ${other}.`;
+        return `A PV is bound by a PVC via the claim's spec.volumeName; it has no direct relationship with a ${other}.`;
     }
     if (a === 'StorageClass' || b === 'StorageClass') {
         const other = a === 'StorageClass' ? b : a;
         if (other === 'Pod' || other === 'Deployment' || other === 'ReplicaSet' || other === 'Job') {
-            return `A ${other} cannot reference a StorageClass directly — a PVC with spec.storageClassName provisions storage that the Pod then claims.`;
+            return `A ${other} cannot reference a StorageClass directly: a PVC with spec.storageClassName provisions storage that the Pod then claims.`;
         }
-        return `A StorageClass is referenced by a PVC via spec.storageClassName — it has no direct relationship with a ${other}.`;
+        return `A StorageClass is referenced by a PVC via spec.storageClassName; it has no direct relationship with a ${other}.`;
     }
 
     if (a === 'ConfigMap' || b === 'ConfigMap') {
@@ -168,10 +168,10 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
     if (a === 'Secret' || b === 'Secret') {
         const other = a === 'Secret' ? b : a;
         if (other === 'Service') {
-            return 'A Secret cannot be selected by a Service — Services select Pods by labels, Secrets are consumed by Pod specs or Ingress TLS.';
+            return 'A Secret cannot be selected by a Service: Services select Pods by labels, Secrets are consumed by Pod specs or Ingress TLS.';
         }
         if (other === 'Ingress') {
-            return 'An Ingress consumes a Secret via spec.tls[].secretName — drag an Ingress onto a Secret to configure TLS.';
+            return 'An Ingress consumes a Secret via spec.tls[].secretName: drag an Ingress onto a Secret to configure TLS.';
         }
         if (other === 'HorizontalPodAutoscaler') {
             return 'A HorizontalPodAutoscaler scales Deployments/ReplicaSets, not Secrets.';
@@ -179,29 +179,29 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
         return `A Secret is consumed by a Pod spec (envFrom, env.valueFrom or volumes) or referenced by Ingress TLS, not linked to a ${other} directly.`;
     }
     if (pair('Ingress', 'Pod')) {
-        return 'An Ingress cannot route to a Pod directly — route it to a Service that selects the Pod.';
+        return 'An Ingress cannot route to a Pod directly: route it to a Service that selects the Pod.';
     }
     if (pair('CronJob', 'Job')) {
-        return 'A CronJob creates its own Job on each schedule tick — it cannot be linked to an existing Job. Connect a ConfigMap/Secret/PVC to the CronJob to configure its Pod template instead.';
+        return 'A CronJob creates its own Job on each schedule tick; it cannot be linked to an existing Job. Connect a ConfigMap/Secret/PVC to the CronJob to configure its Pod template instead.';
     }
     if (pair('CronJob', 'Pod')) {
-        return 'A CronJob does not own Pods directly — it creates a Job which runs the Pods. Configure the CronJob\u2019s Job template instead.';
+        return 'A CronJob does not own Pods directly; it creates a Job which runs the Pods. Configure the CronJob\u2019s Job template instead.';
     }
     if (a === 'CronJob' || b === 'CronJob') {
         const other = a === 'CronJob' ? b : a;
         if (other === 'Service') {
-            return 'A Service selects Pods by labels — it already routes to a CronJob\u2019s Pods if their labels match.';
+            return 'A Service selects Pods by labels; it already routes to a CronJob\u2019s Pods if their labels match.';
         }
         if (other === 'Ingress') {
-            return 'An Ingress cannot route to a CronJob — expose its Pods with a Service first.';
+            return 'An Ingress cannot route to a CronJob: expose its Pods with a Service first.';
         }
         if (other === 'HorizontalPodAutoscaler') {
             return 'A HorizontalPodAutoscaler scales Deployments/ReplicaSets, not CronJobs.';
         }
-        return `A CronJob runs batch Jobs on a schedule — it has no direct relationship with a ${other}.`;
+        return `A CronJob runs batch Jobs on a schedule; it has no direct relationship with a ${other}.`;
     }
     if (pair('Ingress', 'Deployment') || pair('Ingress', 'ReplicaSet') || pair('Ingress', 'Job')) {
-        return `An Ingress cannot route to a ${a === 'Ingress' ? b : a} — expose the workload with a Service first, then route the Ingress to it.`;
+        return `An Ingress cannot route to a ${a === 'Ingress' ? b : a}: expose the workload with a Service first, then route the Ingress to it.`;
     }
     if (pair('HorizontalPodAutoscaler', 'Service') || pair('HorizontalPodAutoscaler', 'Ingress') || pair('HorizontalPodAutoscaler', 'Pod') || pair('HorizontalPodAutoscaler', 'Job')) {
         const other = a === 'HorizontalPodAutoscaler' ? b : a;
@@ -216,9 +216,9 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
             return 'A VPA right-sizes Pods, not Ingresses.';
         }
         if (other === 'HorizontalPodAutoscaler') {
-            return 'A VPA right-sizes container resource requests, while a HorizontalPodAutoscaler scales replica counts — the two are independent.';
+            return 'A VPA right-sizes container resource requests, while a HorizontalPodAutoscaler scales replica counts; the two are independent.';
         }
-        return `A VPA right-sizes a Pod's containers — it has no direct relationship with a ${other}.`;
+        return `A VPA right-sizes a Pod's containers; it has no direct relationship with a ${other}.`;
     }
     if (a === 'Gateway' || b === 'Gateway') {
         const other = (a === 'Gateway' ? b : a) as SupportedKind;
@@ -229,16 +229,16 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
             return `A ${other} already attaches to this Gateway via spec.parentRefs.`;
         }
         if (other === 'Service') {
-            return 'A Gateway listens for traffic at the namespace edge — it is not routed to Services. Connect the Service to a Route instead.';
+            return 'A Gateway listens for traffic at the namespace edge; it is not routed to Services. Connect the Service to a Route instead.';
         }
-        return `A Gateway is created from exactly one GatewayClass (spec.gatewayClassName) and is attached by Routes — it has no direct relationship with a ${other}.`;
+        return `A Gateway is created from exactly one GatewayClass (spec.gatewayClassName) and is attached by Routes; it has no direct relationship with a ${other}.`;
     }
     if (a === 'GatewayClass' || b === 'GatewayClass') {
         const other = (a === 'GatewayClass' ? b : a) as SupportedKind;
         if (other === 'Gateway') {
             return 'A GatewayClass is already referenced by this Gateway (spec.gatewayClassName).';
         }
-        return `A GatewayClass is the template a Gateway is created from (spec.gatewayClassName) — it has no direct relationship with a ${other}.`;
+        return `A GatewayClass is the template a Gateway is created from (spec.gatewayClassName); it has no direct relationship with a ${other}.`;
     }
     if (isRouteKind(a) || isRouteKind(b)) {
         const routeKind = (isRouteKind(a) ? a : b) as SupportedKind;
@@ -250,9 +250,9 @@ export function explainInvalidLink(a: SupportedKind, b: SupportedKind): string {
             return `A ${routeKind} already routes to this Service via spec.backendRefs.`;
         }
         if (other === 'Deployment' || other === 'ReplicaSet' || other === 'Pod' || other === 'Job' || other === 'CronJob') {
-            return `A ${routeKind} can only route to Services, not a ${other} — expose the workload with a Service first.`;
+            return `A ${routeKind} can only route to Services, not a ${other}: expose the workload with a Service first.`;
         }
-        return `A ${routeKind} attaches to a Gateway (spec.parentRefs) and routes to Services (spec.backendRefs) — it has no direct relationship with a ${other}.`;
+        return `A ${routeKind} attaches to a Gateway (spec.parentRefs) and routes to Services (spec.backendRefs); it has no direct relationship with a ${other}.`;
     }
     if (a === b) {
         return `Two ${a} resources have no direct relationship in Kubernetes.`;
@@ -325,7 +325,7 @@ function linkServiceToWorkload(
     let labels = getWorkloadPodLabels(workload);
 
     if (!labels || Object.keys(labels).length === 0) {
-        // Workload has no identifying labels yet — establish an app label on it
+        // Workload has no identifying labels yet: establish an app label on it
         workload = clone(workload);
         labels = { app: workload.metadata.name };
         workload.metadata.labels = { ...(workload.metadata.labels ?? {}), ...labels };
@@ -415,7 +415,7 @@ function linkHpaToWorkload(
 }
 
 /** Point the VPA's targetRef at the workload/Pod it should right-size. A VPA
- *  has exactly one target — an existing targetRef is replaced. */
+ *  has exactly one target: an existing targetRef is replaced. */
 function linkVpaToTarget(
     resources: K8sResource[],
     vpaIdx: number,
@@ -579,7 +579,7 @@ export function linkSecretToWorkload(
             if (!podSpec.volumes.some((v: any) => v?.name === volume)) {
                 podSpec.volumes.push({ name: volume, secret: { secretName } });
             } else {
-                // Volume name is taken — fall back to a unique name derived from the secret
+                // Volume name is taken: fall back to a unique name derived from the secret
                 let suffix = 2;
                 while (podSpec.volumes.some((v: any) => v?.name === `${volume}-${suffix}`)) suffix++;
                 podSpec.volumes.push({
@@ -611,7 +611,7 @@ export function linkSecretToWorkload(
 /**
  * Terminate TLS on the Ingress with the given Secret: write/merge
  * `spec.tls[].secretName` (de-duping by secret name and replacing the hosts of
- * an existing entry). `hosts` is optional — an empty list matches all hosts.
+ * an existing entry). `hosts` is optional: an empty list matches all hosts.
  */
 export function linkIngressToSecret(
     resources: K8sResource[],
@@ -690,7 +690,7 @@ export function linkPvcToWorkload(
         if (!podSpec.volumes.some((v: any) => v?.name === volume)) {
             podSpec.volumes.push({ name: volume, persistentVolumeClaim: { claimName } });
         } else {
-            // Volume name is taken — fall back to a unique name derived from the claim
+            // Volume name is taken: fall back to a unique name derived from the claim
             let suffix = 2;
             while (podSpec.volumes.some((v: any) => v?.name === `${volume}-${suffix}`)) suffix++;
             podSpec.volumes.push({
@@ -764,7 +764,7 @@ export function linkPvcToStorageClass(
 
 /**
  * Attach a Gateway to exactly one GatewayClass by writing `spec.gatewayClassName`
- * (the class is the template a Gateway is created from — 1:1, existing value replaced).
+ * (the class is the template a Gateway is created from; 1:1, existing value replaced).
  */
 export function linkGatewayToClass(
     resources: K8sResource[],
@@ -817,7 +817,7 @@ export function linkRouteToGateway(
 
 /**
  * Point a Route at a Service by writing `spec.backendRefs[]` (name + the Service's
- * first port). Routes only route to Services — one Route can target several.
+ * first port). Routes only route to Services; one Route can target several.
  */
 export function linkRouteToService(
     resources: K8sResource[],

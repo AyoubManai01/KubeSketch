@@ -34,7 +34,7 @@ export interface NamespaceRectPlacement {
 }
 
 /**
- * Place a NEW namespace rectangle inside the cluster — mirroring
+ * Place a NEW namespace rectangle inside the cluster, mirroring
  * `repairPlacements` for resources: swept into the first free pocket that
  * avoids every existing namespace rect, and when the cluster has no room the
  * rectangle is appended below its content and the cluster GROWS to contain it
@@ -122,9 +122,9 @@ export interface PlacementResult {
  *   2. a row sweep around it inside the owning box;
  *   3. an append below (then right of) the box's content, growing the box.
  *
- * Growth (persisted layouts only — pure auto layouts re-hug the nodes every
+ * Growth (persisted layouts only, pure auto layouts re-hug the nodes every
  * render): the box expands to cover the node, pushing any blocking sibling
- * namespace (and its resources) out of the way — down first, then right —
+ * namespace (and its resources) out of the way (down first, then right),
  * cascading through further collisions. The cluster box then grows to the hull
  * of everything it contains.
  */
@@ -157,7 +157,7 @@ export function repairPlacements(
           }
         : null;
     // Effective frames: the persisted copies + rects auto-derived from the STABLE
-    // nodes only — the nodes being repaired must not drag their own frame along.
+    // nodes only: the nodes being repaired must not drag their own frame along.
     // Every rect is an independent copy so growth/push mutations never touch the
     // input layout and change detection stays reliable.
     const stableNodes = topLevel.filter((n) => !autoPlacedIds.has(n.id));
@@ -256,7 +256,7 @@ export function repairPlacements(
             : layout.namespaces;
         const container = namespaced ? own : layout.cluster;
         // Rect-less namespaces (the first resource in a new box) still sweep
-        // INSIDE the cluster in persisted mode — the cluster edges give the
+        // INSIDE the cluster in persisted mode: the cluster edges give the
         // sweep its anchors instead of falling below the cluster.
         const sweepContainer = container ?? (persistedMode ? layout.cluster : null);
 
@@ -269,7 +269,7 @@ export function repairPlacements(
                 if (namespaced) {
                     if (own && !inside(r, own)) return false;
                     // A namespace with no box yet (first resource) still has to
-                    // land inside the cluster — never outside it.
+                    // land inside the cluster, never outside it.
                     if (!own && !inside(r, layout.cluster)) return false;
                 } else {
                     if (!inside(r, layout.cluster)) return false;
@@ -377,7 +377,7 @@ export function repairPlacements(
         nodeRect.x = spot.x;
         nodeRect.y = spot.y;
         moved.set(node.id, { x: spot.x, y: spot.y });
-        // Grow the owning box to cover the node — for a cluster-scoped resource
+        // Grow the owning box to cover the node: for a cluster-scoped resource
         // (or a rect-less namespace) that's the cluster box. Sibling namespaces
         // are only ever pushed when growing a namespace's OWN rect, never when
         // the cluster grows (it contains them).
@@ -394,7 +394,7 @@ export function repairPlacements(
     if (!persistedMode) return { nodes: nodesOut, nsLayout, layoutChanged: false };
 
     // Cluster box grows to the hull of every node box, namespace box and
-    // cluster-scoped resource it contains (grow-only — it never shrinks on
+    // cluster-scoped resource it contains (grow-only: it never shrinks on
     // removal).
     const sameRect = (a: Rect, b: Rect) =>
         a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;

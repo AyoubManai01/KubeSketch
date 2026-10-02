@@ -1,0 +1,354 @@
+/* ---------- Custom Node Cards (SaaS Style) ---------- */
+.k8s-node {
+  --kind-color: var(--accent-pod);
+  width: 100%;
+  height: 100%;
+  background: var(--bg-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  position: relative;
+  box-sizing: border-box;
+  transition: box-shadow var(--transition-fast), border-color var(--transition-fast);
+}
+
+.k8s-node:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow: var(--shadow-md);
+}
+
+.k8s-node.selected,
+.react-flow__node.selected > .k8s-node {
+  border-color: rgba(59, 130, 246, 0.55) !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2), var(--shadow-md) !important;
+}
+
+/* Header Section */
+.k8s-node__header {
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.k8s-node__title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.k8s-node__icon-wrapper {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.k8s-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.k8s-node__meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.k8s-node__kind-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.k8s-node__title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.k8s-node__badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Body Info Section */
+.k8s-node__body {
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.k8s-node__info-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 10px;
+}
+
+.k8s-node__info-key {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.k8s-node__info-val {
+  color: var(--text-secondary);
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 110px;
+}
+
+/* Custom Node Kind Variant Overrides */
+
+/* LEAF NODES (Pod, Service, Ingress) */
+.k8s-node--leaf {
+  border-left: 2px solid var(--kind-color);
+}
+
+.k8s-node--pod {
+  --kind-color: var(--accent-pod);
+}
+
+.k8s-node--service {
+  --kind-color: var(--accent-service);
+}
+
+.k8s-node--ingress {
+  --kind-color: var(--accent-ingress);
+}
+
+.k8s-node--persistentvolumeclaim {
+  --kind-color: var(--accent-pvc);
+}
+
+.k8s-node--persistentvolume {
+  --kind-color: var(--accent-pv);
+}
+
+.k8s-node--storageclass {
+  --kind-color: var(--accent-sc);
+}
+
+.k8s-node--cronjob {
+  --kind-color: var(--accent-cronjob);
+}
+
+.k8s-node--gatewayclass {
+  --kind-color: var(--accent-gatewayclass);
+}
+
+.k8s-node--gateway {
+  --kind-color: var(--accent-gateway);
+}
+
+.k8s-node--httproute {
+  --kind-color: var(--accent-httproute);
+}
+
+.k8s-node--grpcroute {
+  --kind-color: var(--accent-grpcroute);
+}
+
+.k8s-node--tcproute {
+  --kind-color: var(--accent-tcproute);
+}
+
+.k8s-node--tlsroute {
+  --kind-color: var(--accent-tlsroute);
+}
+
+.k8s-node--udproute {
+  --kind-color: var(--accent-udproute);
+}
+
+/* CONTAINER NODES (Deployment, ReplicaSet) */
+.k8s-node--container {
+  background: rgba(15, 20, 32, 0.35);
+  backdrop-filter: blur(8px);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+}
+
+.k8s-node--container:hover {
+  box-shadow: var(--shadow-lg);
+}
+
+/* Deployment Container */
+.k8s-node--deployment {
+  --kind-color: var(--accent-deployment);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  background: rgba(16, 185, 129, 0.015);
+}
+
+.k8s-node--deployment:hover {
+  border-color: rgba(16, 185, 129, 0.5);
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.08);
+}
+
+.k8s-node--deployment .k8s-node__header {
+  border-bottom: 1px dashed rgba(16, 185, 129, 0.15);
+}
+
+/* ReplicaSet Container (Nested) */
+.k8s-node--replicaset {
+  --kind-color: var(--accent-replicaset);
+  border: 1px solid rgba(249, 115, 22, 0.22);
+  background: rgba(249, 115, 22, 0.01);
+  border-radius: var(--radius-md);
+}
+
+.k8s-node--replicaset:hover {
+  border-color: rgba(249, 115, 22, 0.45);
+  box-shadow: 0 0 16px rgba(249, 115, 22, 0.06);
+}
+
+.k8s-node--replicaset .k8s-node__header {
+  border-bottom: 1px dashed rgba(249, 115, 22, 0.12);
+}
+
+/* Dotted Container Background overlay for a high-end designer look */
+.k8s-node__container-grid-overlay {
+  position: absolute;
+  inset: 45px 0 0 0;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 0);
+  background-size: 12px 12px;
+  pointer-events: none;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+/* Drag handles styling */
+.k8s-node__drag-handle {
+  cursor: grab;
+}
+
+.k8s-node__drag-handle:active {
+  cursor: grabbing;
+}
+
+/* ---------- React Flow Handles ---------- */
+.k8s-handle {
+  width: 10px !important;
+  height: 10px !important;
+  background: var(--bg-surface) !important;
+  border: 2px solid var(--kind-color) !important;
+  border-radius: 50% !important;
+  opacity: 0.9;
+  transition: transform var(--transition-fast), background var(--transition-fast);
+}
+
+.k8s-handle:hover {
+  transform: scale(1.3);
+  background: var(--kind-color) !important;
+}
+
+.k8s-handle-target {
+  top: -5px !important;
+}
+
+.k8s-handle-source {
+  bottom: -5px !important;
+}
+
+/* ---------- Connections & Edges ---------- */
+.react-flow__edge-path {
+  transition: stroke-width var(--transition-fast);
+}
+
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke-width: 3.2px !important;
+}
+
+/* ---------- Legends ---------- */
+.canvas-legend {
+  display: flex;
+  gap: 12px;
+  background: rgba(15, 20, 32, 0.85);
+  border: 1px solid var(--border-default);
+  border-radius: 99px;
+  padding: 6px 14px;
+  backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-sm);
+}
+
+.canvas-legend__item {
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.canvas-legend__item::before {
+  content: '';
+  flex-shrink: 0;
+}
+
+/* Ownership = containment: a box inside a box */
+.canvas-legend__item--own::before {
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--text-muted);
+  border-radius: 2px;
+  box-shadow: inset 2px 2px 0 0 rgba(148, 163, 184, 0.55);
+}
+
+/* Traffic edges: colored lines */
+.canvas-legend__item--svc::before,
+.canvas-legend__item--ing::before,
+.canvas-legend__item--hpa::before,
+.canvas-legend__item--vpa::before,
+.canvas-legend__item--cm::before,
+.canvas-legend__item--pvc::before,
+.canvas-legend__item--pv::before,
+.canvas-legend__item--sc::before,
+.canvas-legend__item--secret::before,
+.canvas-legend__item--tls::before {
+  width: 14px;
+  height: 2px;
+  border-radius: 2px;
+}
+.canvas-legend__item--svc::before { background: #60a5fa; }
+.canvas-legend__item--ing::before { background: #a78bfa; }
+.canvas-legend__item--hpa::before { background: #f59e0b; }
+.canvas-legend__item--vpa::before { background: #0ea5e9; }
+.canvas-legend__item--cm::before { background: #06b6d4; }
+.canvas-legend__item--pvc::before { background: #ec4899; }
+.canvas-legend__item--pv::before { background: #84cc16; }
+.canvas-legend__item--sc::before { background: #6366f1; }
+.canvas-legend__item--secret::before { background: #dc2626; }
+.canvas-legend__item--tls::before { background: #eab308; }
+
+/* Managed (controller-created) resources: dashed box */
+.canvas-legend__item--auto::before {
+  width: 9px;
+  height: 9px;
+  border: 1px dashed var(--text-muted);
+  border-radius: 2px;
+}
+

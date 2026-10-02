@@ -11,7 +11,7 @@ interface Props {
 
 /**
  * Prompt for creating a new namespace rectangle (namespace editing mode). A modal
- * like the resource creation prompts — inline validation for empty/duplicate
+ * like the resource creation prompts: inline validation for empty/duplicate
  * names, and a default-size rectangle placed inside the cluster on confirm
  * (growing the cluster when there is no room).
  */
@@ -44,7 +44,7 @@ export default function NamespaceModal({ onClose, onCreated }: Props) {
     useEffect(() => {
         inputRef.current?.focus();
         // Capture-phase + stopImmediatePropagation: when this modal is stacked
-        // above a creation modal, Escape closes only this one — the underlying
+        // above a creation modal, Escape closes only this one; the underlying
         // modal's own document-level Escape listener never fires.
         const onKey = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
@@ -114,7 +114,7 @@ export default function NamespaceModal({ onClose, onCreated }: Props) {
                             Namespace name
                             <span className="modal-field__hint">
                                 An empty rectangle is added inside the cluster (the
-                                cluster grows when there's no room) — drag resources
+                                cluster grows when there's no room); drag resources
                                 onto it to assign them.
                             </span>
                         </label>

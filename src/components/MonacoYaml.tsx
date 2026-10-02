@@ -18,7 +18,7 @@ interface MonacoYamlProps {
 /**
  * Reusable Monaco YAML editor: controlled value, error badge/banner, and a
  * whole-line highlight for the selected resource (scoped to whatever text
- * `value` holds — the full manifest or a single virtual file).
+ * `value` holds, the full manifest or a single virtual file).
  */
 export default function MonacoYaml({
     value,

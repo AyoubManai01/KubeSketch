@@ -1,185 +1,17 @@
-import { memo } from 'react';
+import { cloneElement, memo, type ReactElement, type ReactNode } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { K8sNodeData } from '../utils/buildGraph';
 import { isClusterScoped } from '../utils/k8sScope';
+import { KIND_COLORS, KIND_ICONS } from './kindMeta';
 
-// Custom K8s inline SVG icons
-const ICONS: Record<string, React.ReactNode> = {
-    Deployment: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="2" y="2" width="8" height="8" rx="1.5" />
-            <rect x="14" y="2" width="8" height="8" rx="1.5" />
-            <rect x="2" y="14" width="8" height="8" rx="1.5" />
-            <path d="M6 10v4M10 6h4M14 18h4" strokeDasharray="2 2" />
-        </svg>
-    ),
-    ReplicaSet: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="3" width="10" height="10" rx="2" />
-            <rect x="11" y="11" width="10" height="10" rx="2" strokeDasharray="2 2" />
-            <path d="M13 8h3v3" strokeDasharray="2 2" />
-        </svg>
-    ),
-    Pod: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 2L2 7l10 5 10-5-10-5z" />
-            <path d="M2 17l10 5 10-5" />
-            <path d="M2 12l10 5 10-5" />
-        </svg>
-    ),
-    Service: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M20 4h-4a2 2 0 00-2 2v3a2 2 0 002 2h4a2 2 0 002-2V6a2 2 0 00-2-2z" />
-            <path d="M8 13H4a2 2 0 00-2 2v3a2 2 0 002 2h4a2 2 0 002-2v-3a2 2 0 00-2-2z" />
-            <path d="M9 8v5M15 15v-5M12 5v14" strokeDasharray="2 2" />
-        </svg>
-    ),
-    Ingress: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-        </svg>
-    ),
-    HorizontalPodAutoscaler: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 20V10M12 6V4" />
-            <path d="M12 16l3-3-3-3-3 3 3 3z" />
-            <path d="M5 6a7 7 0 0014 0" />
-        </svg>
-    ),
-    ConfigMap: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M4 6h16v12H4z" />
-            <path d="M8 10h8M8 14h5" />
-        </svg>
-    ),
-    PersistentVolumeClaim: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <ellipse cx="12" cy="5" rx="8" ry="3" />
-            <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
-            <path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6" />
-        </svg>
-    ),
-    PersistentVolume: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
-            <path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" />
-        </svg>
-    ),
-    StorageClass: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="4" width="18" height="6" rx="2" />
-            <rect x="3" y="14" width="18" height="6" rx="2" />
-            <path d="M7 10v4M17 10v4" strokeDasharray="2 2" />
-        </svg>
-    ),
-    Secret: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="5" y="11" width="14" height="9" rx="2" />
-            <path d="M8 11V7a4 4 0 018 0v4" />
-            <circle cx="12" cy="15.5" r="1.5" />
-        </svg>
-    ),
-    Job: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="4" width="18" height="16" rx="2" />
-            <path d="M8 2v4M16 2v4M3 9h18" />
-            <path d="M9 14l2 2 4-4" />
-        </svg>
-    ),
-    CronJob: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="9" />
-            <path d="M12 7v5l3 3" />
-            <path d="M12 4v3M12 17v3" />
-        </svg>
-    ),
-    VerticalPodAutoscaler: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="4" y="12" width="4" height="8" rx="1" />
-            <rect x="10" y="8" width="4" height="12" rx="1" />
-            <rect x="16" y="4" width="4" height="16" rx="1" />
-            <path d="M5 12V9M11 8V5M17 4V7" strokeDasharray="2 2" />
-        </svg>
-    ),
-    GatewayClass: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="5" width="18" height="14" rx="2" />
-            <path d="M3 9h18" />
-            <circle cx="7" cy="16" r="1" />
-            <circle cx="12" cy="16" r="1" />
-            <circle cx="17" cy="16" r="1" />
-        </svg>
-    ),
-    Gateway: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M3 7h18v10H3z" />
-            <path d="M8 10h4v4H8z" />
-            <path d="M14.5 10h2.5v4h-2.5" />
-        </svg>
-    ),
-    HTTPRoute: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M4 19V5" />
-            <path d="M4 5l16 6-16 6" />
-            <path d="M13 5h7v4" />
-        </svg>
-    ),
-    GRPCRoute: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M4 19V5" />
-            <path d="M4 5l16 6-16 6" />
-            <path d="M15 4.5l4.5 1.5L15 7.5" />
-            <path d="M15 16.5l4.5 1.5-4.5 1.5" />
-        </svg>
-    ),
-    TCPRoute: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M4 19V5" />
-            <path d="M4 5l16 6-16 6" />
-            <circle cx="18" cy="18" r="3" />
-        </svg>
-    ),
-    TLSRoute: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M4 19V5" />
-            <path d="M4 5l16 6-16 6" />
-            <rect x="14" y="12" width="8" height="6" rx="1" />
-            <path d="M16 12v-1a2 2 0 014 0v1" />
-        </svg>
-    ),
-    UDPRoute: (
-        <svg className="k8s-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M4 19V5" />
-            <path d="M4 5l16 6-16 6" />
-            <circle cx="19" cy="18" r="2" />
-            <path d="M19 8v6" strokeDasharray="2 2" />
-        </svg>
-    ),
-};
-
-const KIND_COLORS: Record<string, string> = {
-    Deployment: '#10b981', // Green
-    ReplicaSet: '#f97316', // Orange
-    Pod: '#14b8a6',        // Teal
-    Service: '#3b82f6',    // Blue
-    Ingress: '#8b5cf6',    // Purple
-    HorizontalPodAutoscaler: '#f59e0b',        // Amber
-    ConfigMap: '#06b6d4',  // Cyan
-    PersistentVolumeClaim: '#ec4899', // Pink
-    PersistentVolume: '#84cc16',      // Lime
-    StorageClass: '#6366f1',          // Indigo
-    Secret: '#dc2626',                // Red
-    Job: '#eab308',                   // Yellow
-    CronJob: '#d946ef',               // Fuchsia
-    VerticalPodAutoscaler: '#0ea5e9', // Sky
-    GatewayClass: '#f43f5e',          // Rose
-    Gateway: '#7c3aed',               // Violet
-    HTTPRoute: '#0d9488',             // Dark teal
-    GRPCRoute: '#65a30d',             // Dark lime
-    TCPRoute: '#0284c7',              // Dark sky
-    TLSRoute: '#d97706',              // Dark amber
-    UDPRoute: '#16a34a',              // Green
-};
+// Node cards size their icons with the .k8s-icon class on the svg itself,
+// so the shared (class-free) icons are cloned with it attached here.
+const ICONS: Record<string, ReactNode> = Object.fromEntries(
+    Object.entries(KIND_ICONS).map(([kind, icon]) => [
+        kind,
+        cloneElement(icon as ReactElement<{ className?: string }>, { className: 'k8s-icon' }),
+    ])
+);
 
 function K8sNodeComponent({ data }: NodeProps) {
     const nodeData = data as unknown as K8sNodeData;
@@ -387,10 +219,10 @@ function buildResourceDetails(nodeData: K8sNodeData): DetailPair[] {
             const minMem = policy.minAllowed?.memory;
             const maxMem = policy.maxAllowed?.memory;
             if (minCpu || maxCpu) {
-                details.push({ key: 'cpu', val: `${minCpu ?? '—'} – ${maxCpu ?? '∞'}` });
+                details.push({ key: 'cpu', val: `${minCpu ?? 'n/a'} to ${maxCpu ?? '∞'}` });
             }
             if (minMem || maxMem) {
-                details.push({ key: 'memory', val: `${minMem ?? '—'} – ${maxMem ?? '∞'}` });
+                details.push({ key: 'memory', val: `${minMem ?? 'n/a'} to ${maxMem ?? '∞'}` });
             }
         }
     }

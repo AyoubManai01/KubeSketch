@@ -10,7 +10,7 @@ interface Props {
 /**
  * Namespace picker: a text input that keeps free-text entry (a brand-new
  * namespace can be typed) AND offers a reliable dropdown of known namespaces.
- * Rendered as a real DOM listbox — no native datalist, which Chromium breaks
+ * Rendered as a real DOM listbox rather than a native datalist, which Chromium breaks
  * inside the modal's transformed/filtered ancestors.
  */
 export default function NamespaceField({ value, onChange, options, placeholder }: Props) {
@@ -103,7 +103,7 @@ export default function NamespaceField({ value, onChange, options, placeholder }
                     setOpen(true);
                 }}
                 onMouseDown={() => {
-                    // A focused input fires no focus event on re-click — reopen
+                    // A focused input fires no focus event on re-click; reopen
                     // the dropdown so repeated clicks keep working.
                     if (document.activeElement === inputRef.current) setOpen(true);
                 }}

@@ -73,8 +73,8 @@ export default function PvcLinkModal() {
                                 Writes spec.volumes[].persistentVolumeClaim.claimName into the
                                 {pending.target.kind === 'Pod'
                                     ? ' Pod'
-                                    : ' Pod template of the ' + pending.target.kind}{' '}
-                                — it renders as a &quot;mounts&quot; edge on the canvas.
+                                    : ' Pod template of the ' + pending.target.kind}{'; '}
+                                it renders as a &quot;mounts&quot; edge on the canvas.
                             </span>
                         </label>
                     </div>

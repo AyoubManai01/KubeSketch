@@ -9,8 +9,8 @@ interface Props {
 
 /**
  * Confirmation prompt before cascade-deleting a non-empty namespace (namespace
- * editing mode). Mirrors the NamespaceModal style — a modal, never a native
- * alert — because the deletion removes every resource living in the namespace.
+ * editing mode). Mirrors the NamespaceModal style (a modal, never a native
+ * alert) because the deletion removes every resource living in the namespace.
  */
 export default function DeleteNamespaceModal({ name, count, onConfirm, onCancel }: Props) {
     const confirmRef = useRef<HTMLButtonElement>(null);

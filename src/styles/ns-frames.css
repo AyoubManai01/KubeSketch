@@ -1,0 +1,103 @@
+/* ---------- Namespace/Cluster Bounding Zones ---------- */
+.teaching-frame {
+  position: absolute;
+  border-radius: var(--radius-lg);
+  pointer-events: none;
+  z-index: -10;
+}
+
+.teaching-frame--outer {
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.003);
+}
+
+.teaching-frame--inner {
+  border: 1px solid rgba(20, 184, 166, 0.06);
+  background: rgba(20, 184, 166, 0.004);
+}
+
+.teaching-frame__title {
+  position: absolute;
+  top: -10px;
+  left: 16px;
+  font-family: 'Outfit', sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  padding: 1px 7px;
+  letter-spacing: 0.8px;
+}
+
+/* Delete button on a namespace frame (namespace editing mode only) */
+.teaching-frame__delete {
+  position: absolute;
+  top: -13px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 16px;
+  padding: 0 5px;
+  font-family: 'Outfit', sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #ef4444;
+  background: var(--bg-primary);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: 4px;
+  cursor: pointer;
+  z-index: 6;
+}
+
+.teaching-frame__delete:hover {
+  color: #fff;
+  background: #ef4444;
+  border-color: #ef4444;
+}
+
+/* Namespace editing mode: the frames become draggable/resizeable surfaces */
+.teaching-frame--editable {
+  pointer-events: auto;
+  cursor: move;
+}
+
+.teaching-frame--outer.teaching-frame--editable {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.teaching-frame--inner.teaching-frame--editable {
+  border-color: rgba(20, 184, 166, 0.4);
+  background: rgba(20, 184, 166, 0.06);
+}
+
+.teaching-frame__resize-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: rgba(148, 163, 184, 0.95);
+  border: 1px solid rgba(15, 20, 32, 0.9);
+  border-radius: 2px;
+  z-index: 5;
+}
+
+.teaching-frame__resize-handle:hover {
+  background: #60a5fa;
+  box-shadow: 0 0 6px rgba(96, 165, 250, 0.6);
+}
+
+.teaching-frame__resize-handle--nw { top: -5px; left: -5px; cursor: nwse-resize; }
+.teaching-frame__resize-handle--n { top: -5px; left: 50%; margin-left: -5px; cursor: ns-resize; }
+.teaching-frame__resize-handle--ne { top: -5px; right: -5px; cursor: nesw-resize; }
+.teaching-frame__resize-handle--e { right: -5px; top: 50%; margin-top: -5px; cursor: ew-resize; }
+.teaching-frame__resize-handle--se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+.teaching-frame__resize-handle--s { bottom: -5px; left: 50%; margin-left: -5px; cursor: ns-resize; }
+.teaching-frame__resize-handle--sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
+.teaching-frame__resize-handle--w { left: -5px; top: 50%; margin-top: -5px; cursor: ew-resize; }
+

@@ -7,7 +7,7 @@ import type { K8sNodeData } from './buildGraph';
  * The live React Flow instance, registered by Canvas's onInit so the top-navbar
  * export action can reach the flow without a ReactFlowProvider in App.
  *
- * Note: never null this out on unmount — React 19 StrictMode simulates an
+ * Note: never null this out on unmount. React 19 StrictMode simulates an
  * unmount during development, and React Flow only fires onInit once (it guards
  * with a ref), so a cleanup would leave the holder permanently null in dev.
  */
@@ -17,7 +17,7 @@ export function setRfInstance(instance: ReactFlowInstance<Node<K8sNodeData>> | n
     rfInstance = instance;
 }
 
-/** Exported images use a white background with black text — see the
+/** Exported images use a white background with black text: see the
  *  veltra-export-light class in index.css. The class is applied to the
  *  offscreen render host only, so the live canvas never changes. */
 const EXPORT_BACKGROUND = '#ffffff';
@@ -39,7 +39,7 @@ function triggerDownload(dataUrl: string, filename: string): void {
  * The export is rendered from an offscreen CLONE of the flow's viewport: the
  * light theme (white background / black text / white edge-label pills) and the
  * fit-to-graph transform are applied only to the clone, so the live canvas is
- * never modified — not even for a single frame. If the first snapshot attempt
+ * never modified, not even for a single frame. If the first snapshot attempt
  * fails (html-to-image commonly trips on embedding cross-origin font CSS), it
  * retries once with font embedding skipped.
  */
@@ -48,11 +48,11 @@ export async function exportCanvasImage(format: 'png' | 'svg'): Promise<void> {
     const fail = (text: string) => setNotice({ id: Date.now(), tone: 'error', text });
 
     if (nodes.length === 0) {
-        fail('Nothing to export — the canvas is empty.');
+        fail('Nothing to export, the canvas is empty.');
         return;
     }
     if (!rfInstance) {
-        fail('The canvas is not ready yet — try again in a moment.');
+        fail('The canvas is not ready yet, try again in a moment.');
         return;
     }
     const viewportEl = document.querySelector<HTMLElement>('.react-flow__viewport');
@@ -123,7 +123,7 @@ export async function exportCanvasImage(format: 'png' | 'svg'): Promise<void> {
         triggerDownload(dataUrl, `veltra-graph.${format}`);
     } catch {
         fail(
-            `Could not export the canvas as ${format.toUpperCase()} — check the browser console for details.`
+            `Could not export the canvas as ${format.toUpperCase()}, check the browser console for details.`
         );
     } finally {
         host.remove();

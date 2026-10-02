@@ -80,7 +80,7 @@ export default function NsFrame({ layout, nodes, onDeleteNamespace }: NsFramePro
     const onPointerMove = (e: ReactPointerEvent) => {
         const drag = dragRef.current;
         // Events bubble from the captured element up through its ancestors
-        // (inner frames live inside the cluster frame) — only the element that
+        // (inner frames live inside the cluster frame): only the element that
         // owns the capture may apply the drag, or the cumulative delta would be
         // applied once per ancestor handler.
         if (!drag || drag.el !== e.currentTarget) return;

@@ -18,7 +18,7 @@ function loadSplitRatio(): number {
 }
 
 /**
- * Veltra — Kubernetes Visual IDE
+ * Veltra: Kubernetes Visual IDE
  * Split-screen layout: YAML editor (left) | Resource canvas (right)
  */
 export default function App() {
@@ -43,7 +43,7 @@ export default function App() {
     }
   }, [isIde, setYaml]);
 
-  // User-resizable editor/canvas split — purely presentational, so it lives
+  // User-resizable editor/canvas split: purely presentational, so it lives
   // outside the resource-model store and is persisted directly to localStorage.
   const panelsRef = useRef<HTMLDivElement>(null);
   const [splitRatio, setSplitRatio] = useState(loadSplitRatio);

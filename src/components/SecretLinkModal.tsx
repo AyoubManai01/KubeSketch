@@ -99,7 +99,7 @@ export default function SecretLinkModal() {
                         <label className="modal-field__label">
                             {pending.secret.name} → {pending.target.kind} {pending.target.name}
                             <span className="modal-field__hint">
-                                Choose how the Secret is consumed — the reference is
+                                Choose how the Secret is consumed; the reference is
                                 written into the {pending.target.kind}&apos;s Pod spec
                                 {pending.target.kind === 'Pod'
                                     ? ''
@@ -149,7 +149,7 @@ export default function SecretLinkModal() {
                             </select>
                             {dataKeys.length === 0 && (
                                 <span className="modal-field__error">
-                                    This Secret has no data keys — add some first or pick
+                                    This Secret has no data keys; add some first or pick
                                     envFrom / volumes.
                                 </span>
                             )}

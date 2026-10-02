@@ -36,7 +36,7 @@ export const NAMESPACE_MIN_RECT = 80;
  * coordinates and must not participate in absolute bounds.
  *
  * Cluster-scoped kinds (PersistentVolume, StorageClass) live inside the cluster
- * rectangle but OUTSIDE any namespace rectangle — they are never grouped.
+ * rectangle but OUTSIDE any namespace rectangle, they are never grouped.
  */
 export function buildTeachingFrame(nodes: Node<K8sNodeData>[]): NsLayout | null {
     const topLevel = nodes.filter((n) => !n.parentId);
@@ -59,7 +59,7 @@ export function buildTeachingFrame(nodes: Node<K8sNodeData>[]): NsLayout | null 
         }
     );
 
-    // Physical nodes are never auto-derived from the graph — they exist only
+    // Physical nodes are never auto-derived from the graph. They exist only
     // once the user creates them (persisted in the layout).
     return { cluster, namespaces };
 }
@@ -187,7 +187,7 @@ export function resolveNodeCollision(
 
 /**
  * Push a moved rectangle out of any rectangle it overlaps in `others` (translation
- * only — the size never changes). Used so namespace rectangles never collide when
+ * only, the size never changes). Used so namespace rectangles never collide when
  * dragged.
  */
 export function resolveMoveCollision(candidate: Rect, others: Rect[]): Rect {
@@ -213,7 +213,7 @@ export function resolveMoveCollision(candidate: Rect, others: Rect[]): Rect {
 /**
  * Clamp a resize drag (candidate derived from `start` + pointer delta) so the
  * rectangle never overlaps `others` and never shrinks past its own contained
- * resources (`content` — the moving edge stops at the content's facing edge, so
+ * resources (`content`: the moving edge stops at the content's facing edge, so
  * a resource can never be left outside its namespace box). When the rectangle
  * overlaps `bounds` (the cluster), it can't extend outside it either. Edges that
  * the drag handle doesn't move stay anchored; the result never drops below

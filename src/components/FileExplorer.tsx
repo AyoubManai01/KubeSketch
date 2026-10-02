@@ -1,30 +1,7 @@
 import { useState } from 'react';
 import { useVeltraStore } from '../store/store';
 import type { FileNode } from '../utils/fileTree';
-
-const KIND_COLORS: Record<string, string> = {
-    Deployment: '#10b981',
-    ReplicaSet: '#f97316',
-    Pod: '#14b8a6',
-    Service: '#3b82f6',
-    Ingress: '#8b5cf6',
-    HorizontalPodAutoscaler: '#f59e0b',
-    ConfigMap: '#06b6d4',
-    PersistentVolumeClaim: '#ec4899',
-    PersistentVolume: '#84cc16',
-    StorageClass: '#6366f1',
-    Secret: '#dc2626',
-    Job: '#eab308',
-    CronJob: '#d946ef',
-    VerticalPodAutoscaler: '#0ea5e9',
-    GatewayClass: '#f43f5e',
-    Gateway: '#7c3aed',
-    HTTPRoute: '#0d9488',
-    GRPCRoute: '#65a30d',
-    TCPRoute: '#0284c7',
-    TLSRoute: '#d97706',
-    UDPRoute: '#16a34a',
-};
+import { KIND_COLORS } from './kindMeta';
 
 const FolderIcon = ({ open }: { open: boolean }) =>
     open ? (

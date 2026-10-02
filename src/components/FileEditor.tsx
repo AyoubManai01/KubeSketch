@@ -19,7 +19,7 @@ export default function FileEditor({ style }: { style?: React.CSSProperties }) {
             setNotice({
                 id: Date.now(),
                 tone: 'error',
-                text: 'Nothing to export — this file is empty.',
+                text: 'Nothing to export, this file is empty.',
             });
             return;
         }

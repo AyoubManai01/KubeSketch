@@ -3,6 +3,7 @@ import type { K8sResource } from '../types/types';
 import { useVeltraStore } from '../store/store';
 import NamespaceField from './NamespaceField';
 import NamespaceModal from './NamespaceModal';
+import { KIND_COLORS, hexToRgba } from './kindMeta';
 
 interface Props {
     onClose: () => void;
@@ -29,22 +30,6 @@ interface RouteDraft {
     name: string;
     hostnames: string;
     backends: RouteBackend[];
-}
-
-const KIND_COLORS: Record<string, string> = {
-    GatewayClass: '#f43f5e',
-    Gateway: '#7c3aed',
-    HTTPRoute: '#0d9488',
-    GRPCRoute: '#65a30d',
-    TCPRoute: '#0284c7',
-    TLSRoute: '#d97706',
-    UDPRoute: '#16a34a',
-};
-
-function hexToRgba(hex: string, alpha: number): string {
-    const r = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    if (!r) return `rgba(244,63,94,${alpha})`;
-    return `rgba(${parseInt(r[1], 16)},${parseInt(r[2], 16)},${parseInt(r[3], 16)},${alpha})`;
 }
 
 function suggestedRouteName(kind: RouteKind, existing: string[]): string {
@@ -98,7 +83,7 @@ export default function CreateGatewayApiModal({ onClose }: Props) {
     // Stacked "+ New namespace" prompt (alternative to typing a new name).
     const [nsCreateOpen, setNsCreateOpen] = useState(false);
 
-    // The Gateway, its Routes and any new Services are namespaced — the
+    // The Gateway, its Routes and any new Services are namespaced, so the
     // namespace must be picked, typed or created explicitly.
     const namespaceError = useMemo(
         () => (gwNamespace.trim() ? '' : 'Choose or create a namespace.'),
@@ -327,8 +312,8 @@ export default function CreateGatewayApiModal({ onClose }: Props) {
                     <div
                         className="modal-header__icon"
                         style={{
-                            backgroundColor: hexToRgba(KIND_COLORS.Gateway, 0.13),
-                            border: `1px solid ${hexToRgba(KIND_COLORS.Gateway, 0.28)}`,
+                            backgroundColor: hexToRgba(KIND_COLORS.Gateway, 0.13, '244,63,94'),
+                            border: `1px solid ${hexToRgba(KIND_COLORS.Gateway, 0.28, '244,63,94')}`,
                             color: KIND_COLORS.Gateway,
                         }}
                     >
@@ -354,7 +339,7 @@ export default function CreateGatewayApiModal({ onClose }: Props) {
                             <label className="modal-field__label">
                                 GatewayClass name
                                 <span className="modal-field__hint">
-                                    Cluster-scoped — it sits outside any namespace.
+                                    Cluster-scoped: it sits outside any namespace.
                                 </span>
                             </label>
                             <input
@@ -370,7 +355,7 @@ export default function CreateGatewayApiModal({ onClose }: Props) {
                             <label className="modal-field__label">
                                 Controller name
                                 <span className="modal-field__hint">
-                                    spec.controllerName — the controller that reconciles Gateways of this class.
+                                    spec.controllerName: the controller that reconciles Gateways of this class.
                                 </span>
                             </label>
                             <input
@@ -495,12 +480,12 @@ export default function CreateGatewayApiModal({ onClose }: Props) {
                                     <label className="modal-field__label">
                                         Backends (Services)
                                         <span className="modal-field__hint">
-                                            A Route only routes to Services — link an existing one or create a new Service inline.
+                                            A Route only routes to Services; link an existing one or create a new Service inline.
                                         </span>
                                     </label>
                                     {route.backends.length === 0 && (
                                         <div className="modal-field__hint" style={{ marginBottom: '6px' }}>
-                                            No backends yet — the route will be created without backendRefs.
+                                            No backends yet; the route will be created without backendRefs.
                                         </div>
                                     )}
                                     {route.backends.map((backend, backendIndex) => (
@@ -602,7 +587,7 @@ export default function CreateGatewayApiModal({ onClose }: Props) {
                 </div>
             </div>
 
-            {/* Stacked namespace creation prompt — renders above the gateway
+            {/* Stacked namespace creation prompt: renders above the gateway
                 modal and auto-selects the new namespace on success. */}
             {nsCreateOpen && (
                 <NamespaceModal

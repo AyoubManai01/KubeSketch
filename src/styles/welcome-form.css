@@ -1,0 +1,288 @@
+/* Contact form */
+.welcome__form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-width: 560px;
+  padding: 24px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  text-align: left;
+}
+
+.welcome__form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.welcome__form-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.welcome__form-input,
+.welcome__form-textarea {
+  padding: 9px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+  transition: border-color var(--transition-fast);
+}
+
+.welcome__form-input:focus,
+.welcome__form-textarea:focus {
+  outline: none;
+  border-color: var(--border-active);
+}
+
+.welcome__form-input--invalid {
+  border-color: rgba(239, 68, 68, 0.55);
+}
+
+.welcome__form-textarea {
+  min-height: 110px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.welcome__form-error {
+  font-size: 11px;
+  color: #f87171;
+  line-height: 1.4;
+}
+
+.welcome__form .welcome-btn--primary {
+  align-self: flex-start;
+}
+
+.welcome__form-note {
+  margin-top: 12px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.welcome__footer {
+  position: relative;
+  z-index: 1;
+  margin-top: 24px;
+  border-top: 1px solid var(--border-default);
+  background: var(--bg-secondary);
+}
+
+.welcome__footer-inner {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 40px 24px 28px;
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: 32px;
+}
+
+.welcome__footer-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.welcome__footer-brand-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.welcome__footer-logo {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+}
+
+.welcome__footer-name {
+  font-family: 'Outfit', sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.welcome__footer-tag {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  max-width: 260px;
+}
+
+.welcome__footer-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.welcome__footer-heading {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.welcome__footer-col a {
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+.welcome__footer-col a:hover {
+  color: var(--text-primary);
+}
+
+.welcome__footer-bottom {
+  border-top: 1px solid var(--border-default);
+  padding: 14px 24px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+/* Light theme (landing only; the IDE keeps its dark theme) */
+.welcome--light {
+  --bg-primary: #f6f7fb;
+  --bg-secondary: #ffffff;
+  --bg-elevated: #eef1f7;
+  --bg-input: #ffffff;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  --border-default: rgba(15, 23, 42, 0.12);
+  --border-active: rgba(59, 130, 246, 0.55);
+  --shadow-sm: 0 2px 8px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.1);
+  --shadow-lg: 0 16px 48px rgba(15, 23, 42, 0.14);
+}
+
+.welcome--light .welcome__logo,
+.welcome--light .welcome__watermark,
+.welcome--light .welcome__footer-logo {
+  filter: brightness(0.15);
+}
+
+.welcome--light .welcome__watermark {
+  opacity: 0.05;
+}
+
+.welcome--light .welcome__github,
+.welcome--light .welcome__theme {
+  background: rgba(15, 23, 42, 0.03);
+}
+
+.welcome--light .welcome__github:hover {
+  background: rgba(15, 23, 42, 0.07);
+  border-color: rgba(15, 23, 42, 0.22);
+}
+
+.welcome--light .welcome-btn--secondary {
+  background: rgba(15, 23, 42, 0.05);
+}
+
+.welcome--light .welcome-btn--secondary:hover {
+  background: rgba(15, 23, 42, 0.09);
+}
+
+.welcome--light .welcome__card:hover {
+  border-color: rgba(15, 23, 42, 0.25);
+}
+
+.welcome--light .welcome__preview {
+  border-color: rgba(15, 23, 42, 0.16);
+}
+
+@media (max-width: 960px) {
+  .welcome__nav {
+    padding: 12px 24px;
+  }
+
+  .welcome__main {
+    padding: 48px 24px 24px;
+    gap: 64px;
+  }
+
+  .welcome__title {
+    font-size: 34px;
+  }
+
+  .welcome__cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .welcome__footer-inner {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .welcome__footer-brand {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 560px) {
+  .welcome__nav {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 16px;
+  }
+
+  .welcome__nav-links {
+    order: 3;
+    width: 100%;
+    justify-content: center;
+    gap: 20px;
+    padding-bottom: 4px;
+  }
+
+  .welcome__main {
+    gap: 48px;
+    padding: 32px 20px 20px;
+  }
+
+  .welcome__title {
+    font-size: 27px;
+  }
+
+  .welcome__actions {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .welcome__actions .welcome-btn {
+    width: 100%;
+  }
+
+  .welcome__cards {
+    grid-template-columns: 1fr;
+  }
+
+  .welcome__preview {
+    height: 240px;
+  }
+
+  .welcome__footer-inner {
+    grid-template-columns: 1fr;
+    gap: 24px;
+    padding: 32px 20px 24px;
+  }
+
+  .welcome__footer-bottom {
+    padding: 12px 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome__main {
+    animation: none;
+  }
+}
+

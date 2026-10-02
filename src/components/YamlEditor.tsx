@@ -45,7 +45,7 @@ export default function YamlEditor({ style }: { style?: React.CSSProperties }) {
             setNotice({
                 id: Date.now(),
                 tone: 'error',
-                text: 'Nothing to export — the editor is empty.',
+                text: 'Nothing to export, the editor is empty.',
             });
             return;
         }

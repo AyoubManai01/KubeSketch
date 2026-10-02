@@ -40,7 +40,7 @@ export default function ConfigMapDataEditor({
     onCommit,
 }: {
     resource: K8sResource;
-    /** Changes whenever a different resource is selected — resets the rows. */
+    /** Changes whenever a different resource is selected; resets the rows. */
     resetToken: string;
     onCommit: (data: Record<string, string> | undefined) => void;
 }) {
@@ -84,7 +84,7 @@ export default function ConfigMapDataEditor({
         <div className="k8s-keyval-editor">
             {model.rows.length === 0 && (
                 <span className="modal-field__hint">
-                    No data entries yet — add keys to make this ConfigMap injectable
+                    No data entries yet; add keys to make this ConfigMap injectable
                     via envFrom / env / volumes.
                 </span>
             )}

@@ -25,16 +25,16 @@ import { resourcesToYaml } from './serializeYaml';
  * derives a virtual file tree from the live resources using best-practice
  * Kubernetes architecture:
  *
- * - cluster/            — cluster-scoped kinds (StorageClass, PersistentVolume,
+ * - cluster/            : cluster-scoped kinds (StorageClass, PersistentVolume,
  *                         GatewayClass), one file per resource.
- * - <namespace>/<app>/  — namespaced resources grouped into "applications": a
+ * - <namespace>/<app>/  : namespaced resources grouped into "applications": a
  *                         workload (Deployment/ReplicaSet/Pod/Job/CronJob) plus
  *                         everything its reference graph pulls in (Services,
  *                         Ingresses + TLS Secrets, HPA/VPA, ConfigMaps, Secrets,
  *                         PVCs, Gateway API Routes). Files hold one resource
  *                         kind; autoscalers are bundled with their target.
- * - <namespace>/_gateway/<name>.yaml — Gateways (shared infra, never app-bound).
- * - <namespace>/_misc/<kind>.yaml     — orphaned resources, grouped by kind.
+ * - <namespace>/_gateway/<name>.yaml : Gateways (shared infra, never app-bound).
+ * - <namespace>/_misc/<kind>.yaml     : orphaned resources, grouped by kind.
  *
  * Assignment is single and deterministic (first app wins, in sorted order), so
  * the tree is a pure function of the resource list and stays in sync with the
@@ -209,7 +209,7 @@ export function computeFileOf(resources: K8sResource[]): Map<string, string> {
         a.ns === b.ns ? a.appName.localeCompare(b.appName) : a.ns.localeCompare(b.ns)
     );
     const claimed = new Set<string>();
-    // Workloads always belong to their own app — mark them claimed so the misc
+    // Workloads always belong to their own app: mark them claimed so the misc
     // pass never re-assigns them to _misc/.
     for (const g of appGroups) {
         for (const w of g.workloads) claimed.add(resourceKeyOf(w));
@@ -218,7 +218,7 @@ export function computeFileOf(resources: K8sResource[]): Map<string, string> {
     for (const g of appGroups) {
         const free = (r: K8sResource) => !claimed.has(resourceKeyOf(r));
         const inNs = (r: K8sResource) => nsOf(r) === g.ns;
-        // Only claim resources that fully matched — claiming inside the filter
+        // Only claim resources that fully matched: claiming inside the filter
         // predicate would poison orphans (matched kinds are skipped by _misc).
         const claim = (list: K8sResource[]) => {
             for (const r of list) claimed.add(resourceKeyOf(r));

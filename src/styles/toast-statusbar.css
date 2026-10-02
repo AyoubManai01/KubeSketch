@@ -1,0 +1,88 @@
+/* ---------- Canvas feedback toast ---------- */
+.canvas-toast {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: min(560px, calc(100% - 32px));
+  padding: 9px 14px;
+  border-radius: var(--radius-md);
+  background: rgba(15, 20, 32, 0.94);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(8px);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.45;
+  animation: toast-in 160ms ease-out;
+  pointer-events: none;
+}
+
+.canvas-toast svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+.canvas-toast--success { border-color: rgba(16, 185, 129, 0.45); }
+.canvas-toast--success svg { color: #10b981; }
+.canvas-toast--error { border-color: rgba(239, 68, 68, 0.5); }
+.canvas-toast--error svg { color: #ef4444; }
+.canvas-toast--info { border-color: rgba(96, 165, 250, 0.45); }
+.canvas-toast--info svg { color: #60a5fa; }
+
+/* ---------- Persistent HorizontalPodAutoscaler-priority status bar ---------- */
+.canvas-statusbar {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 54px; /* clears the transient toast */
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: min(680px, calc(100% - 32px));
+  pointer-events: none;
+}
+
+.canvas-statusbar__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 13px;
+  border-radius: var(--radius-md);
+  background: rgba(30, 25, 8, 0.94);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(8px);
+  color: #fbbf24;
+  font-size: 12px;
+  line-height: 1.45;
+  animation: statusbar-in 160ms ease-out;
+}
+
+.canvas-statusbar__item svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+@keyframes statusbar-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.inspector-field__hint--hpa {
+  color: #fbbf24;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+

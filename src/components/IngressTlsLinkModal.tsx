@@ -74,7 +74,7 @@ export default function IngressTlsLinkModal() {
                         <label className="modal-field__label">
                             {pending.ingress.name} → {pending.secret.name}
                             <span className="modal-field__hint">
-                                Writes spec.tls[].secretName into the Ingress — it renders
+                                Writes spec.tls[].secretName into the Ingress; it renders
                                 as a &apos;tls&apos; edge on the canvas. Existing hosts for
                                 this Secret are replaced.
                             </span>

@@ -195,8 +195,13 @@
   flex: 1 1 auto;
   min-width: 0;
   height: 100%;
+  padding-right: 10px;
   scrollbar-width: thin;
-  scrollbar-color: var(--bg-primary) transparent;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+  /* Fade scrolled content out at the right edge so resource buttons never
+     collide with the pinned Namespaces controls beside the row. */
+  mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 26px), transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 26px), transparent 100%);
 }
 
 .canvas-toolbar__scroll::-webkit-scrollbar {
@@ -204,17 +209,63 @@
 }
 
 .canvas-toolbar__scroll::-webkit-scrollbar-thumb {
-  background: var(--bg-primary);
+  background: rgba(255, 255, 255, 0.28);
   border-radius: 3px;
 }
 
+.canvas-toolbar__scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.45);
+}
+
 .canvas-toolbar__scroll::-webkit-scrollbar-track {
-  background: transparent;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 3px;
 }
 
 .canvas-toolbar__scroll > .canvas-button {
   flex-shrink: 0;
   white-space: nowrap;
+}
+
+/* ‹ › navigation for the scrollable resource row */
+.canvas-toolbar__scroll-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  padding-left: 4px;
+}
+
+.canvas-button--scroll {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 7px;
+  line-height: 1;
+}
+
+.canvas-button--scroll:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
+.canvas-button--scroll:disabled:hover {
+  background: rgba(255, 255, 255, 0.02);
+  border-color: var(--border-default);
+  transform: none;
+}
+
+/* Pinned right-side controls (Namespaces toggle / + Namespace): a solid,
+   raised zone with a left divider so the scrolling resource row can never
+   visually overlap them. */
+.canvas-toolbar__group--pinned {
+  align-self: stretch;
+  padding-left: 12px;
+  border-left: 1px solid var(--border-default);
+  background: rgba(15, 20, 34, 0.92);
+  position: relative;
+  z-index: 2;
 }
 
 /* Gateway API bundle creation modal */

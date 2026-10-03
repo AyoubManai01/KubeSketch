@@ -111,6 +111,8 @@ export interface MockStoreState {
     clearAll: Mock;
     nsEditMode: boolean;
     setNsEditMode: Mock;
+    fileExplorerMode: boolean;
+    setFileExplorerMode: Mock;
 }
 
 export function createDefaultStoreState(): MockStoreState {
@@ -142,6 +144,8 @@ export function createDefaultStoreState(): MockStoreState {
         clearAll: vi.fn(),
         nsEditMode: false,
         setNsEditMode: vi.fn(),
+        fileExplorerMode: false,
+        setFileExplorerMode: vi.fn(),
     };
 }
 

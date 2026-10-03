@@ -11,6 +11,7 @@ export const DEFAULT_YAML = `apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: my-app
+  namespace: default
   labels:
     app: my-app
 spec:
@@ -31,6 +32,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: my-app-svc
+  namespace: default
 spec:
   selector:
     app: my-app
@@ -42,6 +44,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: my-app-ingress
+  namespace: default
 spec:
   rules:
     - host: my-app.example.com
@@ -59,6 +62,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: my-app-hpa
+  namespace: default
 spec:
   scaleTargetRef:
     apiVersion: apps/v1

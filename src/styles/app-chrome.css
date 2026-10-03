@@ -280,6 +280,20 @@
   border-color: rgba(255, 255, 255, 0.2);
 }
 
+/* Pressed (toggled-on) state: the file-explorer toggle stays lit until
+   clicked again */
+.panel-header__btn--active {
+  background: rgba(59, 130, 246, 0.18);
+  color: #93c5fd;
+  border-color: rgba(59, 130, 246, 0.4);
+}
+
+.panel-header__btn--active:hover {
+  background: rgba(59, 130, 246, 0.26);
+  color: #bfdbfe;
+  border-color: rgba(59, 130, 246, 0.55);
+}
+
 .yaml-import-input {
   display: none;
 }

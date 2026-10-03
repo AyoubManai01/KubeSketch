@@ -318,6 +318,19 @@
   padding-right: 28px;
 }
 
+/* Fixed (read-only) fields: greyed out, not focusable */
+.inspector-field__input:disabled {
+  background-color: rgba(255, 255, 255, 0.03);
+  color: var(--text-muted);
+  border-color: rgba(255, 255, 255, 0.05);
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+.inspector-field__input--select:disabled {
+  background-image: none;
+}
+
 /* Validation feedback */
 .inspector-field__input--invalid {
   border-color: rgba(239, 68, 68, 0.55);

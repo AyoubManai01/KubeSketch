@@ -12,6 +12,10 @@ interface MonacoYamlProps {
     onImport?: (file: File) => void;
     /** When provided, renders an Export button that downloads `value`. */
     onExport?: () => void;
+    /** When provided, renders a "Toggle File explorer" button beside Import/Export. */
+    onToggleFileExplorer?: () => void;
+    /** Pressed state for the file-explorer toggle (stays active until toggled back). */
+    fileExplorerActive?: boolean;
     style?: React.CSSProperties;
 }
 
@@ -28,6 +32,8 @@ export default function MonacoYaml({
     title,
     onImport,
     onExport,
+    onToggleFileExplorer,
+    fileExplorerActive,
     style,
 }: MonacoYamlProps) {
     const editorRef = useRef<any>(null);
@@ -122,6 +128,24 @@ export default function MonacoYaml({
                                 <line x1="12" y1="15" x2="12" y2="3" />
                             </svg>
                             Export
+                        </button>
+                    )}
+                    {onToggleFileExplorer && (
+                        <button
+                            type="button"
+                            className={`panel-header__btn${fileExplorerActive ? " panel-header__btn--active" : ""}`}
+                            onClick={onToggleFileExplorer}
+                            aria-pressed={fileExplorerActive}
+                            title={
+                                fileExplorerActive
+                                    ? "Toggle back to the full-manifest YAML editor"
+                                    : "Toggle the file explorer view"
+                            }
+                        >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+                            </svg>
+                            Toggle File explorer
                         </button>
                     )}
                 </div>

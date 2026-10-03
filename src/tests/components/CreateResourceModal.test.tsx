@@ -27,9 +27,8 @@ function fieldByLabel(container: HTMLElement, labelText: string): HTMLInputEleme
 }
 
 /**
- * Namespaces are never assumed anymore: a namespaced resource must pick, type
- * or create one explicitly, so every create test that reaches the Create button
- * first commits a namespace through the picker.
+ * The namespace field is prefilled with "default"; create tests that use a
+ * different namespace commit it through the picker.
  */
 function pickNamespace(value = 'default') {
     const input = dom.getByPlaceholderText('choose or type a namespace');
@@ -104,16 +103,18 @@ describe('CreateResourceModal', () => {
     });
 
     describe('namespace selection', () => {
-        it('requires a namespace before creating a namespaced resource (no implicit "default")', () => {
+        it('prefills "default" so a namespaced resource can be created immediately', () => {
             const addConfiguredNode = vi.fn();
             setMockStoreState({ addConfiguredNode });
             render(<CreateResourceModal kind="Deployment" onClose={onClose} />);
 
-            expect(dom.getByText('Choose or create a namespace.')).toBeInTheDocument();
-            expect(dom.getByRole('button', { name: 'Create Deployment' })).toBeDisabled();
+            expect(dom.getByPlaceholderText('choose or type a namespace')).toHaveValue('default');
+            expect(dom.queryByText('Choose or create a namespace.')).toBeNull();
+            expect(dom.getByRole('button', { name: 'Create Deployment' })).toBeEnabled();
+
             fireEvent.click(dom.getByRole('button', { name: 'Create Deployment' }));
-            expect(addConfiguredNode).not.toHaveBeenCalled();
-            expect(onClose).not.toHaveBeenCalled();
+            const [, resource] = lastCreatedResource(addConfiguredNode);
+            expect(resource.metadata.namespace).toBe('default');
         });
 
         it('does not offer "default" in the namespace options when nothing references it', () => {

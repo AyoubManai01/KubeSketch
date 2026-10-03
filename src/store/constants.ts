@@ -6,18 +6,8 @@ export const NS_LAYOUT_KEY = 'veltra_ns_layout';
 export const FILE_EXPLORER_KEY = 'veltra_file_explorer';
 export const ACTIVE_FILE_KEY = 'veltra_active_file';
 
-/** Default YAML shown when the app first loads */
-export const DEFAULT_YAML = `# Paste your Kubernetes YAML here (multi-document with ---)
-# Recognized resources: Deployment, Service, Ingress, ReplicaSet, Pod, HorizontalPodAutoscaler,
-# ConfigMap, PersistentVolumeClaim, PersistentVolume, StorageClass, Secret, Job,
-# CronJob, VerticalPodAutoscaler, GatewayClass, Gateway, HTTPRoute, GRPCRoute,
-# TCPRoute, TLSRoute, UDPRoute
-#
-# Like a real cluster, Veltra materializes a Deployment's ReplicaSet and
-# Pods on the canvas automatically, you only declare the Deployment.
-# A CronJob's Job (and its Pods) are materialized the same way.
-
-apiVersion: apps/v1
+/** Default sample YAML shown when the app first loads */
+export const DEFAULT_YAML = `apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: my-app

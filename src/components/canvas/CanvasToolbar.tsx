@@ -64,6 +64,42 @@ export function CanvasToolbar({
   const [gaDropdownPos, setGaDropdownPos] = useState({ top: 0, left: 0 });
   const gaEntryRef = useRef<HTMLDivElement>(null);
   const gaDropdownRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [scrollNav, setScrollNav] = useState({ left: false, right: false });
+
+  // Which scroll directions are available for the resource row: gates the
+  // ‹ › nav buttons and keeps them in sync with resize/scroll/content changes.
+  const updateScrollNav = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setScrollNav({
+      left: el.scrollLeft > 1,
+      right: el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
+    });
+  };
+
+  useEffect(() => {
+    updateScrollNav();
+    const el = scrollRef.current;
+    if (!el) return;
+    // jsdom (tests) has no ResizeObserver; the nav state still initializes
+    // correctly and updates from the scroll event.
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateScrollNav);
+      return () => window.removeEventListener("resize", updateScrollNav);
+    }
+    const observer = new ResizeObserver(updateScrollNav);
+    observer.observe(el);
+    window.addEventListener("resize", updateScrollNav);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateScrollNav);
+    };
+  }, []);
+
+  const scrollResourceRow = (dir: 1 | -1) => {
+    scrollRef.current?.scrollBy({ left: dir * 320, behavior: "smooth" });
+  };
 
   // Close the Gateway API dropdown on any outside pointerdown. The dropdown is
   // rendered outside the scrollable row (so the toolbar's overflow can't clip
@@ -83,7 +119,8 @@ export function CanvasToolbar({
   // Anchor the dropdown under the entry. The toolbar forms the containing
   // block (position: relative), so coordinates are computed relative to it:
   // getBoundingClientRect() viewport coords are converted by subtracting the
-  // toolbar's own rect.
+  // toolbar's own rect. The dropdown is clamped to the toolbar's width so it
+  // never spills past the right edge (the entry can be scrolled far right).
   const toggleGatewayApiDropdown = () => {
     const next = !gatewayApiDropdownOpen;
     if (next) {
@@ -94,7 +131,10 @@ export function CanvasToolbar({
         const toolbarRect = toolbar.getBoundingClientRect();
         setGaDropdownPos({
           top: entryRect.bottom - toolbarRect.top + 6,
-          left: entryRect.left - toolbarRect.left,
+          left: Math.min(
+            entryRect.left - toolbarRect.left,
+            Math.max(8, toolbarRect.width - 206),
+          ),
         });
       }
     }
@@ -106,7 +146,11 @@ export function CanvasToolbar({
       <div className="canvas-toolbar__group canvas-toolbar__group--grow">
         <div
           className="canvas-toolbar__scroll"
-          onScroll={() => setGatewayApiDropdownOpen(false)}
+          ref={scrollRef}
+          onScroll={() => {
+            setGatewayApiDropdownOpen(false);
+            updateScrollNav();
+          }}
         >
           {RESOURCE_GROUPS.map((group, gi) => (
             <Fragment key={group.label}>
@@ -175,6 +219,50 @@ export function CanvasToolbar({
             </Fragment>
           ))}
         </div>
+        <div className="canvas-toolbar__scroll-nav">
+          <button
+            type="button"
+            className="canvas-button canvas-button--scroll"
+            onClick={() => scrollResourceRow(-1)}
+            disabled={!scrollNav.left}
+            title="Scroll the resource list left"
+            aria-label="Scroll the resource list left"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              width="11"
+              height="11"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="canvas-button canvas-button--scroll"
+            onClick={() => scrollResourceRow(1)}
+            disabled={!scrollNav.right}
+            title="Scroll the resource list right"
+            aria-label="Scroll the resource list right"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              width="11"
+              height="11"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          </button>
+        </div>
         {gatewayApiDropdownOpen && (
           <div
             className="canvas-toolbar__dropdown"
@@ -201,7 +289,7 @@ export function CanvasToolbar({
           </div>
         )}
       </div>
-      <div className="canvas-toolbar__group">
+      <div className="canvas-toolbar__group canvas-toolbar__group--pinned">
         {nsEditMode && (
           <button
             type="button"

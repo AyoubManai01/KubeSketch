@@ -37,11 +37,14 @@ export function inferEdges(ctx: BuildGraphContext): Edge[] {
             label,
             animated: true,
             // Inferred from YAML, pure visualization. Not deletable/selectable (edit the
-            // relationship via inspector/YAML) and no fat hit-area: edges into nested pods
-            // are z-elevated by React Flow and would otherwise swallow clicks on nodes
-            // and handles they cross.
+            // relationship via inspector/YAML), no fat hit-area, and tagged with
+            // `edge--inferred` so CSS can make the visible stroke fully click-
+            // transparent: React Flow z-elevates edges whose endpoints are nested
+            // nodes above top-level node cards, and a clickable stroke would
+            // swallow clicks on any node it crosses (see reactflow-overrides.css).
             deletable: false,
             selectable: false,
+            className: 'edge--inferred',
             interactionWidth: 0,
             style: {
                 stroke: edgeColorForPair(source.data.kind, target.data.kind),

@@ -13,6 +13,8 @@ export default function FileEditor({ style }: { style?: React.CSSProperties }) {
     const fileYamlError = useVeltraStore((s) => s.fileYamlError);
     const selectedResource = useVeltraStore((s) => s.selectedResource);
     const setNotice = useVeltraStore((s) => s.setNotice);
+    const fileExplorerMode = useVeltraStore((s) => s.fileExplorerMode);
+    const setFileExplorerMode = useVeltraStore((s) => s.setFileExplorerMode);
 
     const handleExport = () => {
         if (!activeFileText.trim()) {
@@ -42,6 +44,8 @@ export default function FileEditor({ style }: { style?: React.CSSProperties }) {
             selectedResource={selectedResource}
             title={activeFile ?? 'No file selected'}
             onExport={handleExport}
+            onToggleFileExplorer={() => setFileExplorerMode(!fileExplorerMode)}
+            fileExplorerActive={fileExplorerMode}
             style={style}
         />
     );

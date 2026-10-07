@@ -27,7 +27,7 @@ export function useCreateResourceForm(
 
     const [state, setState] = useState<CreateFormState>({
         name: suggestedName,
-        namespace: '',
+        namespace: 'default',
         nsCreateOpen: false,
         appLabelDraft: '',
         appLabelTouched: false,

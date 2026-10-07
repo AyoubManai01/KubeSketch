@@ -1,6 +1,5 @@
-import { apiVersionForKind } from "../../../store/store";
 import { isClusterScoped } from "../../../utils/k8sScope";
-import { SUPPORTED_KINDS, type SupportedKind } from "../../../types/types";
+import { SUPPORTED_KINDS } from "../../../types/types";
 import type { CanvasModel } from "../useCanvasModel";
 import type { InspectorDraft } from "../useInspectorDraft";
 import { NameField, type InspectorProps } from "./inspectorTypes";
@@ -74,7 +73,7 @@ export function Inspector(props: Props) {
     nameDraft: draft.nameDraft,
     setNameDraft: draft.setNameDraft,
     nameError: draft.nameError,
-    namespaceError: draft.namespaceError,
+    namespaceHint: draft.namespaceHint,
     labelsDraft: draft.labelsDraft,
     setLabelsDraft: draft.setLabelsDraft,
     annotationsDraft: draft.annotationsDraft,
@@ -323,17 +322,8 @@ export function Inspector(props: Props) {
                   <select
                     className="inspector-field__input inspector-field__input--select"
                     value={draft.draftKind}
-                    onChange={(e) => {
-                      const next = e.target.value as SupportedKind;
-                      draft.setDraftResource((prev) => {
-                        const base = prev ?? selectedNode.data.resource;
-                        return {
-                          ...base,
-                          kind: next,
-                          apiVersion: apiVersionForKind(next),
-                        };
-                      });
-                    }}
+                    disabled
+                    title="Resource type is fixed after creation"
                   >
                     {SUPPORTED_KINDS.map((k) => (
                       <option key={k} value={k}>
@@ -341,6 +331,9 @@ export function Inspector(props: Props) {
                       </option>
                     ))}
                   </select>
+                  <span className="inspector-field__hint">
+                    Resource type can't be changed after creation.
+                  </span>
                 </div>
                 <NameField
                   value={draft.nameDraft}
@@ -351,7 +344,7 @@ export function Inspector(props: Props) {
                   <div className="inspector-field">
                     <label className="inspector-field__label">Namespace</label>
                     <input
-                      className={`inspector-field__input${draft.namespaceError ? " inspector-field__input--invalid" : ""}`}
+                      className="inspector-field__input"
                       value={(draft.draftMetadata.namespace as string) ?? ""}
                       list={namespaceListId}
                       onChange={(e) =>
@@ -361,11 +354,11 @@ export function Inspector(props: Props) {
                           },
                         })
                       }
-                      placeholder="choose or type a namespace"
+                      placeholder="default"
                     />
-                    {draft.namespaceError && (
-                      <span className="inspector-field__error">
-                        {draft.namespaceError}
+                    {draft.namespaceHint && (
+                      <span className="inspector-field__hint">
+                        {draft.namespaceHint}
                       </span>
                     )}
                   </div>

@@ -11,6 +11,8 @@ export default function YamlEditor({ style }: { style?: React.CSSProperties }) {
     const setNotice = useVeltraStore((s) => s.setNotice);
     const yamlError = useVeltraStore((s) => s.yamlError);
     const selectedResource = useVeltraStore((s) => s.selectedResource);
+    const fileExplorerMode = useVeltraStore((s) => s.fileExplorerMode);
+    const setFileExplorerMode = useVeltraStore((s) => s.setFileExplorerMode);
 
     const handleImport = (file: File) => {
         if (!/\.ya?ml$/i.test(file.name)) {
@@ -69,6 +71,8 @@ export default function YamlEditor({ style }: { style?: React.CSSProperties }) {
             title="YAML Editor"
             onImport={handleImport}
             onExport={handleExport}
+            onToggleFileExplorer={() => setFileExplorerMode(!fileExplorerMode)}
+            fileExplorerActive={fileExplorerMode}
             style={style}
         />
     );

@@ -79,7 +79,7 @@ export default function CreateGatewayApiModal({ onClose }: Props) {
     const [gcName, setGcName] = useState(suggestedGatewayClassName);
     const [gcControllerName, setGcControllerName] = useState('acme.io/gateway-controller');
     const [gwName, setGwName] = useState(suggestedGatewayName);
-    const [gwNamespace, setGwNamespace] = useState('');
+    const [gwNamespace, setGwNamespace] = useState('default');
     // Stacked "+ New namespace" prompt (alternative to typing a new name).
     const [nsCreateOpen, setNsCreateOpen] = useState(false);
 

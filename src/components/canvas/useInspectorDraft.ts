@@ -36,7 +36,7 @@ export interface InspectorDraft {
   draftMetadata: Record<string, any>;
   pvcAccessModeViolation: string | null;
   nameError: string;
-  namespaceError: string;
+  namespaceHint: string;
   dirty: boolean;
   patchDraft: (patch: {
     kind?: SupportedKind;
@@ -172,14 +172,16 @@ export function useInspectorDraft(
     ? validateDraftName(draftKind, nameDraft)
     : "";
 
-  // Namespaces are never assumed: a namespaced resource must keep a non-empty
-  // namespace (clearing it would silently fall back to "default" at the model
-  // level). Mirrors the create-modal requirement.
-  const namespaceError =
+  // A missing namespace falls back to "default" at commit time, exactly like
+  // the rest of the model: the canvas already treats a namespaced resource
+  // without an explicit namespace as living in "default" and writes it back on
+  // serialization. Empty is therefore a valid draft state — surface it as a
+  // hint instead of blocking validation.
+  const namespaceHint =
     draftResource && !isClusterScoped(draftKind)
       ? String(draftMetadata.namespace ?? "").trim()
         ? ""
-        : "Choose or create a namespace."
+        : "Leave empty to use the default namespace."
       : "";
 
   // True when the draft holds anything the model doesn't, which gates the
@@ -346,10 +348,6 @@ export function useInspectorDraft(
     // commit so the model is never left invalid (invariant 8).
     if (validateDraftName(kind, name)) return;
 
-    // A namespaced resource must keep a namespace (no silent "default"
-    // fallback). Surfaced inline on the Namespace field.
-    if (namespaceError) return;
-
     // Single-node access-mode guard (invariant 14): a RWO/RWOP claim mounted by
     // a multi-replica workload is impossible. The inline error explains why.
     if (pvcAccessModeViolation) return;
@@ -361,10 +359,12 @@ export function useInspectorDraft(
       labels: parseKeyValueString(labelsDraft),
       annotations: parseKeyValueString(annotationsDraft),
     };
-    // Cluster-scoped kinds (PV/StorageClass) never carry a namespace: strip any
-    // stale value the draft may have inherited from YAML.
+    // A namespaced resource without an explicit namespace lives in "default",
+    // matching the canvas model (which also writes it back on serialization).
     if (isClusterScoped(kind)) {
       delete metadata.namespace;
+    } else if (!String(metadata.namespace ?? "").trim()) {
+      metadata.namespace = "default";
     }
     const finalResource: K8sResource = {
       ...draftResource,
@@ -392,7 +392,6 @@ export function useInspectorDraft(
     nameDraft,
     isManaged,
     pvcAccessModeViolation,
-    namespaceError,
   ]);
 
   return {
@@ -412,7 +411,7 @@ export function useInspectorDraft(
     draftMetadata,
     pvcAccessModeViolation,
     nameError,
-    namespaceError,
+    namespaceHint,
     dirty,
     patchDraft,
     handleValidate,

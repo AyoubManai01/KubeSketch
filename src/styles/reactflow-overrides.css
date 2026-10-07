@@ -3,8 +3,13 @@
   background: linear-gradient(180deg, #090d16 0%, #0d1220 100%) !important;
 }
 
-.react-flow__edge {
-  pointer-events: visibleStroke !important;
+/* Inferred (YAML-derived) edges are pure visuals: fully click-transparent so they
+   never swallow clicks on nodes or handles they cross. React Flow z-elevates edges
+   whose endpoints are nested nodes above top-level node cards, and a clickable
+   visible stroke would otherwise intercept every click it passes over. User-drawn
+   (selectable) edges keep the library default behavior. */
+.react-flow__edge.edge--inferred {
+  pointer-events: none !important;
 }
 
 .react-flow__controls {

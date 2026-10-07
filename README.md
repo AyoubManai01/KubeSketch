@@ -1,57 +1,96 @@
-<p align="center"> <img src="./public/Logo-nobg.png" width="120"/> </p> <h1 align="center" style="font-size: 48px;">Veltra</h1>
+<p align="center">
+  <img src="./public/Logo-nobg.png" width="120" alt="Veltra logo" />
+</p>
+
+<h1 align="center">Veltra</h1>
 
 <p align="center">
-  <b>Design, understand, and evolve Kubernetes infrastructure visually - without losing YAML control.</b>
+  <b>Design, understand, and evolve Kubernetes infrastructure visually — without losing YAML control.</b>
 </p>
 
 <p align="center">
-  <img src="./public/bannergh.png"/>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg" alt="License: GPL-3.0" /></a>
+  <a href="./CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs welcome" /></a>
 </p>
 
-## What is Veltra?
+> **NOTICE:** Veltra is an independent open-source project under active
+> development — expect rough edges and frequent changes on the way to a stable
+> release. Veltra is **not** a CNCF project, and is not affiliated with,
+> sponsored, or endorsed by the CNCF, the Linux Foundation, or the Kubernetes
+> project.
 
-Veltra is an open-source visual Kubernetes IDE that keeps your YAML and infrastructure canvas in sync.  
-Instead of forcing teams to choose between raw manifests and visual modeling, Veltra combines both in one workflow.
+Veltra is a visual Kubernetes IDE that keeps your YAML and infrastructure
+canvas in sync.
 
-Kubernetes YAML is powerful, but it becomes difficult to reason about as systems grow. Veltra helps developers:
+Veltra was created to blend the raw power of Kubernetes manifests with a
+visual modeling experience — so you never have to choose between code and
+diagrams, and the two sides never drift apart.
 
-- see relationships between resources at a glance
-- edit manifests with confidence
-- understand architecture changes before shipping them
+<div align="center">
+  <img src="./public/Demo.png" width="80%" alt="Veltra: Monaco YAML editor (left) and architecture canvas (right)" />
+</div>
 
 ## Features
 
-- **YAML Editor** powered by Monaco for a familiar, code-first experience
-- **Visual Canvas** for infrastructure modeling and resource relationships
-- **YAML <-> Canvas Sync** (work in progress) to bridge visual and manifest editing
-- **Architecture Visualization** to make clusters easier to communicate and review
+- Vendor-independent / generic Kubernetes UI — works with any multi-document manifest
+- **YAML stays the single source of truth** — the manifest and canvas are kept in sync, in both directions
+- Visual architecture mapping with inferred relationships (selectors, backends, references, ownership)
+- **Controller simulation** — see the ReplicaSets, Pods, and Jobs Kubernetes would materialize
+- **Semantic drag-and-drop linking** — draw a connection and Veltra writes real fields into the manifest
+- Guided resource creation and an inspector with inline validation
+- Namespace and cluster frames with an editable layout mode
+- VSCode-style file explorer that projects the manifest into per-resource files
+- Export the canvas as PNG or SVG
+- Local-first — runs entirely in your browser, no backend, no cluster connection
 
-## Demo / Screenshots
+## Supported resource kinds
 
+<details>
+<summary>Show the full list</summary>
 
-![Veltra Screenshot](./public/Demo.png)
+Deployment, ReplicaSet, Pod, Service, Ingress, HorizontalPodAutoscaler,
+VerticalPodAutoscaler, ConfigMap, Secret, PersistentVolumeClaim,
+PersistentVolume, StorageClass, Job, CronJob, and Gateway API resources
+(GatewayClass, Gateway, HTTPRoute, GRPCRoute, TCPRoute, TLSRoute, UDPRoute).
 
-## Tech Stack
+</details>
 
-- **React + TypeScript**
-- **React Flow**
-- **Monaco Editor**
-- **Zustand**
-- **js-yaml**
-- **Vite**
+## Quickstart
 
-## Getting Started
+If you want to design or explore a Kubernetes architecture, Veltra runs
+entirely locally — there is nothing to deploy to your cluster.
+
+**Prerequisites**
+
+- **Node.js 20.19+ or 22.12+** (required by Vite 8) with **npm**
+- **Git**
+- A modern browser (Chrome, Firefox, Edge, or Safari)
+
+**Run it locally**
 
 ```bash
-git clone https://github.com/AyoubManai01/veltra.git
-cd veltra
+git clone https://github.com/AyoubManai01/Veltra.git
+cd Veltra
 npm install
 npm run dev
 ```
 
-Open the local URL from your terminal (usually `http://localhost:5173`).
+Open the URL printed in your terminal (usually `http://localhost:5173`). The
+landing page links straight to the IDE — or go directly to `/ide`.
 
-## Example YAML
+## Using Veltra
+
+- The landing page is served at `/`; the IDE lives at `/ide`.
+- Paste or type multi-document YAML into the editor — the canvas renders it
+  immediately.
+- Drag resources to arrange the architecture; draw connections between them
+  to link them semantically.
+- Select a resource to edit its fields in the inspector; changes are validated
+  before they are committed.
+- Use the toolbar to load the sample, reset the canvas layout, export the
+  graph as PNG/SVG, or switch to the file explorer view.
+
+For example:
 
 ```yaml
 apiVersion: apps/v1
@@ -88,31 +127,108 @@ spec:
       targetPort: 80
 ```
 
-## Roadmap
+**Configuration**
 
-### Current
+Veltra is **local-first** and needs no configuration files or environment
+variables:
 
-- [x] Basic YAML editing experience
-- [x] Initial visual canvas foundation
-- [x] Local development setup with Vite + React + TypeScript
+- Everything runs in the browser; there is no backend and no cluster
+  connection, so your manifests stay on your machine.
+- Your manifest, canvas positions, manual links, namespace layout, and UI
+  state are persisted in browser `localStorage`, so your work survives
+  refreshes.
+- To deploy a static build, note that the `/ide` route needs a rewrite rule
+  (`/ide` → `/index.html`) on static hosts.
 
-### Upcoming
+## Quick Start for Contributors
 
-- [ ] Reliable bidirectional YAML <-> canvas synchronization
-- [ ] Resource validation and diagnostics
-- [ ] Multi-resource graph navigation
-- [ ] Export/import project states
-- [ ] Collaboration-friendly sharing flows
+Want to hack on Veltra? We'd love your help!
 
-## Contributing
+Check out the [Contributing Guidelines](./CONTRIBUTING.md) for detailed
+instructions on setting up your local development environment, running the
+tests, and the pull request expectations.
 
-Contributions are welcome and appreciated.  
-Please read [`CONTRIBUTING.md`](./CONTRIBUTING.md) to get started.
+```bash
+git clone https://github.com/AyoubManai01/Veltra.git
+cd Veltra
+npm install
+npm run dev      # Vite dev server at http://localhost:5173
+npm run lint     # ESLint
+npm run test     # Vitest suite
+npm run build    # typecheck + production bundle
+```
+
+## How it works
+
+YAML text, canvas nodes and edges, the inspector, and the file tree are all
+projections of one resource model held in a Zustand store:
+
+```
+YAML text ──parseYaml──▶ K8sResource[] ──buildGraph──▶ nodes + inferred edges
+     ▲                                                        │
+     └──── resourcesToYaml ◀── toResources(nodes) ◀── canvas / inspector edits
+```
+
+- **YAML → canvas:** multi-document YAML is parsed into resources, then a
+  graph builder produces nested, lane-laid-out nodes plus inferred edges for
+  the relationships Kubernetes encodes.
+- **Canvas → YAML:** every structural change funnels through a single commit
+  path that rebuilds the graph and re-serializes the manifest, so the two
+  sides never drift apart.
+- **Synthetic resources** (materialized ReplicaSets, Pods, and Jobs) are
+  display-only: they are filtered out before serialization, so they never
+  appear in your YAML.
+
+**Tech stack:** React + TypeScript, React Flow
+([@xyflow/react](https://reactflow.dev/)), Monaco Editor
+([@monaco-editor/react](https://github.com/suren-atoyan/monaco-react)), Zustand,
+js-yaml, Vite, and Vitest.
+
+## Get involved
+
+Check out our:
+
+- [Contributing Guidelines](./CONTRIBUTING.md)
+- [Code of Conduct](./CODE_OF_CONDUCT.md)
+- [Security Policy](./SECURITY.md)
+
+Veltra is an independent open-source project that follows community practices
+inspired by established CNCF and open-source projects. Veltra has adopted the
+[CNCF Code of Conduct](https://github.com/cncf/foundation/blob/main/code-of-conduct.md)
+for its community guidelines. Veltra is **not** a CNCF project: it is not
+hosted, sponsored, or endorsed by the CNCF or the Linux Foundation, and no
+such affiliation is claimed.
+
 
 ## License
 
-This project is licensed under the **MIT License**.
+Veltra is released under the terms of the
+[GNU General Public License, version 3 (GPL-3.0)](./LICENSE).
 
-## Vision
+Copyright © 2026 [Ayoub Manai](https://github.com/AyoubManai01)
 
-**Veltra aims to become the Figma for Kubernetes infrastructure** - a place where teams can design, understand, and iterate on cloud architecture with speed and clarity.
+## Frequently Asked Questions
+
+**Does Veltra connect to my cluster?**
+
+Yes, we can deploy Veltra on your cluster. The project is still in its early phases, so fill the form on our website to reserve your spot and we will contact you!
+
+**Where is my data stored?**
+
+In your browser's `localStorage` on your own machine. Veltra has no backend
+and sends nothing to a server.
+
+**Which Kubernetes resources does Veltra understand?**
+
+See the [supported resource kinds](#supported-resource-kinds) listed above —
+workloads, networking (including Gateway API), storage, configuration, and
+autoscaling.
+
+## Acknowledgements
+
+Veltra is built on wonderful open-source projects, including
+[React](https://react.dev/), [React Flow](https://reactflow.dev/),
+[Monaco Editor](https://microsoft.github.io/monaco-editor/),
+[Zustand](https://zustand.docs.pmnd.rs/), [js-yaml](https://github.com/nodeca/js-yaml),
+[Vite](https://vite.dev/), and [Vitest](https://vitest.dev/). Thank you to
+their maintainers and contributors.

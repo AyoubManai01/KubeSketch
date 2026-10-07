@@ -25,7 +25,7 @@ export interface InspectorProps {
   nameDraft: string;
   setNameDraft: (v: string) => void;
   nameError: string;
-  namespaceError: string;
+  namespaceHint: string;
   labelsDraft: string;
   setLabelsDraft: (v: string) => void;
   annotationsDraft: string;

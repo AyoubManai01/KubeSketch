@@ -26,7 +26,6 @@ export default function App() {
   const clearAll = useVeltraStore((s) => s.clearAll);
   const resetLayout = useVeltraStore((s) => s.resetLayout);
   const fileExplorerMode = useVeltraStore((s) => s.fileExplorerMode);
-  const setFileExplorerMode = useVeltraStore((s) => s.setFileExplorerMode);
 
   // Landing page at "/", IDE at "/ide" (see landingConfig.ts). Vite dev and
   // `vite preview` SPA-fallback /ide to index.html; a static host needs a
@@ -218,17 +217,6 @@ export default function App() {
               </div>
             )}
           </div>
-          <button 
-            type="button" 
-            className={`toolbar-btn${fileExplorerMode ? ' toolbar-btn--active' : ''}`} 
-            onClick={() => setFileExplorerMode(!fileExplorerMode)}
-            title="Toggle the VSCode-style file explorer view"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
-            </svg>
-            Files
-          </button>
         </div>
       </header>
 

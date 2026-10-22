@@ -36,17 +36,23 @@ YAML text ──parseYaml──▶ K8sResource[] ──buildGraph──▶ nodes
 - [src/components/NsFrame.tsx](src/components/NsFrame.tsx): renders the cluster + namespace frames inside a `ViewportPortal`; in the Namespaces editing mode they get pointer drag/resize surfaces (8 handles each). Drag deltas are cumulative and events bubble through the outer frame, so only the pointer-captured element may apply a move (guard: `drag.el === e.currentTarget`), and the store diffs absolute rects against its own layout instead of adding deltas.
 - [src/components/Canvas.tsx](src/components/Canvas.tsx): the canvas orchestrator (store wiring, layout, modals). Its internals live in [src/components/canvas/](src/components/canvas/): `CanvasToolbar.tsx`, `CanvasFlow.tsx`, `useCanvasModel.ts` (all projection memos), `useInspectorDraft.ts` (the draft buffer + Validate commit), `useCanvasHandlers.ts` (drag/clamp/reassignment handlers), `inspectorUtils.ts` (pure helpers) and `inspector/` (`Inspector.tsx` shell + per-kind section components). [src/components/YamlEditor.tsx](src/components/YamlEditor.tsx): Monaco + selected-resource highlight. [src/components/CreateResourceModal.tsx](src/components/CreateResourceModal.tsx): the creation-modal shell; its form state/builder/sections live in [src/components/createResource/](src/components/createResource/). [src/components/kindMeta.tsx](src/components/kindMeta.tsx): the single source of `KIND_COLORS`/`KIND_ICONS`/`hexToRgba` shared by Canvas, K8sNode, the modals and the file explorer. Styling is split by area under [src/styles/](src/styles/), loaded in order from [src/index.css](src/index.css).
 
-localStorage keys: `kubesketch_yaml`, `kubesketch_user_edges`, `kubesketch_node_positions`, `kubesketch_ns_layout` (embeds the cluster + namespace rects; layouts persisted before nodes were removed may carry an ignored `nodes` key), `kubesketch_file_explorer`, `kubesketch_active_file`, `kubesketch_explorer_split`, `kubesketch_ide_theme` (IDE dark/light), `kubesketch_landing_theme` (landing page dark/light; seeds the IDE theme on first visit).
+localStorage keys: `kubesketch_yaml`, `kubesketch_user_edges`, `kubesketch_node_positions`, `kubesketch_ns_layout` (embeds the cluster + namespace rects; layouts persisted before nodes were removed may carry an ignored `nodes` key), `kubesketch_file_explorer`, `kubesketch_active_file`, `kubesketch_explorer_split`, `kubesketch_ide_theme` / `kubesketch_landing_theme` (the shared dark/light theme: one store writes BOTH keys on every change so the landing page and IDE never disagree).
 
 ## IDE theming
 
 The IDE supports dark (default) and light themes via a moon/sun toggle in the
-top navbar (`ThemeToggle`, styled as `.toolbar__theme` in app-chrome.css).
+top navbar (`ThemeToggle`, styled as `.toolbar__theme` in app-chrome.css),
+mirroring the landing page's `.welcome__theme` group.
 Theme state lives in [src/utils/ideTheme.ts](src/utils/ideTheme.ts): a tiny
 module store (`useSyncExternalStore`) — presentation-only, deliberately OUTSIDE
-the resource-model Zustand store. It persists to `kubesketch_ide_theme`, seeds
-from `kubesketch_landing_theme` when no IDE preference exists, and mirrors the
-active theme to `data-theme="light|dark"` on `<html>` (set synchronously at
+the resource-model Zustand store — and it is the SINGLE theme source for both
+pages: the landing toggle and `ThemeToggle` both call `setIdeTheme`, which
+persists the choice to BOTH `kubesketch_ide_theme` and `kubesketch_landing_theme`
+so `/` and `/ide` always agree (writing only one key is what used to let a
+toggle on one page be ignored by the other). `readStoredTheme` prefers the IDE
+key with the landing key as a legacy fallback (resolving any pre-existing
+divergence on the next toggle). The active theme is mirrored to
+`data-theme="light|dark"` on `<html>` (set synchronously at
 module load, so a persisted light theme never flashes dark) and on the `.app`
 root div (App reads the same hook — this is the element every light selector
 is scoped to).

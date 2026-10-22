@@ -1,14 +1,7 @@
 import { useState } from 'react';
 import { GITHUB_URL, IDE_PATH } from '../landingConfig';
 import { buildContactMailto, type ContactFormState } from '../utils/contactForm';
-
-type LandingTheme = 'dark' | 'light';
-
-const THEME_KEY = 'kubesketch_landing_theme';
-
-function readTheme(): LandingTheme {
-    return localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark';
-}
+import { setIdeTheme, useIdeTheme } from '../utils/ideTheme';
 
 const EMPTY_FORM: ContactFormState = { name: '', email: '', org: '', message: '' };
 
@@ -19,21 +12,17 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * opened from here in a new tab). Pure static chrome: no store, no canvas.
  * The IDE URL is derived from the current path so a subpath deployment
  * (e.g. GitHub Pages at /veltra/) keeps working without server config.
- * The theme choice is persisted and also seeds the IDE's theme (see
- * utils/ideTheme.ts).
+ * The theme toggle shares the IDE's theme store (utils/ideTheme.ts), which
+ * persists the choice to both pages' storage keys, so a change made here is
+ * honored on "/ide" and vice versa.
  */
 export default function WelcomeScreen() {
     const base = window.location.pathname.replace(/\/+$/, '');
     const ideUrl = `${base}${IDE_PATH}`;
-    const [theme, setTheme] = useState<LandingTheme>(readTheme);
+    const theme = useIdeTheme();
     const [form, setForm] = useState<ContactFormState>(EMPTY_FORM);
     const [errors, setErrors] = useState<Partial<Record<keyof ContactFormState, string>>>({});
     const isLight = theme === 'light';
-
-    const applyTheme = (next: LandingTheme) => {
-        setTheme(next);
-        localStorage.setItem(THEME_KEY, next);
-    };
 
     const setField = (field: keyof ContactFormState) => (
         e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
@@ -89,7 +78,7 @@ export default function WelcomeScreen() {
                         <button
                             type="button"
                             className={`welcome__theme-btn${!isLight ? ' welcome__theme-btn--active' : ''}`}
-                            onClick={() => applyTheme('dark')}
+                            onClick={() => setIdeTheme('dark')}
                             aria-pressed={!isLight}
                             aria-label="Dark mode"
                             title="Dark mode"
@@ -99,7 +88,7 @@ export default function WelcomeScreen() {
                         <button
                             type="button"
                             className={`welcome__theme-btn${isLight ? ' welcome__theme-btn--active' : ''}`}
-                            onClick={() => applyTheme('light')}
+                            onClick={() => setIdeTheme('light')}
                             aria-pressed={isLight}
                             aria-label="Light mode"
                             title="Light mode"

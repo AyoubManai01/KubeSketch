@@ -1,8 +1,8 @@
-# Contributing to Veltra
+# Contributing to KubeSketch
 
-Thanks for your interest in contributing to Veltra! 🎉
+Thanks for your interest in contributing to KubeSketch! 🎉
 
-Veltra is an independent open-source Kubernetes visual IDE, and we welcome
+KubeSketch is an independent open-source Kubernetes visual IDE, and we welcome
 improvements of all sizes — from typo fixes and documentation updates to bug
 fixes and major features. This guide keeps the contribution process simple and
 approachable.
@@ -28,7 +28,7 @@ cd Veltra
 npm install
 ```
 
-## Running Veltra locally
+## Running KubeSketch locally
 
 Start the Vite development server:
 
@@ -61,7 +61,7 @@ npm run preview
 
 ## Testing
 
-Veltra uses [Vitest](https://vitest.dev/) with a jsdom environment. Tests live
+KubeSketch uses [Vitest](https://vitest.dev/) with a jsdom environment. Tests live
 under `src/tests/`, grouped by area (`utils/`, `store/`, `components/`), with
 the shared setup in `src/tests/setup.ts`.
 
@@ -110,7 +110,7 @@ Use descriptive titles and include relevant logs or screenshots when helpful.
 
 For anything larger than a small fix, open an issue to discuss the idea
 **before** writing much code. Early feedback saves everyone time and helps
-align the design with Veltra's model (the manifest as the single source of
+align the design with KubeSketch's model (the manifest as the single source of
 truth). Bug fixes and small improvements don't need prior discussion.
 
 ## Pull request expectations
@@ -164,7 +164,7 @@ Keep commits focused on a single change so the history stays readable.
 
 ## Code of Conduct
 
-All participants in the Veltra community are expected to follow our
+All participants in the KubeSketch community are expected to follow our
 [Code of Conduct](./CODE_OF_CONDUCT.md). We value respectful collaboration and
 constructive feedback.
 
@@ -173,4 +173,4 @@ constructive feedback.
 If you find a potential security vulnerability, please do **not** open a public
 issue. See [SECURITY.md](./SECURITY.md) for how to report it privately.
 
-Thanks for helping shape Veltra!
+Thanks for helping shape KubeSketch!

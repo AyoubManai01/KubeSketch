@@ -7,7 +7,7 @@ import type { NsLayout } from '../utils/teachingFrame';
 import type { K8sResource, SupportedKind } from '../types/types';
 import { YAML_KEY } from './constants';
 import { persistNsLayout, persistUserEdges } from './persistence';
-import { makeNotice, type CanvasNotice, type SelectedResource, type VeltraState } from './types';
+import { makeNotice, type CanvasNotice, type SelectedResource, type KubeSketchState } from './types';
 
 /**
  * Merge inferred edges with the user's manual edges.
@@ -140,11 +140,11 @@ export function deriveGraph(
  * Rebuilds the graph, persists positions, and serializes YAML when sync is active.
  */
 export function commitResources(
-    state: VeltraState,
+    state: KubeSketchState,
     resources: K8sResource[],
     prevNodes: Node<K8sNodeData>[],
     opts: { userEdges?: Edge[]; selectedResource?: SelectedResource | null; nsLayout?: NsLayout | null } = {}
-): Partial<VeltraState> {
+): Partial<KubeSketchState> {
     const userEdges = opts.userEdges ?? state.userEdges;
     if (opts.userEdges) {
         persistUserEdges(userEdges);
@@ -165,7 +165,7 @@ export function commitResources(
         persistNsLayout(derived.nsLayout);
     }
 
-    const result: Partial<VeltraState> = { ...derivedRest, userEdges, hpaOverrides };
+    const result: Partial<KubeSketchState> = { ...derivedRest, userEdges, hpaOverrides };
     if ('selectedResource' in opts) {
         result.selectedResource = opts.selectedResource ?? null;
     }

@@ -10,8 +10,8 @@ export interface ContactFormState {
 export function buildContactMailto(form: ContactFormState): string {
     const subject = encodeURIComponent(
         form.org
-            ? `Veltra cluster integration inquiry (${form.org})`
-            : 'Veltra cluster integration inquiry'
+            ? `KubeSketch cluster integration inquiry (${form.org})`
+            : 'KubeSketch cluster integration inquiry'
     );
     const body = encodeURIComponent(
         `Name: ${form.name}\nEmail: ${form.email}\nOrganization: ${form.org || '-'}\n\n${form.message}`

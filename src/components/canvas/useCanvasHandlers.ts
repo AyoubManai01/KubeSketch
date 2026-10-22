@@ -16,7 +16,7 @@ import {
   FALLBACK_NODE_HEIGHT,
   type NsLayout,
 } from "../../utils/teachingFrame";
-import { useVeltraStore } from "../../store/store";
+import { useKubeSketchStore } from "../../store/store";
 import { setRfInstance } from "../../utils/exportCanvas";
 import { flowPointFromScreen } from "./inspectorUtils";
 
@@ -60,17 +60,17 @@ export function useCanvasHandlers({
   nsEditMode,
   effectiveLayout,
 }: Params): CanvasHandlers {
-  const setCanvasNodes = useVeltraStore((s) => s.setCanvasNodes);
-  const setCanvasNodesPositionOnly = useVeltraStore(
+  const setCanvasNodes = useKubeSketchStore((s) => s.setCanvasNodes);
+  const setCanvasNodesPositionOnly = useKubeSketchStore(
     (s) => s.setCanvasNodesPositionOnly,
   );
-  const persistNodePositions = useVeltraStore((s) => s.persistNodePositions);
-  const addCanvasEdge = useVeltraStore((s) => s.addCanvasEdge);
-  const applyCanvasEdgeChanges = useVeltraStore(
+  const persistNodePositions = useKubeSketchStore((s) => s.persistNodePositions);
+  const addCanvasEdge = useKubeSketchStore((s) => s.addCanvasEdge);
+  const applyCanvasEdgeChanges = useKubeSketchStore(
     (s) => s.applyCanvasEdgeChanges,
   );
-  const updateNodeFromCanvas = useVeltraStore((s) => s.updateNodeFromCanvas);
-  const setNotice = useVeltraStore((s) => s.setNotice);
+  const updateNodeFromCanvas = useKubeSketchStore((s) => s.updateNodeFromCanvas);
+  const setNotice = useKubeSketchStore((s) => s.setNotice);
 
   // Skip YAML serialization for position/select/dimension-only changes (perf optimization)
   const onNodesChange = (changes: NodeChange[]) => {
@@ -160,7 +160,7 @@ export function useCanvasHandlers({
     // React Flow emits onNodesChange before onNodeDrag in the same event, and
     // re-renders are batched: the render-scope `nodes` is one frame behind, so
     // clamp against the fresh store state.
-    const current = useVeltraStore.getState().nodes;
+    const current = useKubeSketchStore.getState().nodes;
     const next = current.map((n) => {
       const m = moved.find((mn) => mn.id === n.id);
       if (!m || n.parentId) return n;
@@ -190,7 +190,7 @@ export function useCanvasHandlers({
       // final onNodeDrag: re-apply the constraint so the node doesn't jump out
       // of its box at the end of the gesture.
       if (layout) {
-        const current = useVeltraStore.getState().nodes;
+        const current = useKubeSketchStore.getState().nodes;
         const draggedIds = new Set(moved.map((mn) => mn.id));
         const nodeRect = (o: Node<K8sNodeData>) => ({
           x: o.position.x,
@@ -283,7 +283,7 @@ export function useCanvasHandlers({
         .filter((ns) => rectContainsLocal(ns, point))
         .sort((a, b) => a.width * a.height - b.width * b.height)[0];
     const reassignedIds: string[] = [];
-    const storeNodes = useVeltraStore.getState().nodes;
+    const storeNodes = useKubeSketchStore.getState().nodes;
     const nextNodes = storeNodes.map((n) => {
       const origin = origins.get(n.id);
       if (!origin) return n;

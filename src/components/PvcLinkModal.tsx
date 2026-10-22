@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useVeltraStore } from '../store/store';
+import { useKubeSketchStore } from '../store/store';
 
 /**
  * Post-drag prompt: after drawing a PVC → Pod/Deployment/ReplicaSet connection the
@@ -7,9 +7,9 @@ import { useVeltraStore } from '../store/store';
  * written into the target's Pod spec.
  */
 export default function PvcLinkModal() {
-    const pending = useVeltraStore((s) => s.pendingPvcLink);
-    const confirmPvcLink = useVeltraStore((s) => s.confirmPvcLink);
-    const cancelPvcLink = useVeltraStore((s) => s.cancelPvcLink);
+    const pending = useKubeSketchStore((s) => s.pendingPvcLink);
+    const confirmPvcLink = useKubeSketchStore((s) => s.confirmPvcLink);
+    const cancelPvcLink = useKubeSketchStore((s) => s.cancelPvcLink);
 
     const [volumeName, setVolumeName] = useState('');
     const [lastLinkKey, setLastLinkKey] = useState('');

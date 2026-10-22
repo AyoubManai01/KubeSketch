@@ -1,35 +1,35 @@
-# Veltra Community Code of Conduct
+# KubeSketch Community Code of Conduct
 
-Veltra follows the [CNCF Community Code of Conduct](https://github.com/cncf/foundation/blob/main/code-of-conduct.md) as the standard for its community spaces.
+KubeSketch follows the [CNCF Community Code of Conduct](https://github.com/cncf/foundation/blob/main/code-of-conduct.md) as the standard for its community spaces.
 
 ## About this Code of Conduct
 
-Veltra is an **independent open-source project**. It has adopted the CNCF
+KubeSketch is an **independent open-source project**. It has adopted the CNCF
 Community Code of Conduct as its community standard as part of following good
 practices inspired by mature CNCF and open-source projects.
 
 Please note:
 
-- Veltra is **not a CNCF project**. It is not hosted, sponsored, endorsed, or
+- KubeSketch is **not a CNCF project**. It is not hosted, sponsored, endorsed, or
   governed by the CNCF or the Linux Foundation, and no such affiliation is
   claimed.
 - Adopting the CNCF Code of Conduct does not imply CNCF sponsorship,
   endorsement, or affiliation.
-- Veltra does not use CNCF logos, badges, or branding.
+- KubeSketch does not use CNCF logos, badges, or branding.
 - The official text of the CNCF Community Code of Conduct is available at
   <https://github.com/cncf/foundation/blob/main/code-of-conduct.md> and is
   reproduced verbatim below with attribution preserved.
 
-This Code of Conduct applies in all Veltra community spaces, including the
+This Code of Conduct applies in all KubeSketch community spaces, including the
 GitHub repository (issues, pull requests, and discussions) and any other
-official Veltra communication channels.
+official KubeSketch communication channels.
 
-## Reporting incidents in the Veltra community
+## Reporting incidents in the KubeSketch community
 
-> This section is specific to Veltra and supplements the reporting section of
+> This section is specific to KubeSketch and supplements the reporting section of
 > the CNCF Code of Conduct reproduced below.
 
-To report a Code of Conduct incident in the Veltra community, contact the
+To report a Code of Conduct incident in the KubeSketch community, contact the
 project maintainers **privately**:
 
 - Prefer a private channel, such as messaging a maintainer directly through
@@ -37,11 +37,11 @@ project maintainers **privately**:
 - If no private channel is available, open an issue in the repository **without
   including sensitive details**, and the maintainers will follow up privately.
 
-Do **not** send Veltra Code of Conduct reports to the CNCF or Kubernetes Code
-of Conduct Committees: Veltra is not a CNCF project, and those committees have
+Do **not** send KubeSketch Code of Conduct reports to the CNCF or Kubernetes Code
+of Conduct Committees: KubeSketch is not a CNCF project, and those committees have
 no jurisdiction over this project.
 
-Reports are handled confidentially by the Veltra maintainers. The project is
+Reports are handled confidentially by the KubeSketch maintainers. The project is
 maintained by volunteers, so please allow a few days for an initial response.
 
 ---
@@ -165,5 +165,5 @@ http://contributor-covenant.org/version/2/0/code_of_conduct/
 
 The CNCF Community Code of Conduct v1.3 above is reproduced from
 <https://github.com/cncf/foundation/blob/main/code-of-conduct.md>
-(SPDX-License-Identifier: CC-BY-4.0). For incidents in the Veltra community,
-follow the Veltra-specific reporting instructions at the top of this file.
+(SPDX-License-Identifier: CC-BY-4.0). For incidents in the KubeSketch community,
+follow the KubeSketch-specific reporting instructions at the top of this file.

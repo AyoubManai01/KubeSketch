@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { useVeltraStore } from '../../store/store';
+import { useKubeSketchStore } from '../../store/store';
 import type { NsLayout } from '../../utils/teachingFrame';
 import type { K8sResource } from '../../types/types';
 
@@ -36,11 +36,11 @@ const LAYOUT: NsLayout = {
 describe('placement through the store', () => {
     beforeEach(() => {
         localStorage.clear();
-        useVeltraStore.getState().clearAll();
+        useKubeSketchStore.getState().clearAll();
     });
 
     const nodeOf = (kind: string, name: string) =>
-        useVeltraStore.getState().nodes.find((n) => n.data.kind === kind && n.data.name === name);
+        useKubeSketchStore.getState().nodes.find((n) => n.data.kind === kind && n.data.name === name);
 
     const containedIn = (node: NonNullable<ReturnType<typeof nodeOf>>, rect: { x: number; y: number; width: number; height: number }) => {
         const w = typeof node.style?.width === 'number' ? node.style.width : 180;
@@ -56,16 +56,16 @@ describe('placement through the store', () => {
     it('ignores a stale saved position when re-creating a resource: it lands inside its namespace', () => {
         // Pin from a previously dragged-then-deleted resource.
         localStorage.setItem(
-            'veltra_node_positions',
+            'kubesketch_node_positions',
             JSON.stringify({ 'Deployment:web': { x: 5000, y: 5000 } })
         );
-        useVeltraStore.setState({ nsLayout: LAYOUT });
-        useVeltraStore.getState().addConfiguredNode('Deployment', deployment('web', 'default'));
+        useKubeSketchStore.setState({ nsLayout: LAYOUT });
+        useKubeSketchStore.getState().addConfiguredNode('Deployment', deployment('web', 'default'));
         const n = nodeOf('Deployment', 'web');
         expect(n).toBeTruthy();
         expect(containedIn(n!, LAYOUT.namespaces[0])).toBe(true);
         // The stale pin is gone from storage.
-        const saved = JSON.parse(localStorage.getItem('veltra_node_positions') ?? '{}');
+        const saved = JSON.parse(localStorage.getItem('kubesketch_node_positions') ?? '{}');
         expect(saved['Deployment:web']).toBeUndefined();
     });
 
@@ -74,17 +74,17 @@ describe('placement through the store', () => {
             cluster: { x: 0, y: 0, width: 1200, height: 900 },
             namespaces: [{ name: 'default', x: 100, y: 100, width: 150, height: 120 }],
         };
-        useVeltraStore.setState({ nsLayout: small });
-        useVeltraStore.getState().addConfiguredNode('ConfigMap', configMap('cm', 'default'));
+        useKubeSketchStore.setState({ nsLayout: small });
+        useKubeSketchStore.getState().addConfiguredNode('ConfigMap', configMap('cm', 'default'));
         const n = nodeOf('ConfigMap', 'cm')!;
-        const ns = useVeltraStore.getState().nsLayout!.namespaces[0];
+        const ns = useKubeSketchStore.getState().nsLayout!.namespaces[0];
         expect(containedIn(n, ns)).toBe(true);
         expect(ns.width).toBeGreaterThan(150); // grown
         // The grown layout is persisted so NS-mode edits start from it.
-        const persisted = JSON.parse(localStorage.getItem('veltra_ns_layout') ?? '{}');
+        const persisted = JSON.parse(localStorage.getItem('kubesketch_ns_layout') ?? '{}');
         expect(persisted.namespaces[0].width).toBeGreaterThan(150);
         // And the cluster covers the grown box.
-        const cluster = useVeltraStore.getState().nsLayout!.cluster;
+        const cluster = useKubeSketchStore.getState().nsLayout!.cluster;
         expect(ns.x + ns.width).toBeLessThanOrEqual(cluster.x + cluster.width);
         expect(ns.y + ns.height).toBeLessThanOrEqual(cluster.y + cluster.height);
     });
@@ -97,37 +97,37 @@ describe('placement through the store', () => {
                 { name: 'b', x: 600, y: 100, width: 400, height: 400 },
             ],
         };
-        useVeltraStore.setState({ nsLayout: layout });
-        useVeltraStore.getState().addConfiguredNode('ConfigMap', configMap('cm', 'a'));
+        useKubeSketchStore.setState({ nsLayout: layout });
+        useKubeSketchStore.getState().addConfiguredNode('ConfigMap', configMap('cm', 'a'));
         const before = nodeOf('ConfigMap', 'cm')!;
         expect(containedIn(before, layout.namespaces[0])).toBe(true);
-        useVeltraStore.getState().updateNodeFromCanvas(before.id, { namespace: 'b' });
+        useKubeSketchStore.getState().updateNodeFromCanvas(before.id, { namespace: 'b' });
         const after = nodeOf('ConfigMap', 'cm')!;
         expect(after.data.namespace).toBe('b');
         expect(containedIn(after, layout.namespaces[1])).toBe(true);
     });
 
     it('keeps the migrated position on a rename (not treated as a reassignment)', () => {
-        useVeltraStore.setState({ nsLayout: LAYOUT });
-        useVeltraStore.getState().addConfiguredNode('ConfigMap', configMap('cm', 'default'));
+        useKubeSketchStore.setState({ nsLayout: LAYOUT });
+        useKubeSketchStore.getState().addConfiguredNode('ConfigMap', configMap('cm', 'default'));
         const before = nodeOf('ConfigMap', 'cm')!;
         const pos = { ...before.position };
-        useVeltraStore.getState().persistNodePositions([before.id]);
-        useVeltraStore.getState().updateNodeFromCanvas(before.id, { name: 'cm2' });
+        useKubeSketchStore.getState().persistNodePositions([before.id]);
+        useKubeSketchStore.getState().updateNodeFromCanvas(before.id, { name: 'cm2' });
         const after = nodeOf('ConfigMap', 'cm2')!;
         expect(after.position).toEqual(pos); // pin migrated, not re-placed
-        const saved = JSON.parse(localStorage.getItem('veltra_node_positions') ?? '{}');
+        const saved = JSON.parse(localStorage.getItem('kubesketch_node_positions') ?? '{}');
         expect(saved['ConfigMap:cm2']).toEqual(pos);
         expect(saved['ConfigMap:cm']).toBeUndefined();
     });
 
     it('clears stale pins for resources typed into the YAML editor', () => {
         localStorage.setItem(
-            'veltra_node_positions',
+            'kubesketch_node_positions',
             JSON.stringify({ 'ConfigMap:cm': { x: 5000, y: 5000 } })
         );
-        useVeltraStore.setState({ nsLayout: LAYOUT });
-        useVeltraStore
+        useKubeSketchStore.setState({ nsLayout: LAYOUT });
+        useKubeSketchStore
             .getState()
             .setYaml(
                 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm\n  namespace: default\ndata:\n  k: v\n'
@@ -135,36 +135,36 @@ describe('placement through the store', () => {
         const n = nodeOf('ConfigMap', 'cm');
         expect(n).toBeTruthy();
         expect(containedIn(n!, LAYOUT.namespaces[0])).toBe(true);
-        const saved = JSON.parse(localStorage.getItem('veltra_node_positions') ?? '{}');
+        const saved = JSON.parse(localStorage.getItem('kubesketch_node_positions') ?? '{}');
         expect(saved['ConfigMap:cm']).toBeUndefined();
     });
 
     it('does not disturb existing resources’ pins when YAML only adds new ones', () => {
-        useVeltraStore.setState({ nsLayout: LAYOUT });
-        useVeltraStore.getState().addConfiguredNode('ConfigMap', configMap('cm', 'default'));
+        useKubeSketchStore.setState({ nsLayout: LAYOUT });
+        useKubeSketchStore.getState().addConfiguredNode('ConfigMap', configMap('cm', 'default'));
         const n = nodeOf('ConfigMap', 'cm')!;
         const pos = { ...n.position };
-        useVeltraStore.getState().persistNodePositions([n.id]);
-        useVeltraStore
+        useKubeSketchStore.getState().persistNodePositions([n.id]);
+        useKubeSketchStore
             .getState()
             .setYaml(
                 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm\n  namespace: default\ndata:\n  k: v\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: s\n  namespace: default\ndata:\n  u: dmFsdWU=\n'
             );
         const after = nodeOf('ConfigMap', 'cm')!;
         expect(after.position).toEqual(pos); // existing pin untouched
-        const saved = JSON.parse(localStorage.getItem('veltra_node_positions') ?? '{}');
+        const saved = JSON.parse(localStorage.getItem('kubesketch_node_positions') ?? '{}');
         expect(saved['ConfigMap:cm']).toEqual(pos);
     });
 
     it('places a new namespace rect inside the cluster, growing the cluster when needed', () => {
-        useVeltraStore.setState({
+        useKubeSketchStore.setState({
             nsLayout: {
                 cluster: { x: 0, y: 0, width: 400, height: 300 },
                 namespaces: [{ name: 'a', x: 10, y: 10, width: 380, height: 280 }],
             },
         });
-        useVeltraStore.getState().addNamespace('team-b');
-        const layout = useVeltraStore.getState().nsLayout!;
+        useKubeSketchStore.getState().addNamespace('team-b');
+        const layout = useKubeSketchStore.getState().nsLayout!;
         const ns = layout.namespaces.find((n) => n.name === 'team-b')!;
         // The new rect is fully inside the cluster.
         expect(ns.x).toBeGreaterThanOrEqual(layout.cluster.x);
@@ -177,9 +177,9 @@ describe('placement through the store', () => {
     });
 
     it('sweeps a new namespace rect into a free pocket when the cluster has room', () => {
-        useVeltraStore.setState({ nsLayout: LAYOUT });
-        useVeltraStore.getState().addNamespace('team-b');
-        const layout = useVeltraStore.getState().nsLayout!;
+        useKubeSketchStore.setState({ nsLayout: LAYOUT });
+        useKubeSketchStore.getState().addNamespace('team-b');
+        const layout = useKubeSketchStore.getState().nsLayout!;
         const a = layout.namespaces.find((n) => n.name === 'default')!;
         const b = layout.namespaces.find((n) => n.name === 'team-b')!;
         expect(b.x + b.width).toBeLessThanOrEqual(layout.cluster.x + layout.cluster.width);
@@ -196,34 +196,34 @@ describe('placement through the store', () => {
 describe('frame editing modes + cluster containment through the store', () => {
     beforeEach(() => {
         localStorage.clear();
-        useVeltraStore.getState().clearAll();
+        useKubeSketchStore.getState().clearAll();
     });
 
     const nodeOf = (kind: string, name: string) =>
-        useVeltraStore.getState().nodes.find((n) => n.data.kind === kind && n.data.name === name);
+        useKubeSketchStore.getState().nodes.find((n) => n.data.kind === kind && n.data.name === name);
 
     it('exiting namespace mode persists the layout (like Done)', () => {
-        useVeltraStore.setState({ nsLayout: LAYOUT, nsEditMode: true });
-        useVeltraStore.getState().setNsEditMode(false);
-        expect(useVeltraStore.getState().nsEditMode).toBe(false);
-        const saved = JSON.parse(localStorage.getItem('veltra_ns_layout') ?? '{}');
+        useKubeSketchStore.setState({ nsLayout: LAYOUT, nsEditMode: true });
+        useKubeSketchStore.getState().setNsEditMode(false);
+        expect(useKubeSketchStore.getState().nsEditMode).toBe(false);
+        const saved = JSON.parse(localStorage.getItem('kubesketch_ns_layout') ?? '{}');
         expect(saved.namespaces[0].name).toBe('default');
     });
 
     it('clearAll resets the frame mode', () => {
-        useVeltraStore.setState({ nsLayout: LAYOUT, nsEditMode: true });
-        useVeltraStore.getState().clearAll();
-        const s = useVeltraStore.getState();
+        useKubeSketchStore.setState({ nsLayout: LAYOUT, nsEditMode: true });
+        useKubeSketchStore.getState().clearAll();
+        const s = useKubeSketchStore.getState();
         expect(s.nsEditMode).toBe(false);
     });
 
     it('moveNamespace never lets a dragged namespace leave the cluster', () => {
-        useVeltraStore.setState({ nsLayout: LAYOUT }); // cluster 1200x900, ns default 100,100 500x500
-        useVeltraStore.getState().addConfiguredNode('ConfigMap', configMap('cm', 'default'));
+        useKubeSketchStore.setState({ nsLayout: LAYOUT }); // cluster 1200x900, ns default 100,100 500x500
+        useKubeSketchStore.getState().addConfiguredNode('ConfigMap', configMap('cm', 'default'));
         const cmBefore = nodeOf('ConfigMap', 'cm')!.position;
         // Drag far beyond the cluster's right edge.
-        useVeltraStore.getState().moveNamespace('default', { x: 5000, y: 100, width: 500, height: 500 });
-        const layout = useVeltraStore.getState().nsLayout!;
+        useKubeSketchStore.getState().moveNamespace('default', { x: 5000, y: 100, width: 500, height: 500 });
+        const layout = useKubeSketchStore.getState().nsLayout!;
         const ns = layout.namespaces[0];
         const cluster = layout.cluster;
         expect(ns.x + ns.width).toBeLessThanOrEqual(cluster.x + cluster.width);
@@ -235,9 +235,9 @@ describe('frame editing modes + cluster containment through the store', () => {
     });
 
     it('moveNamespace keeps a dragged namespace inside the cluster vertically too', () => {
-        useVeltraStore.setState({ nsLayout: LAYOUT });
-        useVeltraStore.getState().moveNamespace('default', { x: 100, y: 9000, width: 500, height: 500 });
-        const layout = useVeltraStore.getState().nsLayout!;
+        useKubeSketchStore.setState({ nsLayout: LAYOUT });
+        useKubeSketchStore.getState().moveNamespace('default', { x: 100, y: 9000, width: 500, height: 500 });
+        const layout = useKubeSketchStore.getState().nsLayout!;
         const ns = layout.namespaces[0];
         const cluster = layout.cluster;
         expect(ns.y + ns.height).toBeLessThanOrEqual(cluster.y + cluster.height);
@@ -246,18 +246,18 @@ describe('frame editing modes + cluster containment through the store', () => {
 
     describe('namespace deletion (no protected namespaces)', () => {
         it('an empty "default" namespace rectangle can be deleted', () => {
-            useVeltraStore.setState({ nsLayout: LAYOUT });
-            useVeltraStore.getState().deleteNamespace('default');
-            const layout = useVeltraStore.getState().nsLayout!;
+            useKubeSketchStore.setState({ nsLayout: LAYOUT });
+            useKubeSketchStore.getState().deleteNamespace('default');
+            const layout = useKubeSketchStore.getState().nsLayout!;
             expect(layout.namespaces.map((ns) => ns.name)).toEqual([]);
         });
 
         it('deleting "default" cascades the resources living in it', () => {
-            useVeltraStore.setState({ nsLayout: LAYOUT });
-            useVeltraStore.getState().addConfiguredNode('ConfigMap', configMap('cm', 'default'));
-            useVeltraStore.getState().deleteNamespace('default');
+            useKubeSketchStore.setState({ nsLayout: LAYOUT });
+            useKubeSketchStore.getState().addConfiguredNode('ConfigMap', configMap('cm', 'default'));
+            useKubeSketchStore.getState().deleteNamespace('default');
             expect(nodeOf('ConfigMap', 'cm')).toBeUndefined();
-            expect(useVeltraStore.getState().nsLayout!.namespaces).toEqual([]);
+            expect(useKubeSketchStore.getState().nsLayout!.namespaces).toEqual([]);
         });
     });
 });

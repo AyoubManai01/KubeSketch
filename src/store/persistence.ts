@@ -2,7 +2,7 @@ import { type Edge, type Node } from '@xyflow/react';
 import { buildTeachingFrame, DEFAULT_CLUSTER_RECT, FALLBACK_NODE_HEIGHT, FALLBACK_NODE_WIDTH, type NamespaceRect, type NsLayout, type Rect } from '../utils/teachingFrame';
 import { isClusterScoped } from '../utils/k8sScope';
 import type { K8sNodeData } from '../utils/buildGraph';
-import { NS_LAYOUT_KEY, POSITIONS_KEY, USER_EDGES_KEY } from './constants';import type { VeltraState } from './types';
+import { NS_LAYOUT_KEY, POSITIONS_KEY, USER_EDGES_KEY } from './constants';import type { KubeSketchState } from './types';
 
 export function readUserEdges(): Edge[] {
     try {
@@ -84,7 +84,7 @@ export function clearSavedPositions(keys: string[]) {
 
 /** The layout to edit: the persisted one, or a fresh auto-derivation from the
  *  current graph (so unedited layouts always hug the live nodes). */
-export function ensureNsLayout(state: VeltraState): NsLayout {
+export function ensureNsLayout(state: KubeSketchState): NsLayout {
     if (state.nsLayout) return state.nsLayout;
     return (
         buildTeachingFrame(state.nodes) ?? {

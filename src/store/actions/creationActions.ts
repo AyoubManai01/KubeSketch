@@ -15,13 +15,13 @@ import type {
     PvcLinkPayload,
     SecretLinkPayload,
     StoreSetter,
-    VeltraState,
+    KubeSketchState,
 } from '../types';
 
 export function createCreationActions(
     set: StoreSetter
 ): Pick<
-    VeltraState,
+    KubeSketchState,
     'addConfiguredNode' | 'addConfiguredNodes' | 'resetLayout' | 'clearAll'
 > {
     return {

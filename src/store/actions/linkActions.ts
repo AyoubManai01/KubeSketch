@@ -25,12 +25,12 @@ import {
     toResources,
 } from '../graphCommit';
 import { persistUserEdges } from '../persistence';
-import { makeNotice, type StoreSetter, type VeltraState } from '../types';
+import { makeNotice, type StoreSetter, type KubeSketchState } from '../types';
 
 export function createLinkActions(
     set: StoreSetter
 ): Pick<
-    VeltraState,
+    KubeSketchState,
     | 'addCanvasEdge'
     | 'applyCanvasEdgeChanges'
     | 'setPendingConfigMapLink'

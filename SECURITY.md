@@ -1,6 +1,6 @@
 # Security Policy
 
-Security is important to Veltra. Veltra is a Kubernetes infrastructure tool:
+Security is important to KubeSketch. KubeSketch is a Kubernetes infrastructure tool:
 the manifests it works with routinely contain sensitive material such as
 Kubernetes resource definitions, Secret values, TLS configuration, cluster
 topology, and other details about real infrastructure. We take reports about
@@ -8,7 +8,7 @@ vulnerabilities and accidental exposure seriously.
 
 ## What is a security vulnerability?
 
-A security vulnerability is a weakness in Veltra that could compromise users,
+A security vulnerability is a weakness in KubeSketch that could compromise users,
 their data, or their infrastructure. This includes (but is not limited to):
 
 - Unsafe handling of untrusted YAML manifests or resource fields that could
@@ -18,11 +18,11 @@ their data, or their infrastructure. This includes (but is not limited to):
   images, logs, error messages, shared URLs, or any place outside the user's
   local browser.
 - Issues that could allow tampering with, or unintended disclosure of, data
-  Veltra persists locally.
-- Vulnerabilities in how Veltra handles Kubernetes resources, cluster access,
+  KubeSketch persists locally.
+- Vulnerabilities in how KubeSketch handles Kubernetes resources, cluster access,
   credentials, configuration, or infrastructure exposure.
 
-> Veltra runs locally in the browser and does not connect to your cluster, so
+> KubeSketch runs locally in the browser and does not connect to your cluster, so
 > the most realistic risks usually involve handling of the manifests you paste
 > into it and the artifacts you export from it.
 
@@ -46,7 +46,7 @@ Instead, report it privately:
    more privately.
 
 There is currently no dedicated security mailing list or bug bounty program
-for Veltra.
+for KubeSketch.
 
 ## What to include in a report
 
@@ -71,7 +71,7 @@ wherever possible.
   exploit details, proof-of-concept code, or affected manifests publicly before
   the issue has been responsibly handled.
 - Maintainers will acknowledge your report as soon as possible. Please allow a
-  few days — Veltra is maintained by volunteers, not around the clock.
+  few days — KubeSketch is maintained by volunteers, not around the clock.
 - After investigation, maintainers will work with you to confirm the issue,
   fix it, and coordinate disclosure. If a GitHub security advisory is used,
   disclosure happens through the advisory when a fix is ready.

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useVeltraStore } from '../store/store';
+import { useKubeSketchStore } from '../store/store';
 import type { FileNode } from '../utils/fileTree';
 import { KIND_COLORS } from './kindMeta';
 
@@ -38,9 +38,9 @@ interface FileExplorerProps {
  * its primary resource on the canvas (so the two views stay in sync both ways).
  */
 export default function FileExplorer({ tree, style }: FileExplorerProps) {
-    const activeFile = useVeltraStore((s) => s.activeFile);
-    const setActiveFile = useVeltraStore((s) => s.setActiveFile);
-    const setSelectedResource = useVeltraStore((s) => s.setSelectedResource);
+    const activeFile = useKubeSketchStore((s) => s.activeFile);
+    const setActiveFile = useKubeSketchStore((s) => s.setActiveFile);
+    const setSelectedResource = useKubeSketchStore((s) => s.setSelectedResource);
     const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
     const toggle = (path: string) =>

@@ -66,7 +66,7 @@ export interface BuildGraphContext {
  */
 export function getSavedPosition(kind: string, name: string): { x: number; y: number } | null {
     try {
-        const saved = localStorage.getItem('veltra_node_positions');
+        const saved = localStorage.getItem('kubesketch_node_positions');
         if (saved) {
             const parsed = JSON.parse(saved);
             const pos = parsed[`${kind}:${name}`];

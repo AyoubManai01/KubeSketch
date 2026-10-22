@@ -4,11 +4,11 @@ import type { K8sResource } from '../../types/types';
 import { ACTIVE_FILE_KEY, FILE_EXPLORER_KEY } from '../constants';
 import { clearSavedPositions } from '../persistence';
 import { commitResources, toResources } from '../graphCommit';
-import type { StoreSetter, VeltraState } from '../types';
+import type { StoreSetter, KubeSketchState } from '../types';
 
 export function createFileActions(
     set: StoreSetter
-): Pick<VeltraState, 'setFileExplorerMode' | 'setActiveFile' | 'setFileYaml'> {
+): Pick<KubeSketchState, 'setFileExplorerMode' | 'setActiveFile' | 'setFileYaml'> {
     return {
         setFileExplorerMode: (on: boolean) => {
             localStorage.setItem(FILE_EXPLORER_KEY, on ? '1' : '0');

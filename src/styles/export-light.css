@@ -3,89 +3,89 @@
    exported image uses a white background with black text while the live canvas
    keeps its dark theme. The host is discarded right after the snapshot, so the
    visible canvas is never modified. */
-.react-flow.veltra-export-light {
+.react-flow.kubesketch-export-light {
   --xy-edge-label-background-color: #ffffff;
   --xy-edge-label-color: #000000;
 }
 
-.react-flow.veltra-export-light .k8s-node {
+.react-flow.kubesketch-export-light .k8s-node {
   background: #ffffff;
   border-color: rgba(15, 23, 42, 0.12);
   color: #0f172a;
 }
 
-.react-flow.veltra-export-light .k8s-node__header {
+.react-flow.kubesketch-export-light .k8s-node__header {
   border-bottom-color: rgba(15, 23, 42, 0.08);
 }
 
 /* Keep the kind-colored borders exactly as on the live canvas */
-.react-flow.veltra-export-light .k8s-node--leaf {
+.react-flow.kubesketch-export-light .k8s-node--leaf {
   border-left-color: var(--kind-color);
 }
 
-.react-flow.veltra-export-light .k8s-node--deployment {
+.react-flow.kubesketch-export-light .k8s-node--deployment {
   border-color: rgba(16, 185, 129, 0.25);
 }
 
-.react-flow.veltra-export-light .k8s-node--deployment .k8s-node__header {
+.react-flow.kubesketch-export-light .k8s-node--deployment .k8s-node__header {
   border-bottom-color: rgba(16, 185, 129, 0.15);
 }
 
-.react-flow.veltra-export-light .k8s-node--replicaset {
+.react-flow.kubesketch-export-light .k8s-node--replicaset {
   border-color: rgba(249, 115, 22, 0.22);
 }
 
-.react-flow.veltra-export-light .k8s-node--replicaset .k8s-node__header {
+.react-flow.kubesketch-export-light .k8s-node--replicaset .k8s-node__header {
   border-bottom-color: rgba(249, 115, 22, 0.12);
 }
 
-.react-flow.veltra-export-light .k8s-node--managed {
+.react-flow.kubesketch-export-light .k8s-node--managed {
   border-color: rgba(148, 163, 184, 0.28);
 }
 
-.react-flow.veltra-export-light .k8s-node__kind-label {
+.react-flow.kubesketch-export-light .k8s-node__kind-label {
   color: #64748b;
 }
 
-.react-flow.veltra-export-light .k8s-node__title {
+.react-flow.kubesketch-export-light .k8s-node__title {
   color: #0f172a;
 }
 
-.react-flow.veltra-export-light .k8s-node__badge {
+.react-flow.kubesketch-export-light .k8s-node__badge {
   background: rgba(15, 23, 42, 0.06);
   color: #334155;
   border-color: rgba(15, 23, 42, 0.12);
 }
 
-.react-flow.veltra-export-light .k8s-node__info-key {
+.react-flow.kubesketch-export-light .k8s-node__info-key {
   color: #64748b;
 }
 
-.react-flow.veltra-export-light .k8s-node__info-val {
+.react-flow.kubesketch-export-light .k8s-node__info-val {
   color: #1e293b;
 }
 
-.react-flow.veltra-export-light .k8s-node--container,
-.react-flow.veltra-export-light .k8s-node--deployment,
-.react-flow.veltra-export-light .k8s-node--replicaset {
+.react-flow.kubesketch-export-light .k8s-node--container,
+.react-flow.kubesketch-export-light .k8s-node--deployment,
+.react-flow.kubesketch-export-light .k8s-node--replicaset {
   background: #ffffff;
 }
 
-.react-flow.veltra-export-light .k8s-node__container-grid-overlay {
+.react-flow.kubesketch-export-light .k8s-node__container-grid-overlay {
   background-image: radial-gradient(rgba(15, 23, 42, 0.05) 1px, transparent 0);
 }
 
-.react-flow.veltra-export-light .k8s-node--managed > .k8s-node__header .k8s-node__title {
+.react-flow.kubesketch-export-light .k8s-node--managed > .k8s-node__header .k8s-node__title {
   color: #475569;
 }
 
-.react-flow.veltra-export-light .k8s-node__badge--managed {
+.react-flow.kubesketch-export-light .k8s-node__badge--managed {
   background: rgba(148, 163, 184, 0.15);
   color: #475569;
   border-color: rgba(100, 116, 139, 0.45);
 }
 
-.react-flow.veltra-export-light .teaching-frame__title {
+.react-flow.kubesketch-export-light .teaching-frame__title {
   background: #ffffff;
   color: #0f172a;
   border-color: rgba(15, 23, 42, 0.12);

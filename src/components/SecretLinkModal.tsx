@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useVeltraStore } from '../store/store';
+import { useKubeSketchStore } from '../store/store';
 import type { SecretMechanism } from '../utils/linkResources';
 
 const MECHANISM_LABELS: Array<{ value: SecretMechanism; label: string; hint: string }> = [
@@ -26,10 +26,10 @@ const MECHANISM_LABELS: Array<{ value: SecretMechanism; label: string; hint: str
  * is written into the workload's Pod spec.
  */
 export default function SecretLinkModal() {
-    const pending = useVeltraStore((s) => s.pendingSecretLink);
-    const nodes = useVeltraStore((s) => s.nodes);
-    const confirmSecretLink = useVeltraStore((s) => s.confirmSecretLink);
-    const cancelSecretLink = useVeltraStore((s) => s.cancelSecretLink);
+    const pending = useKubeSketchStore((s) => s.pendingSecretLink);
+    const nodes = useKubeSketchStore((s) => s.nodes);
+    const confirmSecretLink = useKubeSketchStore((s) => s.confirmSecretLink);
+    const cancelSecretLink = useKubeSketchStore((s) => s.cancelSecretLink);
 
     const [mechanism, setMechanism] = useState<SecretMechanism>('envFrom');
     const [key, setKey] = useState('');

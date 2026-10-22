@@ -8,7 +8,7 @@ import {
   replicasOf,
   type K8sNodeData,
 } from "../../utils/buildGraph";
-import { apiVersionForKind, useVeltraStore } from "../../store/store";
+import { apiVersionForKind, useKubeSketchStore } from "../../store/store";
 import { isClusterScoped } from "../../utils/k8sScope";
 import type { K8sResource, SupportedKind } from "../../types/types";
 import {
@@ -61,8 +61,8 @@ export function useInspectorDraft(
   pvcUsedBy: Array<{ kind: string; name: string }>,
   nodes: Node<K8sNodeData>[],
 ): InspectorDraft {
-  const updateNodeFromCanvas = useVeltraStore((s) => s.updateNodeFromCanvas);
-  const updateNodeResourceFromCanvas = useVeltraStore(
+  const updateNodeFromCanvas = useKubeSketchStore((s) => s.updateNodeFromCanvas);
+  const updateNodeResourceFromCanvas = useKubeSketchStore(
     (s) => s.updateNodeResourceFromCanvas,
   );
 
@@ -299,7 +299,7 @@ export function useInspectorDraft(
 
   /** Adopt the freshly-committed node back into the draft after Validate. */
   const syncDraftFromStore = useCallback((nodeId: string) => {
-    const state = useVeltraStore.getState();
+    const state = useKubeSketchStore.getState();
     const fresh = state.nodes.find((n) => n.id === nodeId) ?? null;
     const resource = fresh?.data.resource ?? null;
     if (!resource) return;

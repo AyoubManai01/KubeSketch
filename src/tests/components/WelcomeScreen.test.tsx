@@ -5,11 +5,16 @@ import { buildContactMailto } from '../../utils/contactForm';
 
 // The landing page is pure static chrome: no store, no @xyflow/react, so no
 // mocks are needed here (window.open is stubbed only in the submit test).
+// The theme tests re-import the component through vi.resetModules() because
+// utils/ideTheme.ts keeps module-level state (applied to <html> at import
+// time), exactly like ThemeToggle.test.tsx does.
 describe('WelcomeScreen', () => {
     afterEach(() => {
         cleanup();
         vi.restoreAllMocks();
         localStorage.clear();
+        document.documentElement.removeAttribute('data-theme');
+        vi.resetModules();
     });
 
     it('renders the brand and a concise introduction', () => {
@@ -158,7 +163,9 @@ describe('WelcomeScreen', () => {
         expect(decoded).toContain('Organization: ACME');
     });
 
-    it('defaults to dark mode and switches to light with persistence', () => {
+    it('defaults to dark mode and switches to light with persistence', async () => {
+        vi.resetModules();
+        const { default: WelcomeScreen } = await import('../../components/WelcomeScreen');
         render(<WelcomeScreen />);
         expect(document.querySelector('.welcome')).not.toHaveClass('welcome--light');
         expect(dom.getByRole('button', { name: 'Dark mode' })).toHaveAttribute(
@@ -170,6 +177,7 @@ describe('WelcomeScreen', () => {
 
         expect(document.querySelector('.welcome')).toHaveClass('welcome--light');
         expect(localStorage.getItem('kubesketch_landing_theme')).toBe('light');
+        expect(localStorage.getItem('kubesketch_ide_theme')).toBe('light');
         expect(dom.getByRole('button', { name: 'Light mode' })).toHaveAttribute(
             'aria-pressed',
             'true'
@@ -179,10 +187,13 @@ describe('WelcomeScreen', () => {
 
         expect(document.querySelector('.welcome')).not.toHaveClass('welcome--light');
         expect(localStorage.getItem('kubesketch_landing_theme')).toBe('dark');
+        expect(localStorage.getItem('kubesketch_ide_theme')).toBe('dark');
     });
 
-    it('restores a persisted light theme on mount', () => {
+    it('restores a persisted light theme on mount', async () => {
         localStorage.setItem('kubesketch_landing_theme', 'light');
+        vi.resetModules();
+        const { default: WelcomeScreen } = await import('../../components/WelcomeScreen');
         render(<WelcomeScreen />);
         expect(document.querySelector('.welcome')).toHaveClass('welcome--light');
         expect(dom.getByRole('button', { name: 'Light mode' })).toHaveAttribute(

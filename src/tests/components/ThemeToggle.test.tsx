@@ -73,4 +73,15 @@ describe('ThemeToggle', () => {
             'true'
         );
     });
+
+    it('keeps the landing theme key in sync with the IDE choice', async () => {
+        await renderThemeToggle();
+        fireEvent.click(dom.getByRole('button', { name: 'Light mode' }));
+        expect(localStorage.getItem('kubesketch_ide_theme')).toBe('light');
+        expect(localStorage.getItem('kubesketch_landing_theme')).toBe('light');
+
+        fireEvent.click(dom.getByRole('button', { name: 'Dark mode' }));
+        expect(localStorage.getItem('kubesketch_ide_theme')).toBe('dark');
+        expect(localStorage.getItem('kubesketch_landing_theme')).toBe('dark');
+    });
 });

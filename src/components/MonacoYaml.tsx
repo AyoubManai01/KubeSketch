@@ -1,6 +1,7 @@
 import Editor from '@monaco-editor/react';
 import { useEffect, useRef } from 'react';
 import type { SelectedResource } from '../store/store';
+import { useIdeTheme } from '../utils/ideTheme';
 
 interface MonacoYamlProps {
     value: string;
@@ -40,6 +41,7 @@ export default function MonacoYaml({
     const monacoRef = useRef<any>(null);
     const decorationIdsRef = useRef<string[]>([]);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const ideTheme = useIdeTheme();
 
     useEffect(() => {
         const editor = editorRef.current;
@@ -155,7 +157,7 @@ export default function MonacoYaml({
                     <Editor
                         value={value}
                         language="yaml"
-                        theme="vs-dark"
+                        theme={ideTheme === 'light' ? 'vs' : 'vs-dark'}
                         onMount={(editor, monaco) => {
                             editorRef.current = editor;
                             monacoRef.current = monaco;

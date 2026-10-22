@@ -148,7 +148,8 @@
   color: var(--text-muted);
 }
 
-/* Light theme (landing only; the IDE keeps its dark theme) */
+/* Light theme for the landing page (the IDE has its own light theme in
+   theme-light.css, seeded from the landing's preference) */
 .welcome--light {
   --bg-primary: #f6f7fb;
   --bg-secondary: #ffffff;

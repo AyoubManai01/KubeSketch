@@ -68,13 +68,13 @@
 }
 
 .teaching-frame--outer.teaching-frame--editable {
-  border-color: rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.02);
+  border-color: rgba(14, 165, 233, 0.45);
+  background: rgba(14, 165, 233, 0.14);
 }
 
 .teaching-frame--inner.teaching-frame--editable {
-  border-color: rgba(20, 184, 166, 0.4);
-  background: rgba(20, 184, 166, 0.06);
+  border-color: rgba(20, 184, 166, 0.45);
+  background: rgba(20, 184, 166, 0.14);
 }
 
 .teaching-frame__resize-handle {

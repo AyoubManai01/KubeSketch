@@ -19,7 +19,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * opened from here in a new tab). Pure static chrome: no store, no canvas.
  * The IDE URL is derived from the current path so a subpath deployment
  * (e.g. GitHub Pages at /veltra/) keeps working without server config.
- * The light/dark switch is landing-only; the IDE keeps its dark theme.
+ * The theme choice is persisted and also seeds the IDE's theme (see
+ * utils/ideTheme.ts).
  */
 export default function WelcomeScreen() {
     const base = window.location.pathname.replace(/\/+$/, '');

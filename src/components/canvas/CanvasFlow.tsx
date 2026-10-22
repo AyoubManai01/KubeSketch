@@ -11,6 +11,7 @@ import {
 import NsFrame from "../NsFrame";
 import type { SupportedKind } from "../../types/types";
 import type { HpaReplicaOverride, K8sNodeData } from "../../utils/buildGraph";
+import { useIdeTheme } from "../../utils/ideTheme";
 import type { CanvasHandlers } from "./useCanvasHandlers";
 
 interface Props {
@@ -50,6 +51,8 @@ export function CanvasFlow({
   setNamespaceModalOpen,
   minZoom,
 }: Props) {
+  const ideTheme = useIdeTheme();
+
   return (
     <div className="canvas-body">
       <div className="canvas-flow-host">
@@ -132,7 +135,7 @@ export function CanvasFlow({
             variant={BackgroundVariant.Dots}
             gap={24}
             size={1}
-            color="rgba(136, 166, 205, 0.18)"
+            color={ideTheme === 'light' ? 'rgba(15, 23, 42, 0.16)' : 'rgba(136, 166, 205, 0.18)'}
           />
           <Controls showInteractive={false} className="canvas-controls" />
         </ReactFlow>

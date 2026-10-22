@@ -54,6 +54,12 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.toolbar__brand:hover .toolbar__name {
+  color: var(--accent-service);
 }
 
 .toolbar__logo {
@@ -296,5 +302,44 @@
 
 .yaml-import-input {
   display: none;
+}
+
+/* Moon/sun theme switch (mirrors the landing page's .welcome__theme group) */
+.toolbar__theme {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.toolbar__theme-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.toolbar__theme-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.toolbar__theme-btn:hover {
+  color: var(--text-primary);
+}
+
+.toolbar__theme-btn--active {
+  background: rgba(59, 130, 246, 0.16);
+  color: var(--accent-service);
 }
 

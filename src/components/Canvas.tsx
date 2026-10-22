@@ -1,8 +1,8 @@
-﻿import { type NodeTypes } from "@xyflow/react";
+import { type NodeTypes } from "@xyflow/react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import "@xyflow/react/dist/style.css";
 
-import { useVeltraStore } from "../store/store";
+import { useKubeSketchStore } from "../store/store";
 import { isClusterScoped } from "../utils/k8sScope";
 import type { SupportedKind } from "../types/types";
 import { useCanvasModel } from "./canvas/useCanvasModel";
@@ -31,19 +31,19 @@ const MIN_ZOOM = 0.5 / 1.2 ** 3;
  */
 export default function Canvas() {
   const uid = useId().replace(/:/g, "");
-  const namespaceListId = `veltra-ns-${uid}`;
+  const namespaceListId = `kubesketch-ns-${uid}`;
 
-  const nodes = useVeltraStore((s) => s.nodes);
-  const edges = useVeltraStore((s) => s.edges);
-  const deleteNodeFromCanvas = useVeltraStore((s) => s.deleteNodeFromCanvas);
-  const selectedResource = useVeltraStore((s) => s.selectedResource);
-  const setSelectedResource = useVeltraStore((s) => s.setSelectedResource);
-  const notice = useVeltraStore((s) => s.notice);
-  const setNotice = useVeltraStore((s) => s.setNotice);
-  const hpaOverrides = useVeltraStore((s) => s.hpaOverrides);
-  const nsLayout = useVeltraStore((s) => s.nsLayout);
-  const nsEditMode = useVeltraStore((s) => s.nsEditMode);
-  const deleteNamespace = useVeltraStore((s) => s.deleteNamespace);
+  const nodes = useKubeSketchStore((s) => s.nodes);
+  const edges = useKubeSketchStore((s) => s.edges);
+  const deleteNodeFromCanvas = useKubeSketchStore((s) => s.deleteNodeFromCanvas);
+  const selectedResource = useKubeSketchStore((s) => s.selectedResource);
+  const setSelectedResource = useKubeSketchStore((s) => s.setSelectedResource);
+  const notice = useKubeSketchStore((s) => s.notice);
+  const setNotice = useKubeSketchStore((s) => s.setNotice);
+  const hpaOverrides = useKubeSketchStore((s) => s.hpaOverrides);
+  const nsLayout = useKubeSketchStore((s) => s.nsLayout);
+  const nsEditMode = useKubeSketchStore((s) => s.nsEditMode);
+  const deleteNamespace = useKubeSketchStore((s) => s.deleteNamespace);
 
   const [pendingKind, setPendingKind] = useState<SupportedKind | null>(null);
   const [gatewayApiModalOpen, setGatewayApiModalOpen] = useState(false);

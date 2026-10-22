@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 import { ViewportPortal, useReactFlow } from '@xyflow/react';
 import type { Node } from '@xyflow/react';
-import { useVeltraStore } from '../store/store';
+import { useKubeSketchStore } from '../store/store';
 import { isClusterScoped } from '../utils/k8sScope';
 import {
     NAMESPACE_MIN_RECT,
@@ -41,12 +41,12 @@ interface DragState {
  * everything; 8 resize handles shrink/expand any rectangle).
  */
 export default function NsFrame({ layout, nodes, onDeleteNamespace }: NsFrameProps) {
-    const nsEditMode = useVeltraStore((s) => s.nsEditMode);
-    const moveNamespace = useVeltraStore((s) => s.moveNamespace);
-    const moveClusterRect = useVeltraStore((s) => s.moveClusterRect);
-    const resizeNsRect = useVeltraStore((s) => s.resizeNsRect);
-    const resizeClusterRect = useVeltraStore((s) => s.resizeClusterRect);
-    const persistNodePositions = useVeltraStore((s) => s.persistNodePositions);
+    const nsEditMode = useKubeSketchStore((s) => s.nsEditMode);
+    const moveNamespace = useKubeSketchStore((s) => s.moveNamespace);
+    const moveClusterRect = useKubeSketchStore((s) => s.moveClusterRect);
+    const resizeNsRect = useKubeSketchStore((s) => s.resizeNsRect);
+    const resizeClusterRect = useKubeSketchStore((s) => s.resizeClusterRect);
+    const persistNodePositions = useKubeSketchStore((s) => s.persistNodePositions);
     const { screenToFlowPosition } = useReactFlow();
 
     const dragRef = useRef<DragState | null>(null);

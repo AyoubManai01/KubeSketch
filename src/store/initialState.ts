@@ -7,7 +7,7 @@ import type { NsLayout } from '../utils/teachingFrame';
 import { ACTIVE_FILE_KEY, DEFAULT_YAML, FILE_EXPLORER_KEY, YAML_KEY } from './constants';
 import { readNsLayout, readUserEdges } from './persistence';
 import { deriveGraph, toResources } from './graphCommit';
-import type { VeltraStateFields } from './types';
+import type { KubeSketchStateFields } from './types';
 
 /**
  * Initial load: read the persisted YAML, manual edges and namespace layout,
@@ -15,7 +15,7 @@ import type { VeltraStateFields } from './types';
  * the file-explorer view. An unparseable saved YAML yields an empty canvas
  * plus the error (never a graph that disagrees with the visible text).
  */
-export function computeInitialState(): VeltraStateFields {
+export function computeInitialState(): KubeSketchStateFields {
     const savedYaml = localStorage.getItem(YAML_KEY);
     let yamlVal = savedYaml !== null ? savedYaml : DEFAULT_YAML;
     const userEdgesVal = readUserEdges();

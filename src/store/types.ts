@@ -99,7 +99,7 @@ export const makeNotice = (tone: CanvasNotice['tone'], text: string): CanvasNoti
 });
 
 /** The data fields of the store (everything except the action methods). */
-export interface VeltraStateFields {
+export interface KubeSketchStateFields {
     /** Raw YAML string from the editor */
     yaml: string;
 
@@ -167,12 +167,12 @@ export interface VeltraStateFields {
 
 /** The zustand setter/getter shapes the action factories receive. */
 export type StoreSetter = {
-    (partial: Partial<VeltraState>): void;
-    (updater: (state: VeltraState) => Partial<VeltraState>): void;
+    (partial: Partial<KubeSketchState>): void;
+    (updater: (state: KubeSketchState) => Partial<KubeSketchState>): void;
 };
-export type StoreGetter = () => VeltraState;
+export type StoreGetter = () => KubeSketchState;
 
-export interface VeltraState extends VeltraStateFields {
+export interface KubeSketchState extends KubeSketchStateFields {
     setNotice: (notice: CanvasNotice | null) => void;
     setYaml: (value: string) => void;
     /** Structural node changes coming from React Flow (e.g. keyboard delete). */

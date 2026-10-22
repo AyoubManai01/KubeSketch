@@ -4,7 +4,7 @@ import { buildContactMailto, type ContactFormState } from '../utils/contactForm'
 
 type LandingTheme = 'dark' | 'light';
 
-const THEME_KEY = 'veltra_landing_theme';
+const THEME_KEY = 'kubesketch_landing_theme';
 
 function readTheme(): LandingTheme {
     return localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark';
@@ -58,11 +58,11 @@ export default function WelcomeScreen() {
 
             <nav className="welcome__nav" aria-label="Main">
                 <a className="welcome__brand" href="#top" aria-label="Back to top">
-                    <img className="welcome__logo" src="/Logo-nobg.png" alt="Veltra logo" />
-                    <span className="welcome__name">Veltra</span>
+                    <img className="welcome__logo" src="/Logo-nobg.png" alt="KubeSketch logo" />
+                    <span className="welcome__name">KubeSketch</span>
                 </a>
                 <div className="welcome__nav-links">
-                    <a href="#what-is-veltra">What is Veltra</a>
+                    <a href="#what-is-kubesketch">What is KubeSketch</a>
                     <a href="#contact">Contact Us</a>
                 </div>
                 <div className="welcome__nav-actions">
@@ -72,7 +72,7 @@ export default function WelcomeScreen() {
                         target="_blank"
                         rel="noopener noreferrer"
                     >
-                        Try Veltra
+                        Try KubeSketch
                         <ExternalLinkIcon />
                     </a>
                     <a
@@ -80,7 +80,7 @@ export default function WelcomeScreen() {
                         href={GITHUB_URL}
                         target="_blank"
                         rel="noopener noreferrer"
-                        aria-label="Veltra on GitHub"
+                        aria-label="KubeSketch on GitHub"
                     >
                         <GitHubIcon />
                     </a>
@@ -116,7 +116,7 @@ export default function WelcomeScreen() {
                         visually.
                     </h1>
                     <p className="welcome__lede">
-                        Veltra is a Kubernetes Visual IDE. Your YAML manifest stays the
+                        KubeSketch is a Kubernetes Visual IDE. Your YAML manifest stays the
                         single source of truth while a live canvas shows the architecture it
                         describes, including the resources a real cluster would materialize.
                         It is built to make Kubernetes easier to see, learn and reason
@@ -130,16 +130,16 @@ export default function WelcomeScreen() {
                             target="_blank"
                             rel="noopener noreferrer"
                         >
-                            Try Veltra
+                            Try KubeSketch
                             <ExternalLinkIcon />
                         </a>
                         <a className="welcome-btn welcome-btn--secondary" href="#contact">
-                            Want to integrate Veltra in your cluster? Contact Us
+                            Want to integrate KubeSketch in your cluster? Contact Us
                         </a>
                     </div>
                 </section>
 
-                <section className="welcome__cards-section" aria-label="What Veltra offers">
+                <section className="welcome__cards-section" aria-label="What KubeSketch offers">
                     <div className="welcome__cards">
                         {CARDS.map((card) => (
                             <article className="welcome__card" key={card.title}>
@@ -158,7 +158,7 @@ export default function WelcomeScreen() {
                         Works with your favorite Kubernetes flavor
                     </h2>
                     <p className="welcome__section-text">
-                        Veltra is YAML-native: author and review manifests for any flavor
+                        KubeSketch is YAML-native: author and review manifests for any flavor
                         without changing tools. It runs in the browser with no setup.
                     </p>
                     <ul className="welcome__chips">
@@ -174,10 +174,10 @@ export default function WelcomeScreen() {
                     </ul>
                 </section>
 
-                <section className="welcome__section" id="what-is-veltra">
-                    <h2 className="welcome__section-title">What is Veltra</h2>
+                <section className="welcome__section" id="what-is-kubesketch">
+                    <h2 className="welcome__section-title">What is KubeSketch</h2>
                     <p className="welcome__section-text">
-                        Veltra turns a Kubernetes manifest into a picture you can explore.
+                        KubeSketch turns a Kubernetes manifest into a picture you can explore.
                         It simulates the controllers, so a Deployment shows its ReplicaSet
                         and Pods, a CronJob its Job, and the frames show where
                         workloads run: the cluster and the namespaces.
@@ -191,7 +191,7 @@ export default function WelcomeScreen() {
                 <section className="welcome__section" id="contact">
                     <h2 className="welcome__section-title">Contact Us</h2>
                     <p className="welcome__section-text">
-                        Want to integrate Veltra in your cluster? Tell us about your setup
+                        Want to integrate KubeSketch in your cluster? Tell us about your setup
                         and we will get back to you.
                     </p>
                     <form className="welcome__form" onSubmit={handleContactSubmit} noValidate>
@@ -269,9 +269,9 @@ export default function WelcomeScreen() {
                             <img
                                 className="welcome__footer-logo"
                                 src="/Logo-nobg.png"
-                                alt="Veltra logo"
+                                alt="KubeSketch logo"
                             />
-                            <span className="welcome__footer-name">Veltra</span>
+                            <span className="welcome__footer-name">KubeSketch</span>
                         </div>
                         <p className="welcome__footer-tag">
                             A Kubernetes Visual IDE. GPL-3.0 licensed, open source on GitHub.
@@ -279,7 +279,7 @@ export default function WelcomeScreen() {
                     </div>
                     <nav className="welcome__footer-col" aria-label="Explore">
                         <span className="welcome__footer-heading">Explore</span>
-                        <a href="#what-is-veltra">What is Veltra</a>
+                        <a href="#what-is-kubesketch">What is KubeSketch</a>
                         <a href="#contact">Contact Us</a>
                         <a href={ideUrl} target="_blank" rel="noopener noreferrer">
                             Open the IDE
@@ -293,7 +293,7 @@ export default function WelcomeScreen() {
                     </nav>
                 </div>
                 <div className="welcome__footer-bottom">
-                    Veltra is an independent open source project and is not affiliated with
+                    KubeSketch is an independent open source project and is not affiliated with
                     Kubernetes.
                 </div>
             </footer>

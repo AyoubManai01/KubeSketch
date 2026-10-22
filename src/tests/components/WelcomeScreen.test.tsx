@@ -15,26 +15,26 @@ describe('WelcomeScreen', () => {
     it('renders the brand and a concise introduction', () => {
         render(<WelcomeScreen />);
         const nav = dom.getByRole('navigation', { name: 'Main' });
-        expect(within(nav).getByText('Veltra')).toBeInTheDocument();
+        expect(within(nav).getByText('KubeSketch')).toBeInTheDocument();
         expect(dom.getByRole('heading', { level: 1 })).toHaveTextContent(
             /Kubernetes infrastructure visually/i
         );
-        expect(dom.getByText(/Veltra is a Kubernetes Visual IDE/)).toBeInTheDocument();
+        expect(dom.getByText(/KubeSketch is a Kubernetes Visual IDE/)).toBeInTheDocument();
     });
 
     it('opens the IDE in a new tab from the hero CTA', () => {
         render(<WelcomeScreen />);
         const main = dom.getByRole('main');
-        const cta = within(main).getByRole('link', { name: /try veltra/i });
+        const cta = within(main).getByRole('link', { name: /try kubesketch/i });
         expect(cta).toHaveAttribute('href', '/ide');
         expect(cta).toHaveAttribute('target', '_blank');
         expect(cta).toHaveAttribute('rel', 'noopener noreferrer');
     });
 
-    it('offers Try Veltra in the navbar as well', () => {
+    it('offers Try KubeSketch in the navbar as well', () => {
         render(<WelcomeScreen />);
         const nav = dom.getByRole('navigation', { name: 'Main' });
-        const cta = within(nav).getByRole('link', { name: /try veltra/i });
+        const cta = within(nav).getByRole('link', { name: /try kubesketch/i });
         expect(cta).toHaveAttribute('href', '/ide');
         expect(cta).toHaveAttribute('target', '_blank');
     });
@@ -68,12 +68,12 @@ describe('WelcomeScreen', () => {
         expect(dom.queryByRole('link', { name: /load sample manifest/i })).toBeNull();
     });
 
-    it('renders the navbar anchors for What is Veltra and Contact Us', () => {
+    it('renders the navbar anchors for What is KubeSketch and Contact Us', () => {
         render(<WelcomeScreen />);
         const nav = dom.getByRole('navigation', { name: 'Main' });
-        expect(within(nav).getByRole('link', { name: 'What is Veltra' })).toHaveAttribute(
+        expect(within(nav).getByRole('link', { name: 'What is KubeSketch' })).toHaveAttribute(
             'href',
-            '#what-is-veltra'
+            '#what-is-kubesketch'
         );
         expect(within(nav).getByRole('link', { name: 'Contact Us' })).toHaveAttribute(
             'href',
@@ -85,14 +85,14 @@ describe('WelcomeScreen', () => {
     it('links the cluster-integration CTA to the contact form', () => {
         render(<WelcomeScreen />);
         const cta = dom.getByRole('link', {
-            name: /want to integrate veltra in your cluster\? contact us/i,
+            name: /want to integrate kubesketch in your cluster\? contact us/i,
         });
         expect(cta).toHaveAttribute('href', '#contact');
     });
 
-    it('renders the "What is Veltra" section with the preview placeholder', () => {
+    it('renders the "What is KubeSketch" section with the preview placeholder', () => {
         render(<WelcomeScreen />);
-        expect(dom.getByRole('heading', { name: 'What is Veltra' })).toBeInTheDocument();
+        expect(dom.getByRole('heading', { name: 'What is KubeSketch' })).toBeInTheDocument();
         expect(dom.getByText('Product preview')).toBeInTheDocument();
         expect(dom.queryByAltText(/default manifest/)).toBeNull();
     });
@@ -100,9 +100,9 @@ describe('WelcomeScreen', () => {
     it('renders the footer link columns', () => {
         render(<WelcomeScreen />);
         const explore = dom.getByRole('navigation', { name: 'Explore' });
-        expect(within(explore).getByRole('link', { name: 'What is Veltra' })).toHaveAttribute(
+        expect(within(explore).getByRole('link', { name: 'What is KubeSketch' })).toHaveAttribute(
             'href',
-            '#what-is-veltra'
+            '#what-is-kubesketch'
         );
         expect(within(explore).getByRole('link', { name: 'Open the IDE' })).toHaveAttribute(
             'href',
@@ -154,7 +154,7 @@ describe('WelcomeScreen', () => {
         });
         expect(url).toMatch(/^mailto:/);
         const decoded = decodeURIComponent(url);
-        expect(decoded).toContain('Veltra cluster integration inquiry (ACME)');
+        expect(decoded).toContain('KubeSketch cluster integration inquiry (ACME)');
         expect(decoded).toContain('Organization: ACME');
     });
 
@@ -169,7 +169,7 @@ describe('WelcomeScreen', () => {
         fireEvent.click(dom.getByRole('button', { name: 'Light mode' }));
 
         expect(document.querySelector('.welcome')).toHaveClass('welcome--light');
-        expect(localStorage.getItem('veltra_landing_theme')).toBe('light');
+        expect(localStorage.getItem('kubesketch_landing_theme')).toBe('light');
         expect(dom.getByRole('button', { name: 'Light mode' })).toHaveAttribute(
             'aria-pressed',
             'true'
@@ -178,11 +178,11 @@ describe('WelcomeScreen', () => {
         fireEvent.click(dom.getByRole('button', { name: 'Dark mode' }));
 
         expect(document.querySelector('.welcome')).not.toHaveClass('welcome--light');
-        expect(localStorage.getItem('veltra_landing_theme')).toBe('dark');
+        expect(localStorage.getItem('kubesketch_landing_theme')).toBe('dark');
     });
 
     it('restores a persisted light theme on mount', () => {
-        localStorage.setItem('veltra_landing_theme', 'light');
+        localStorage.setItem('kubesketch_landing_theme', 'light');
         render(<WelcomeScreen />);
         expect(document.querySelector('.welcome')).toHaveClass('welcome--light');
         expect(dom.getByRole('button', { name: 'Light mode' })).toHaveAttribute(

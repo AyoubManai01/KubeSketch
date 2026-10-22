@@ -3,11 +3,11 @@ import YamlEditor from './components/YamlEditor';
 import FileExplorerView from './components/FileExplorerView';
 import Canvas from './components/Canvas';
 import WelcomeScreen from './components/WelcomeScreen';
-import { useVeltraStore, DEFAULT_YAML } from './store/store';
+import { useKubeSketchStore, DEFAULT_YAML } from './store/store';
 import { exportCanvasImage } from './utils/exportCanvas';
 import { IDE_PATH, IDE_SAMPLE_PARAM } from './landingConfig';
 
-const SPLIT_KEY = 'veltra_panel_split';
+const SPLIT_KEY = 'kubesketch_panel_split';
 const MIN_SPLIT = 20;
 const MAX_SPLIT = 80;
 const DEFAULT_SPLIT = 42;
@@ -18,14 +18,14 @@ function loadSplitRatio(): number {
 }
 
 /**
- * Veltra: Kubernetes Visual IDE
+ * KubeSketch: Kubernetes Visual IDE
  * Split-screen layout: YAML editor (left) | Resource canvas (right)
  */
 export default function App() {
-  const setYaml = useVeltraStore((s) => s.setYaml);
-  const clearAll = useVeltraStore((s) => s.clearAll);
-  const resetLayout = useVeltraStore((s) => s.resetLayout);
-  const fileExplorerMode = useVeltraStore((s) => s.fileExplorerMode);
+  const setYaml = useKubeSketchStore((s) => s.setYaml);
+  const clearAll = useKubeSketchStore((s) => s.clearAll);
+  const resetLayout = useKubeSketchStore((s) => s.resetLayout);
+  const fileExplorerMode = useKubeSketchStore((s) => s.fileExplorerMode);
 
   // Landing page at "/", IDE at "/ide" (see landingConfig.ts). Vite dev and
   // `vite preview` SPA-fallback /ide to index.html; a static host needs a
@@ -126,8 +126,8 @@ export default function App() {
       <header className="toolbar">
         <div className="toolbar__left">
           <div className="toolbar__brand">
-            <img className="toolbar__logo" src="/Logo-nobg.png" alt="Veltra logo" />
-            <span className="toolbar__name">Veltra</span>
+            <img className="toolbar__logo" src="/Logo-nobg.png" alt="KubeSketch logo" />
+            <span className="toolbar__name">KubeSketch</span>
           </div>
           <span className="toolbar__tagline">
             Kubernetes Visual IDE

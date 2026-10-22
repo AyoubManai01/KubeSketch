@@ -1,6 +1,6 @@
 import { toPng, toSvg } from 'html-to-image';
 import { getViewportForBounds, type Node, type ReactFlowInstance } from '@xyflow/react';
-import { useVeltraStore } from '../store/store';
+import { useKubeSketchStore } from '../store/store';
 import type { K8sNodeData } from './buildGraph';
 
 /**
@@ -18,10 +18,10 @@ export function setRfInstance(instance: ReactFlowInstance<Node<K8sNodeData>> | n
 }
 
 /** Exported images use a white background with black text: see the
- *  veltra-export-light class in index.css. The class is applied to the
+ *  kubesketch-export-light class in index.css. The class is applied to the
  *  offscreen render host only, so the live canvas never changes. */
 const EXPORT_BACKGROUND = '#ffffff';
-const EXPORT_LIGHT_CLASS = 'veltra-export-light';
+const EXPORT_LIGHT_CLASS = 'kubesketch-export-light';
 
 function triggerDownload(dataUrl: string, filename: string): void {
     const a = document.createElement('a');
@@ -44,7 +44,7 @@ function triggerDownload(dataUrl: string, filename: string): void {
  * retries once with font embedding skipped.
  */
 export async function exportCanvasImage(format: 'png' | 'svg'): Promise<void> {
-    const { nodes, setNotice } = useVeltraStore.getState();
+    const { nodes, setNotice } = useKubeSketchStore.getState();
     const fail = (text: string) => setNotice({ id: Date.now(), tone: 'error', text });
 
     if (nodes.length === 0) {
@@ -120,7 +120,7 @@ export async function exportCanvasImage(format: 'png' | 'svg'): Promise<void> {
                     ? await toSvg(clone, { ...options, skipFonts: true })
                     : await toPng(clone, { ...options, skipFonts: true });
         }
-        triggerDownload(dataUrl, `veltra-graph.${format}`);
+        triggerDownload(dataUrl, `kubesketch-graph.${format}`);
     } catch {
         fail(
             `Could not export the canvas as ${format.toUpperCase()}, check the browser console for details.`

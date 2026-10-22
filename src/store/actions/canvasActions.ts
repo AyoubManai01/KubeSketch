@@ -34,13 +34,13 @@ import {
     renameVpaTargetReferences,
     renameWorkloadReferences,
 } from '../renames';
-import { makeNotice, type CanvasNotice, type StoreGetter, type StoreSetter, type VeltraState } from '../types';
+import { makeNotice, type CanvasNotice, type StoreGetter, type StoreSetter, type KubeSketchState } from '../types';
 
 export function createCanvasActions(
     set: StoreSetter,
     get: StoreGetter
 ): Pick<
-    VeltraState,
+    KubeSketchState,
     | 'setNotice'
     | 'setYaml'
     | 'setCanvasNodes'

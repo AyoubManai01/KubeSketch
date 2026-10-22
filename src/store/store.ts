@@ -5,10 +5,10 @@ import { createLinkActions } from './actions/linkActions';
 import { createCreationActions } from './actions/creationActions';
 import { createNsLayoutActions } from './actions/nsLayoutActions';
 import { createFileActions } from './actions/fileActions';
-import type { VeltraState } from './types';
+import type { KubeSketchState } from './types';
 
 /**
- * The Veltra store: the single source of truth for the app. YAML text, canvas
+ * The KubeSketch store: the single source of truth for the app. YAML text, canvas
  * nodes/edges, the inspector and relationships are all projections of one
  * resource model (see ./types.ts for the state shape and ../utils/buildGraph
  * for the graph derivation; every structural mutation funnels through
@@ -17,7 +17,7 @@ import type { VeltraState } from './types';
  * The module path stays `../store/store`: components and tests import (and
  * vi.mock) it, so the re-exports below keep that surface stable.
  */
-export const useVeltraStore = create<VeltraState>((set, get) => ({
+export const useKubeSketchStore = create<KubeSketchState>((set, get) => ({
     ...computeInitialState(),
     ...createCanvasActions(set, get),
     ...createLinkActions(set),

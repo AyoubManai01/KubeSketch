@@ -6,7 +6,7 @@ export interface K8sNodeData {
     name: string;
     namespace?: string;
     resource: K8sResource;
-    /** True for controller-managed resources Veltra materializes (like a real cluster
+    /** True for controller-managed resources KubeSketch materializes (like a real cluster
      *  creating a Deployment's ReplicaSet and Pods). Never serialized back to YAML. */
     synthetic?: boolean;
     /** For synthetic resources: the nearest REAL resource that controls them. */

@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { SUPPORTED_KINDS, type SupportedKind } from "../../types/types";
 import { isGatewayApiKind } from "../../utils/buildGraph";
-import { useVeltraStore } from "../../store/store";
+import { useKubeSketchStore } from "../../store/store";
 
 /** Presentational kind groups for the canvas toolbar (left → right). */
 const RESOURCE_GROUPS: { label: string; kinds: SupportedKind[] }[] = [
@@ -57,8 +57,8 @@ export function CanvasToolbar({
   setGatewayApiModalOpen,
   setNamespaceModalOpen,
 }: Props) {
-  const nsEditMode = useVeltraStore((s) => s.nsEditMode);
-  const setNsEditMode = useVeltraStore((s) => s.setNsEditMode);
+  const nsEditMode = useKubeSketchStore((s) => s.nsEditMode);
+  const setNsEditMode = useKubeSketchStore((s) => s.setNsEditMode);
 
   const [gatewayApiDropdownOpen, setGatewayApiDropdownOpen] = useState(false);
   const [gaDropdownPos, setGaDropdownPos] = useState({ top: 0, left: 0 });

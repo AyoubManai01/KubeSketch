@@ -16,13 +16,13 @@ import {
     persistNsLayout,
     upsertNamedRect,
 } from '../persistence';
-import { makeNotice, type StoreGetter, type StoreSetter, type VeltraState } from '../types';
+import { makeNotice, type StoreGetter, type StoreSetter, type KubeSketchState } from '../types';
 
 export function createNsLayoutActions(
     set: StoreSetter,
     get: StoreGetter
 ): Pick<
-    VeltraState,
+    KubeSketchState,
     | 'setNsEditMode'
     | 'moveNamespace'
     | 'moveClusterRect'

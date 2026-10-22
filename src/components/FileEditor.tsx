@@ -1,5 +1,5 @@
 import MonacoYaml from './MonacoYaml';
-import { useVeltraStore } from '../store/store';
+import { useKubeSketchStore } from '../store/store';
 
 /**
  * Scoped editor for the active virtual file: a projection of the single
@@ -7,14 +7,14 @@ import { useVeltraStore } from '../store/store';
  * `setFileYaml` (through the same commitResources path as every other edit).
  */
 export default function FileEditor({ style }: { style?: React.CSSProperties }) {
-    const activeFile = useVeltraStore((s) => s.activeFile);
-    const activeFileText = useVeltraStore((s) => s.activeFileText);
-    const setFileYaml = useVeltraStore((s) => s.setFileYaml);
-    const fileYamlError = useVeltraStore((s) => s.fileYamlError);
-    const selectedResource = useVeltraStore((s) => s.selectedResource);
-    const setNotice = useVeltraStore((s) => s.setNotice);
-    const fileExplorerMode = useVeltraStore((s) => s.fileExplorerMode);
-    const setFileExplorerMode = useVeltraStore((s) => s.setFileExplorerMode);
+    const activeFile = useKubeSketchStore((s) => s.activeFile);
+    const activeFileText = useKubeSketchStore((s) => s.activeFileText);
+    const setFileYaml = useKubeSketchStore((s) => s.setFileYaml);
+    const fileYamlError = useKubeSketchStore((s) => s.fileYamlError);
+    const selectedResource = useKubeSketchStore((s) => s.selectedResource);
+    const setNotice = useKubeSketchStore((s) => s.setNotice);
+    const fileExplorerMode = useKubeSketchStore((s) => s.fileExplorerMode);
+    const setFileExplorerMode = useKubeSketchStore((s) => s.setFileExplorerMode);
 
     const handleExport = () => {
         if (!activeFileText.trim()) {

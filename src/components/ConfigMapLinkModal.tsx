@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useVeltraStore } from '../store/store';
+import { useKubeSketchStore } from '../store/store';
 import type { ConfigMapMechanism } from '../utils/linkResources';
 
 const MECHANISM_LABELS: Array<{ value: ConfigMapMechanism; label: string; hint: string }> = [
@@ -26,10 +26,10 @@ const MECHANISM_LABELS: Array<{ value: ConfigMapMechanism; label: string; hint: 
  * is written into the workload's Pod spec.
  */
 export default function ConfigMapLinkModal() {
-    const pending = useVeltraStore((s) => s.pendingConfigMapLink);
-    const nodes = useVeltraStore((s) => s.nodes);
-    const confirmConfigMapLink = useVeltraStore((s) => s.confirmConfigMapLink);
-    const cancelConfigMapLink = useVeltraStore((s) => s.cancelConfigMapLink);
+    const pending = useKubeSketchStore((s) => s.pendingConfigMapLink);
+    const nodes = useKubeSketchStore((s) => s.nodes);
+    const confirmConfigMapLink = useKubeSketchStore((s) => s.confirmConfigMapLink);
+    const cancelConfigMapLink = useKubeSketchStore((s) => s.cancelConfigMapLink);
 
     const [mechanism, setMechanism] = useState<ConfigMapMechanism>('envFrom');
     const [key, setKey] = useState('');

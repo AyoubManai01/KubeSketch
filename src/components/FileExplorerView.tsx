@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import FileExplorer from './FileExplorer';
 import FileEditor from './FileEditor';
-import { useVeltraStore } from '../store/store';
+import { useKubeSketchStore } from '../store/store';
 import { buildFileExplorer } from '../utils/fileTree';
 
-const EXPLORER_SPLIT_KEY = 'veltra_explorer_split';
+const EXPLORER_SPLIT_KEY = 'kubesketch_explorer_split';
 const MIN_EXPLORER = 15;
 const MAX_EXPLORER = 50;
 const DEFAULT_EXPLORER = 25;
@@ -20,9 +20,9 @@ function loadExplorerRatio(): number {
  * file-explorer mode is on.
  */
 export default function FileExplorerView({ style }: { style?: React.CSSProperties }) {
-    const nodes = useVeltraStore((s) => s.nodes);
-    const setActiveFile = useVeltraStore((s) => s.setActiveFile);
-    const selectedResource = useVeltraStore((s) => s.selectedResource);
+    const nodes = useKubeSketchStore((s) => s.nodes);
+    const setActiveFile = useKubeSketchStore((s) => s.setActiveFile);
+    const selectedResource = useKubeSketchStore((s) => s.selectedResource);
 
     const [explorerRatio, setExplorerRatio] = useState(loadExplorerRatio);
     const [isResizing, setIsResizing] = useState(false);

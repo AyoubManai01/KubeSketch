@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getWorkloadPodLabels, parallelismOf, replicasOf, cronParallelismOf } from '../../utils/buildGraph';
 import { isClusterScoped } from '../../utils/k8sScope';
-import { useVeltraStore } from '../../store/store';
+import { useKubeSketchStore } from '../../store/store';
 import { KIND_COLORS, KIND_ICONS } from '../kindMeta';
 import type { SupportedKind } from '../../types/types';
 import type { CreateFormBundle, CreateFormDerived, CreateFormSetters, CreateFormState } from './formTypes';
@@ -15,8 +15,8 @@ export function useCreateResourceForm(
     kind: SupportedKind,
     onClose: () => void
 ): CreateFormBundle & { firstInputRef: React.RefObject<HTMLInputElement | null> } {
-    const nodes = useVeltraStore((s) => s.nodes);
-    const nsLayout = useVeltraStore((s) => s.nsLayout);
+    const nodes = useKubeSketchStore((s) => s.nodes);
+    const nsLayout = useKubeSketchStore((s) => s.nsLayout);
 
     const suggestedName = useMemo(() => {
         const base = kind.toLowerCase();

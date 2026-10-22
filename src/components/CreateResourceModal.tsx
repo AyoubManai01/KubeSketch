@@ -1,4 +1,4 @@
-import { useVeltraStore } from '../store/store';
+import { useKubeSketchStore } from '../store/store';
 import NamespaceModal from './NamespaceModal';
 import { hexToRgba } from './kindMeta';
 import { useCreateResourceForm } from './createResource/useCreateResourceForm';
@@ -18,7 +18,7 @@ interface Props {
 }
 
 export default function CreateResourceModal({ kind, onClose }: Props) {
-    const addConfiguredNode = useVeltraStore((s) => s.addConfiguredNode);
+    const addConfiguredNode = useKubeSketchStore((s) => s.addConfiguredNode);
     const form = useCreateResourceForm(kind, onClose);
     const { state, derived } = form;
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useVeltraStore } from '../store/store';
+import { useKubeSketchStore } from '../store/store';
 
 /**
  * Post-drag prompt: after drawing an Ingress ↔ Secret connection the user confirms
@@ -7,9 +7,9 @@ import { useVeltraStore } from '../store/store';
  * An empty hosts list means "all hosts" (wildcard).
  */
 export default function IngressTlsLinkModal() {
-    const pending = useVeltraStore((s) => s.pendingIngressTlsLink);
-    const confirmIngressTlsLink = useVeltraStore((s) => s.confirmIngressTlsLink);
-    const cancelIngressTlsLink = useVeltraStore((s) => s.cancelIngressTlsLink);
+    const pending = useKubeSketchStore((s) => s.pendingIngressTlsLink);
+    const confirmIngressTlsLink = useKubeSketchStore((s) => s.confirmIngressTlsLink);
+    const cancelIngressTlsLink = useKubeSketchStore((s) => s.cancelIngressTlsLink);
 
     const [hostsText, setHostsText] = useState('');
     const [lastLinkKey, setLastLinkKey] = useState('');

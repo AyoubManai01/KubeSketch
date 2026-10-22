@@ -1,10 +1,10 @@
 /** localStorage keys persisting the app state between sessions. */
-export const YAML_KEY = 'veltra_yaml';
-export const USER_EDGES_KEY = 'veltra_user_edges';
-export const POSITIONS_KEY = 'veltra_node_positions';
-export const NS_LAYOUT_KEY = 'veltra_ns_layout';
-export const FILE_EXPLORER_KEY = 'veltra_file_explorer';
-export const ACTIVE_FILE_KEY = 'veltra_active_file';
+export const YAML_KEY = 'kubesketch_yaml';
+export const USER_EDGES_KEY = 'kubesketch_user_edges';
+export const POSITIONS_KEY = 'kubesketch_node_positions';
+export const NS_LAYOUT_KEY = 'kubesketch_ns_layout';
+export const FILE_EXPLORER_KEY = 'kubesketch_file_explorer';
+export const ACTIVE_FILE_KEY = 'kubesketch_active_file';
 
 /** Default sample YAML shown when the app first loads */
 export const DEFAULT_YAML = `apiVersion: apps/v1

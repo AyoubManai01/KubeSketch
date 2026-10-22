@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useVeltraStore } from '../store/store';
+import { useKubeSketchStore } from '../store/store';
 import { isClusterScoped } from '../utils/k8sScope';
 import { DEFAULT_CLUSTER_RECT, effectiveNsLayout } from '../utils/teachingFrame';
 
@@ -16,9 +16,9 @@ interface Props {
  * (growing the cluster when there is no room).
  */
 export default function NamespaceModal({ onClose, onCreated }: Props) {
-    const nodes = useVeltraStore((s) => s.nodes);
-    const nsLayout = useVeltraStore((s) => s.nsLayout);
-    const addNamespace = useVeltraStore((s) => s.addNamespace);
+    const nodes = useKubeSketchStore((s) => s.nodes);
+    const nsLayout = useKubeSketchStore((s) => s.nsLayout);
+    const addNamespace = useKubeSketchStore((s) => s.addNamespace);
 
     const [name, setName] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);

@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import type { K8sResource } from '../types/types';
-import { useVeltraStore } from '../store/store';
+import { useKubeSketchStore } from '../store/store';
 import NamespaceField from './NamespaceField';
 import NamespaceModal from './NamespaceModal';
 import { KIND_COLORS, hexToRgba } from './kindMeta';
@@ -40,9 +40,9 @@ function suggestedRouteName(kind: RouteKind, existing: string[]): string {
 }
 
 export default function CreateGatewayApiModal({ onClose }: Props) {
-    const nodes = useVeltraStore((s) => s.nodes);
-    const addConfiguredNodes = useVeltraStore((s) => s.addConfiguredNodes);
-    const nsLayout = useVeltraStore((s) => s.nsLayout);
+    const nodes = useKubeSketchStore((s) => s.nodes);
+    const addConfiguredNodes = useKubeSketchStore((s) => s.addConfiguredNodes);
+    const nsLayout = useKubeSketchStore((s) => s.nsLayout);
     const firstInputRef = useRef<HTMLInputElement>(null);
     const idCounter = useRef(1);
 

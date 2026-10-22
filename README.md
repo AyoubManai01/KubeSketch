@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="./public/Logo-nobg.png" width="120" alt="Veltra logo" />
+  <img src="./public/Logo-nobg.png" width="120" alt="KubeSketch logo" />
 </p>
 
-<h1 align="center">Veltra</h1>
+<h1 align="center">KubeSketch</h1>
 
 <p align="center">
   <b>Design, understand, and evolve Kubernetes infrastructure visually — without losing YAML control.</b>
@@ -13,21 +13,21 @@
   <a href="./CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs welcome" /></a>
 </p>
 
-> **NOTICE:** Veltra is an independent open-source project under active
+> **NOTICE:** KubeSketch is an independent open-source project under active
 > development — expect rough edges and frequent changes on the way to a stable
-> release. Veltra is **not** a CNCF project, and is not affiliated with,
+> release. KubeSketch is **not** a CNCF project, and is not affiliated with,
 > sponsored, or endorsed by the CNCF, the Linux Foundation, or the Kubernetes
 > project.
 
-Veltra is a visual Kubernetes IDE that keeps your YAML and infrastructure
+KubeSketch is a visual Kubernetes IDE that keeps your YAML and infrastructure
 canvas in sync.
 
-Veltra was created to blend the raw power of Kubernetes manifests with a
+KubeSketch was created to blend the raw power of Kubernetes manifests with a
 visual modeling experience — so you never have to choose between code and
 diagrams, and the two sides never drift apart.
 
 <div align="center">
-  <img src="./public/Demo.png" width="80%" alt="Veltra: Monaco YAML editor (left) and architecture canvas (right)" />
+  <img src="./public/Demo.png" width="80%" alt="KubeSketch: Monaco YAML editor (left) and architecture canvas (right)" />
 </div>
 
 ## Features
@@ -36,7 +36,7 @@ diagrams, and the two sides never drift apart.
 - **YAML stays the single source of truth** — the manifest and canvas are kept in sync, in both directions
 - Visual architecture mapping with inferred relationships (selectors, backends, references, ownership)
 - **Controller simulation** — see the ReplicaSets, Pods, and Jobs Kubernetes would materialize
-- **Semantic drag-and-drop linking** — draw a connection and Veltra writes real fields into the manifest
+- **Semantic drag-and-drop linking** — draw a connection and KubeSketch writes real fields into the manifest
 - Guided resource creation and an inspector with inline validation
 - Namespace and cluster frames with an editable layout mode
 - VSCode-style file explorer that projects the manifest into per-resource files
@@ -57,7 +57,7 @@ PersistentVolume, StorageClass, Job, CronJob, and Gateway API resources
 
 ## Quickstart
 
-If you want to design or explore a Kubernetes architecture, Veltra runs
+If you want to design or explore a Kubernetes architecture, KubeSketch runs
 entirely locally — there is nothing to deploy to your cluster.
 
 **Prerequisites**
@@ -78,7 +78,7 @@ npm run dev
 Open the URL printed in your terminal (usually `http://localhost:5173`). The
 landing page links straight to the IDE — or go directly to `/ide`.
 
-## Using Veltra
+## Using KubeSketch
 
 - The landing page is served at `/`; the IDE lives at `/ide`.
 - Paste or type multi-document YAML into the editor — the canvas renders it
@@ -96,18 +96,18 @@ For example:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: veltra-api
+  name: kubesketch-api
   labels:
-    app: veltra-api
+    app: kubesketch-api
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: veltra-api
+      app: kubesketch-api
   template:
     metadata:
       labels:
-        app: veltra-api
+        app: kubesketch-api
     spec:
       containers:
         - name: api
@@ -118,10 +118,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: veltra-api
+  name: kubesketch-api
 spec:
   selector:
-    app: veltra-api
+    app: kubesketch-api
   ports:
     - port: 80
       targetPort: 80
@@ -129,7 +129,7 @@ spec:
 
 **Configuration**
 
-Veltra is **local-first** and needs no configuration files or environment
+KubeSketch is **local-first** and needs no configuration files or environment
 variables:
 
 - Everything runs in the browser; there is no backend and no cluster
@@ -142,7 +142,7 @@ variables:
 
 ## Quick Start for Contributors
 
-Want to hack on Veltra? We'd love your help!
+Want to hack on KubeSketch? We'd love your help!
 
 Check out the [Contributing Guidelines](./CONTRIBUTING.md) for detailed
 instructions on setting up your local development environment, running the
@@ -192,33 +192,33 @@ Check out our:
 - [Code of Conduct](./CODE_OF_CONDUCT.md)
 - [Security Policy](./SECURITY.md)
 
-Veltra is an independent open-source project that follows community practices
-inspired by established CNCF and open-source projects. Veltra has adopted the
+KubeSketch is an independent open-source project that follows community practices
+inspired by established CNCF and open-source projects. KubeSketch has adopted the
 [CNCF Code of Conduct](https://github.com/cncf/foundation/blob/main/code-of-conduct.md)
-for its community guidelines. Veltra is **not** a CNCF project: it is not
+for its community guidelines. KubeSketch is **not** a CNCF project: it is not
 hosted, sponsored, or endorsed by the CNCF or the Linux Foundation, and no
 such affiliation is claimed.
 
 
 ## License
 
-Veltra is released under the terms of the
+KubeSketch is released under the terms of the
 [GNU General Public License, version 3 (GPL-3.0)](./LICENSE).
 
 Copyright © 2026 [Ayoub Manai](https://github.com/AyoubManai01)
 
 ## Frequently Asked Questions
 
-**Does Veltra connect to my cluster?**
+**Does KubeSketch connect to my cluster?**
 
-Yes, we can deploy Veltra on your cluster. The project is still in its early phases, so fill the form on our website to reserve your spot and we will contact you!
+Yes, we can deploy KubeSketch on your cluster. The project is still in its early phases, so fill the form on our website to reserve your spot and we will contact you!
 
 **Where is my data stored?**
 
-In your browser's `localStorage` on your own machine. Veltra has no backend
+In your browser's `localStorage` on your own machine. KubeSketch has no backend
 and sends nothing to a server.
 
-**Which Kubernetes resources does Veltra understand?**
+**Which Kubernetes resources does KubeSketch understand?**
 
 See the [supported resource kinds](#supported-resource-kinds) listed above —
 workloads, networking (including Gateway API), storage, configuration, and
@@ -226,7 +226,7 @@ autoscaling.
 
 ## Acknowledgements
 
-Veltra is built on wonderful open-source projects, including
+KubeSketch is built on wonderful open-source projects, including
 [React](https://react.dev/), [React Flow](https://reactflow.dev/),
 [Monaco Editor](https://microsoft.github.io/monaco-editor/),
 [Zustand](https://zustand.docs.pmnd.rs/), [js-yaml](https://github.com/nodeca/js-yaml),

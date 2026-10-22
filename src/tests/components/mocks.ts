@@ -82,7 +82,7 @@ export function createMockEdge(overrides: Partial<Edge> = {}): Edge {
 
 // ─── Zustand store mock ───────────────────────────────────────────────────────
 
-/** The slice of VeltraState that Canvas / CreateResourceModal / YamlEditor actually read. */
+/** The slice of KubeSketchState that Canvas / CreateResourceModal / YamlEditor actually read. */
 export interface MockStoreState {
     yaml: string;
     yamlError: string | null;
@@ -164,7 +164,7 @@ export function resetMockStoreState(): void {
 /** Factory passed to `vi.mock('../../store/store', storeMockFactory)`. */
 export function storeMockFactory() {
     return {
-        useVeltraStore: Object.assign(
+        useKubeSketchStore: Object.assign(
             (selector: (s: MockStoreState) => unknown) => selector(mockState),
             { getState: () => mockState },
         ),

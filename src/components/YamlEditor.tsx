@@ -1,18 +1,18 @@
 import MonacoYaml from './MonacoYaml';
-import { useVeltraStore } from '../store/store';
+import { useKubeSketchStore } from '../store/store';
 
 /**
  * Full-manifest Monaco editor: wires the reusable MonacoYaml editor to the
  * store's single YAML source of truth.
  */
 export default function YamlEditor({ style }: { style?: React.CSSProperties }) {
-    const yaml = useVeltraStore((s) => s.yaml);
-    const setYaml = useVeltraStore((s) => s.setYaml);
-    const setNotice = useVeltraStore((s) => s.setNotice);
-    const yamlError = useVeltraStore((s) => s.yamlError);
-    const selectedResource = useVeltraStore((s) => s.selectedResource);
-    const fileExplorerMode = useVeltraStore((s) => s.fileExplorerMode);
-    const setFileExplorerMode = useVeltraStore((s) => s.setFileExplorerMode);
+    const yaml = useKubeSketchStore((s) => s.yaml);
+    const setYaml = useKubeSketchStore((s) => s.setYaml);
+    const setNotice = useKubeSketchStore((s) => s.setNotice);
+    const yamlError = useKubeSketchStore((s) => s.yamlError);
+    const selectedResource = useKubeSketchStore((s) => s.selectedResource);
+    const fileExplorerMode = useKubeSketchStore((s) => s.fileExplorerMode);
+    const setFileExplorerMode = useKubeSketchStore((s) => s.setFileExplorerMode);
 
     const handleImport = (file: File) => {
         if (!/\.ya?ml$/i.test(file.name)) {
@@ -55,7 +55,7 @@ export default function YamlEditor({ style }: { style?: React.CSSProperties }) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'veltra-manifest.yaml';
+        a.download = 'kubesketch-manifest.yaml';
         document.body.appendChild(a);
         a.click();
         a.remove();

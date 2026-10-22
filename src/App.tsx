@@ -3,6 +3,8 @@ import YamlEditor from './components/YamlEditor';
 import FileExplorerView from './components/FileExplorerView';
 import Canvas from './components/Canvas';
 import WelcomeScreen from './components/WelcomeScreen';
+import ThemeToggle from './components/ThemeToggle';
+import { useIdeTheme } from './utils/ideTheme';
 import { useKubeSketchStore, DEFAULT_YAML } from './store/store';
 import { exportCanvasImage } from './utils/exportCanvas';
 import { IDE_PATH, IDE_SAMPLE_PARAM } from './landingConfig';
@@ -26,12 +28,18 @@ export default function App() {
   const clearAll = useKubeSketchStore((s) => s.clearAll);
   const resetLayout = useKubeSketchStore((s) => s.resetLayout);
   const fileExplorerMode = useKubeSketchStore((s) => s.fileExplorerMode);
+  const ideTheme = useIdeTheme();
 
   // Landing page at "/", IDE at "/ide" (see landingConfig.ts). Vite dev and
   // `vite preview` SPA-fallback /ide to index.html; a static host needs a
   // rewrite rule (/ide -> /index.html).
   const [path] = useState(() => window.location.pathname);
   const isIde = path.endsWith(IDE_PATH);
+
+  // The brand logo links back to the landing page at "/", honoring subpath
+  // deployments the same way WelcomeScreen derives the IDE URL.
+  const base = path.replace(/\/+$/, '');
+  const homeUrl = base.endsWith(IDE_PATH) ? base.slice(0, -IDE_PATH.length) || '/' : base;
 
   // "Load sample manifest" on the landing page opens /ide?sample=1.
   useEffect(() => {
@@ -119,16 +127,16 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className="app" data-theme={ideTheme}>
       <div className="app-brand-watermark" aria-hidden="true" />
       
       {/* Top navbar/toolbar */}
       <header className="toolbar">
         <div className="toolbar__left">
-          <div className="toolbar__brand">
+          <a className="toolbar__brand" href={homeUrl} title="Back to the KubeSketch home page">
             <img className="toolbar__logo" src="/Logo-nobg.png" alt="KubeSketch logo" />
             <span className="toolbar__name">KubeSketch</span>
-          </div>
+          </a>
           <span className="toolbar__tagline">
             Kubernetes Visual IDE
           </span>
@@ -217,6 +225,10 @@ export default function App() {
               </div>
             )}
           </div>
+        </div>
+
+        <div className="toolbar__right">
+          <ThemeToggle />
         </div>
       </header>
 

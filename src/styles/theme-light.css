@@ -1,0 +1,391 @@
+/* ---------- IDE light theme ----------
+   Keyed off data-theme="light" on <html> (applied by utils/ideTheme.ts) and
+   scoped to the IDE's .app tree, so the landing page's .welcome root — a
+   sibling that relies on the :root dark tokens — is never affected. The dark
+   theme remains the default defined in tokens.css and the per-area files;
+   every rule here is purely additive. */
+
+.app[data-theme='light'] {
+  background: #f6f7fb;
+
+  --bg-primary: #f6f7fb;
+  --bg-secondary: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-surface: #e2e8f0;
+  --bg-input: #ffffff;
+
+  --border-default: rgba(15, 23, 42, 0.12);
+  --border-active: rgba(59, 130, 246, 0.55);
+  --border-muted: rgba(15, 23, 42, 0.06);
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+
+  --shadow-sm: 0 2px 8px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.1);
+  --shadow-lg: 0 16px 48px rgba(15, 23, 42, 0.14);
+  --shadow-glow: 0 0 12px rgba(59, 130, 246, 0.12);
+}
+
+/* ---------- App chrome ---------- */
+
+.app[data-theme='light'] .toolbar__name {
+  color: #0f172a;
+}
+
+.app[data-theme='light'] .toolbar__brand:hover .toolbar__name {
+  color: #1d4ed8;
+}
+
+.app[data-theme='light'] .toolbar__tagline {
+  border-left-color: rgba(15, 23, 42, 0.14);
+}
+
+.app[data-theme='light'] .toolbar__logo {
+  filter: brightness(0.15) drop-shadow(0 0 10px rgba(59, 130, 246, 0.25));
+}
+
+.app[data-theme='light'] .app-brand-watermark {
+  filter: brightness(0.15);
+  opacity: 0.05;
+}
+
+.app[data-theme='light'] .toolbar-btn,
+.app[data-theme='light'] .panel-header__btn {
+  background: rgba(15, 23, 42, 0.03);
+}
+
+.app[data-theme='light'] .toolbar-btn:hover,
+.app[data-theme='light'] .panel-header__btn:hover {
+  background: rgba(15, 23, 42, 0.06);
+  border-color: rgba(15, 23, 42, 0.18);
+}
+
+.app[data-theme='light'] .toolbar-btn--danger {
+  color: #dc2626;
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.app[data-theme='light'] .toolbar-btn--danger:hover {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #b91c1c;
+}
+
+.app[data-theme='light'] .toolbar-btn--active,
+.app[data-theme='light'] .panel-header__btn--active {
+  background: rgba(59, 130, 246, 0.12);
+  color: #1d4ed8;
+  border-color: rgba(59, 130, 246, 0.45);
+}
+
+.app[data-theme='light'] .toolbar-btn--active:hover,
+.app[data-theme='light'] .panel-header__btn--active:hover {
+  background: rgba(59, 130, 246, 0.18);
+  color: #1e40af;
+  border-color: rgba(59, 130, 246, 0.6);
+}
+
+.app[data-theme='light'] .toolbar-btn--export--open {
+  background: rgba(15, 23, 42, 0.06);
+  border-color: rgba(15, 23, 42, 0.18);
+}
+
+.app[data-theme='light'] .toolbar-dropdown,
+.app[data-theme='light'] .canvas-toolbar__dropdown,
+.app[data-theme='light'] .modal,
+.app[data-theme='light'] .namespace-field__list {
+  box-shadow: var(--shadow-lg), 0 0 0 1px rgba(15, 23, 42, 0.05);
+}
+
+.app[data-theme='light'] .toolbar__theme {
+  background: rgba(15, 23, 42, 0.04);
+}
+
+/* ---------- Canvas toolbar ---------- */
+
+.app[data-theme='light'] .canvas-toolbar {
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.app[data-theme='light'] .canvas-toolbar__group-divider {
+  background: rgba(15, 23, 42, 0.12);
+}
+
+.app[data-theme='light'] .canvas-button {
+  background: rgba(15, 23, 42, 0.02);
+}
+
+.app[data-theme='light'] .canvas-button:hover {
+  background: rgba(15, 23, 42, 0.06);
+  border-color: rgba(15, 23, 42, 0.18);
+}
+
+.app[data-theme='light'] .canvas-button--active {
+  color: #0d9488;
+}
+
+.app[data-theme='light'] .canvas-toolbar__scroll {
+  scrollbar-color: rgba(15, 23, 42, 0.28) transparent;
+}
+
+.app[data-theme='light'] .canvas-toolbar__scroll::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.app[data-theme='light'] .canvas-toolbar__scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.app[data-theme='light'] .canvas-toolbar__scroll::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.app[data-theme='light'] .canvas-button--scroll:disabled:hover {
+  background: rgba(15, 23, 42, 0.02);
+}
+
+.app[data-theme='light'] .canvas-toolbar__group--pinned {
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.app[data-theme='light'] .gateway-route-card {
+  background: rgba(15, 23, 42, 0.02);
+}
+
+/* ---------- React Flow canvas ---------- */
+
+.app[data-theme='light'] .react-flow__background {
+  background: linear-gradient(180deg, #f6f7fb 0%, #ffffff 100%) !important;
+}
+
+.app[data-theme='light'] .react-flow__controls-button:hover {
+  background: rgba(15, 23, 42, 0.06) !important;
+  color: #0f172a !important;
+}
+
+/* ---------- K8s nodes ---------- */
+
+.app[data-theme='light'] .k8s-node {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+}
+
+.app[data-theme='light'] .k8s-node:hover {
+  border-color: rgba(15, 23, 42, 0.22);
+}
+
+.app[data-theme='light'] .k8s-node__header {
+  border-bottom-color: rgba(15, 23, 42, 0.08);
+}
+
+.app[data-theme='light'] .k8s-node__badge {
+  background: rgba(15, 23, 42, 0.06);
+  color: #334155;
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+.app[data-theme='light'] .k8s-node--container {
+  background: #ffffff;
+}
+
+.app[data-theme='light'] .k8s-node__container-grid-overlay {
+  background-image: radial-gradient(rgba(15, 23, 42, 0.05) 1px, transparent 0);
+}
+
+.app[data-theme='light'] .k8s-node__badge--managed {
+  background: rgba(148, 163, 184, 0.18);
+  border-color: rgba(100, 116, 139, 0.45);
+}
+
+.app[data-theme='light'] .canvas-legend {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+/* ---------- Namespace/cluster frames ---------- */
+
+.app[data-theme='light'] .teaching-frame__delete {
+  color: #dc2626;
+}
+
+/* ---------- Editor panels + file explorer ---------- */
+
+.app[data-theme='light'] .yaml-error-banner {
+  background: #fef2f2;
+  color: #b91c1c;
+  box-shadow: 0 -4px 16px rgba(15, 23, 42, 0.12);
+}
+
+.app[data-theme='light'] .yaml-error-banner__header {
+  color: #dc2626;
+}
+
+.app[data-theme='light'] .yaml-resource-highlight {
+  background: rgba(59, 130, 246, 0.12) !important;
+}
+
+.app[data-theme='light'] .file-tree__row:hover {
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.app[data-theme='light'] .file-tree__count {
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.app[data-theme='light'] .file-tree__icon--folder {
+  color: #b45309;
+}
+
+/* ---------- Inspector ---------- */
+
+.app[data-theme='light'] .node-inspector {
+  box-shadow: -4px 0 24px rgba(15, 23, 42, 0.1);
+}
+
+.app[data-theme='light'] .node-inspector__close:hover {
+  background: rgba(15, 23, 42, 0.07);
+}
+
+.app[data-theme='light'] .inspector-content,
+.app[data-theme='light'] .inspector-yaml-preview {
+  scrollbar-color: rgba(15, 23, 42, 0.18) transparent;
+}
+
+.app[data-theme='light'] .inspector-content::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.18);
+}
+
+.app[data-theme='light'] .inspector-hero,
+.app[data-theme='light'] .inspector-section__header {
+  background: rgba(15, 23, 42, 0.02);
+}
+
+.app[data-theme='light'] .inspector-hero__api-badge {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.08);
+}
+
+.app[data-theme='light'] .inspector-hero__name,
+.app[data-theme='light'] .canvas-empty-state__title {
+  color: #0f172a;
+}
+
+.app[data-theme='light'] .inspector-section__header--toggle:hover {
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.app[data-theme='light'] .inspector-section__count {
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.app[data-theme='light'] .inspector-field__input:disabled {
+  background-color: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.08);
+}
+
+.app[data-theme='light'] .inspector-label-chip {
+  color: #2563eb;
+  border-color: rgba(59, 130, 246, 0.2);
+}
+
+.app[data-theme='light'] .inspector-rel-item {
+  background: rgba(15, 23, 42, 0.02);
+}
+
+.app[data-theme='light'] .inspector-rel-item:hover {
+  border-color: rgba(15, 23, 42, 0.16);
+}
+
+.app[data-theme='light'] .inspector-rel-arrow--outgoing {
+  color: #2563eb;
+}
+
+.app[data-theme='light'] .inspector-rel-arrow--incoming {
+  color: #7c3aed;
+}
+
+.app[data-theme='light'] .inspector-rel-arrow--owns {
+  color: #059669;
+}
+
+.app[data-theme='light'] .inspector-rel-arrow--owned-by {
+  color: #ea580c;
+}
+
+.app[data-theme='light'] .inspector-rel-badge {
+  background: rgba(15, 23, 42, 0.05);
+  border-color: rgba(15, 23, 42, 0.08);
+}
+
+.app[data-theme='light'] .inspector-yaml-preview {
+  color: #475569;
+}
+
+.app[data-theme='light'] .inspector-validate-btn {
+  color: #059669;
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.app[data-theme='light'] .inspector-validate-btn:hover:not(:disabled) {
+  color: #047857;
+}
+
+.app[data-theme='light'] .inspector-validate-btn:disabled {
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.app[data-theme='light'] .inspector-delete-btn {
+  color: #dc2626;
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.app[data-theme='light'] .inspector-delete-btn:hover {
+  color: #b91c1c;
+}
+
+.app[data-theme='light'] .canvas-empty-state {
+  background: rgba(246, 247, 251, 0.92);
+}
+
+/* ---------- Modals ---------- */
+
+.app[data-theme='light'] .modal-overlay {
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.app[data-theme='light'] .modal-header__close:hover {
+  background: rgba(15, 23, 42, 0.07);
+}
+
+.app[data-theme='light'] .modal-subsection {
+  background: rgba(15, 23, 42, 0.03);
+}
+
+.app[data-theme='light'] .modal-btn--secondary {
+  background: rgba(15, 23, 42, 0.05);
+}
+
+.app[data-theme='light'] .modal-btn--secondary:hover {
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.app[data-theme='light'] .modal-field__error {
+  color: #dc2626;
+}
+
+/* ---------- Toasts + status bar ---------- */
+
+.app[data-theme='light'] .canvas-toast {
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.app[data-theme='light'] .canvas-statusbar__item {
+  background: rgba(255, 251, 235, 0.96);
+  color: #b45309;
+}
+
+.app[data-theme='light'] .inspector-field__hint--hpa {
+  color: #b45309;
+}

@@ -95,10 +95,12 @@ describe('WelcomeScreen', () => {
         expect(cta).toHaveAttribute('href', '#contact');
     });
 
-    it('renders the "What is KubeSketch" section with the preview placeholder', () => {
+    it('renders the "What is KubeSketch" section with the product preview video', () => {
         render(<WelcomeScreen />);
         expect(dom.getByRole('heading', { name: 'What is KubeSketch' })).toBeInTheDocument();
-        expect(dom.getByText('Product preview')).toBeInTheDocument();
+        const video = dom.getByLabelText('KubeSketch product preview');
+        expect(video.getAttribute('src')).toBe('/demo.mp4');
+        expect(video).toHaveAttribute('controls');
         expect(dom.queryByAltText(/default manifest/)).toBeNull();
     });
 

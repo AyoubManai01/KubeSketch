@@ -266,10 +266,6 @@
     grid-template-columns: 1fr;
   }
 
-  .welcome__preview {
-    height: 240px;
-  }
-
   .welcome__footer-inner {
     grid-template-columns: 1fr;
     gap: 24px;

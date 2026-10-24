@@ -137,8 +137,9 @@ variables:
 - Your manifest, canvas positions, manual links, namespace layout, and UI
   state are persisted in browser `localStorage`, so your work survives
   refreshes.
-- To deploy a static build, note that the `/ide` route needs a rewrite rule
-  (`/ide` → `/index.html`) on static hosts.
+- The production build emits `ide/index.html` alongside `index.html`, so
+  static hosts serve the `/ide` route as a directory index — no rewrite rule
+  needed.
 
 ## Quick Start for Contributors
 

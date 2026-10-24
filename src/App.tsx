@@ -7,7 +7,7 @@ import ThemeToggle from './components/ThemeToggle';
 import { useIdeTheme } from './utils/ideTheme';
 import { useKubeSketchStore, DEFAULT_YAML } from './store/store';
 import { exportCanvasImage } from './utils/exportCanvas';
-import { IDE_PATH, IDE_SAMPLE_PARAM } from './landingConfig';
+import { IDE_PATH, IDE_SAMPLE_PARAM, isIdePath } from './landingConfig';
 
 const SPLIT_KEY = 'kubesketch_panel_split';
 const MIN_SPLIT = 20;
@@ -31,15 +31,15 @@ export default function App() {
   const ideTheme = useIdeTheme();
 
   // Landing page at "/", IDE at "/ide" (see landingConfig.ts). Vite dev and
-  // `vite preview` SPA-fallback /ide to index.html; a static host needs a
-  // rewrite rule (/ide -> /index.html).
-  const [path] = useState(() => window.location.pathname);
-  const isIde = path.endsWith(IDE_PATH);
+  // `vite preview` SPA-fallback /ide to index.html; production builds emit a
+  // real ide/index.html, so static hosts serve /ide (or /ide/ after their
+  // directory-index redirect) without any rewrite rule.
+  const [path] = useState(() => window.location.pathname.replace(/\/+$/, ''));
+  const isIde = isIdePath(path);
 
   // The brand logo links back to the landing page at "/", honoring subpath
   // deployments the same way WelcomeScreen derives the IDE URL.
-  const base = path.replace(/\/+$/, '');
-  const homeUrl = base.endsWith(IDE_PATH) ? base.slice(0, -IDE_PATH.length) || '/' : base;
+  const homeUrl = path.endsWith(IDE_PATH) ? path.slice(0, -IDE_PATH.length) || '/' : path;
 
   // "Load sample manifest" on the landing page opens /ide?sample=1.
   useEffect(() => {

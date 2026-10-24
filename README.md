@@ -27,7 +27,7 @@ visual modeling experience — so you never have to choose between code and
 diagrams, and the two sides never drift apart.
 
 <div align="center">
-  <img src="./public/Demo.png" width="80%" alt="KubeSketch: Monaco YAML editor (left) and architecture canvas (right)" />
+  <video src="./public/demo.mp4" controls muted loop width="80%"></video>
 </div>
 
 ## Features

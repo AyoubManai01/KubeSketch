@@ -11,7 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "deploy": "gh-pages -d dist"
+    "deploy": "gh-pages -d dist --cname kubesketch.com"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

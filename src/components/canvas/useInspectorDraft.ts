@@ -373,12 +373,21 @@ export function useInspectorDraft(
       metadata,
     };
 
-    // Renames go through the identity path so reference cascades run
-    // (Ingress backends, HorizontalPodAutoscaler scaleTargetRefs, ConfigMap/PVC/PV/SC refs) and
-    // manual edges + stored positions are remapped.
+    // Renames and pure namespace changes go through the identity path so
+    // reference cascades run (Ingress backends, HorizontalPodAutoscaler scaleTargetRefs,
+    // ConfigMap/PVC/PV/SC refs) and manual edges + stored positions are remapped;
+    // a namespace-only change re-runs engine placement (invariant 17) instead of
+    // leaving the node stranded inside the previous namespace box.
     let nodeId = selectedNode.id;
-    if (name !== committed.metadata?.name) {
-      updateNodeFromCanvas(nodeId, { name });
+    const committedNamespace = committed.metadata?.namespace ?? "default";
+    const namespaceChanged =
+      !isClusterScoped(kind) &&
+      (metadata.namespace ?? "default") !== committedNamespace;
+    if (name !== committed.metadata?.name || namespaceChanged) {
+      updateNodeFromCanvas(nodeId, {
+        ...(name !== committed.metadata?.name ? { name } : {}),
+        ...(namespaceChanged ? { namespace: metadata.namespace } : {}),
+      });
       nodeId = nodeIdFor(kind, name);
     }
     updateNodeResourceFromCanvas(nodeId, finalResource);

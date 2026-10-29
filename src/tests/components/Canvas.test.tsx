@@ -34,6 +34,12 @@ function fieldByLabel(container: HTMLElement, labelText: string): HTMLInputEleme
     return input as HTMLInputElement | HTMLSelectElement;
 }
 
+function commitInspectorDraft() {
+    const btn = dom.getByText('Validate Changes') as HTMLButtonElement;
+    expect(btn).toBeEnabled();
+    fireEvent.click(btn);
+}
+
 function selectNode(node: ReturnType<typeof createMockNode>, extra: Record<string, unknown> = {}) {
     setMockStoreState({
         nodes: [node],
@@ -265,24 +271,39 @@ describe('Canvas', () => {
 
         it('commits a namespace edit through updateNodeFromCanvas', () => {
             const updateNodeFromCanvas = vi.fn();
+            const updateNodeResourceFromCanvas = vi.fn();
             const node = createMockNode({ kind: 'Pod', name: 'p1' });
-            selectNode(node, { updateNodeFromCanvas });
+            selectNode(node, { updateNodeFromCanvas, updateNodeResourceFromCanvas });
             const { container } = render(<Canvas />);
 
             fireEvent.change(fieldByLabel(container, 'Namespace'), { target: { value: 'staging' } });
+            commitInspectorDraft();
 
             expect(updateNodeFromCanvas).toHaveBeenCalledWith(node.id, { namespace: 'staging' });
+            expect(updateNodeResourceFromCanvas).toHaveBeenCalledWith(
+                node.id,
+                expect.objectContaining({
+                    metadata: expect.objectContaining({ namespace: 'staging' }),
+                })
+            );
         });
 
-        it('commits a Resource Type (kind) change through updateNodeFromCanvas', () => {
+        it('pins the Resource Type: the select is disabled and kind can never change', () => {
             const updateNodeFromCanvas = vi.fn();
+            const updateNodeResourceFromCanvas = vi.fn();
             const node = createMockNode({ kind: 'Pod', name: 'p1' });
-            selectNode(node, { updateNodeFromCanvas });
+            selectNode(node, { updateNodeFromCanvas, updateNodeResourceFromCanvas });
             const { container } = render(<Canvas />);
 
-            fireEvent.change(fieldByLabel(container, 'Resource Type'), { target: { value: 'Service' } });
+            const kindSelect = fieldByLabel(container, 'Resource Type') as HTMLSelectElement;
 
-            expect(updateNodeFromCanvas).toHaveBeenCalledWith(node.id, { kind: 'Service' });
+            expect(kindSelect).toBeDisabled();
+            expect(kindSelect).toHaveValue('Pod');
+            expect(
+                dom.getByText("Resource type can't be changed after creation.")
+            ).toBeInTheDocument();
+            expect(updateNodeFromCanvas).not.toHaveBeenCalled();
+            expect(updateNodeResourceFromCanvas).not.toHaveBeenCalled();
         });
 
         it('the Name field blocks a duplicate name (of the same kind) and never commits it', () => {
@@ -305,13 +326,21 @@ describe('Canvas', () => {
 
         it('the Name field commits a valid, non-colliding rename', () => {
             const updateNodeFromCanvas = vi.fn();
+            const updateNodeResourceFromCanvas = vi.fn();
             const node = createMockNode({ kind: 'Deployment', name: 'api' });
-            selectNode(node, { updateNodeFromCanvas });
+            selectNode(node, { updateNodeFromCanvas, updateNodeResourceFromCanvas });
             const { container } = render(<Canvas />);
 
             fireEvent.change(fieldByLabel(container, 'Name'), { target: { value: 'api-v2' } });
+            commitInspectorDraft();
 
             expect(updateNodeFromCanvas).toHaveBeenCalledWith(node.id, { name: 'api-v2' });
+            expect(updateNodeResourceFromCanvas).toHaveBeenCalledWith(
+                'Deployment-api-v2',
+                expect.objectContaining({
+                    metadata: expect.objectContaining({ name: 'api-v2' }),
+                })
+            );
         });
     });
 
@@ -330,6 +359,7 @@ describe('Canvas', () => {
             const { container } = render(<Canvas />);
 
             fireEvent.change(fieldByLabel(container, 'Labels'), { target: { value: 'app=my-app,tier=frontend' } });
+            commitInspectorDraft();
 
             expect(updateNodeResourceFromCanvas).toHaveBeenCalledWith(node.id, {
                 apiVersion: 'v1',
@@ -358,6 +388,7 @@ describe('Canvas', () => {
             const { container } = render(<Canvas />);
 
             fireEvent.change(fieldByLabel(container, 'Replicas'), { target: { value: '7' } });
+            commitInspectorDraft();
 
             const [, resource] = updateNodeResourceFromCanvas.mock.calls[0] as [string, any];
             expect((resource.spec as { replicas: number }).replicas).toBe(7);
@@ -374,6 +405,7 @@ describe('Canvas', () => {
             const { container } = render(<Canvas />);
 
             fireEvent.change(fieldByLabel(container, 'Replicas'), { target: { value: '' } });
+            commitInspectorDraft();
 
             const [, resource] = updateNodeResourceFromCanvas.mock.calls[0] as [string, any];
             expect((resource.spec as { replicas: unknown }).replicas).toBeUndefined();
@@ -404,6 +436,7 @@ describe('Canvas', () => {
             const { container } = render(<Canvas />);
 
             fireEvent.change(fieldByLabel(container, 'Selector'), { target: { value: 'cache' } });
+            commitInspectorDraft();
 
             const [, resource] = updateNodeResourceFromCanvas.mock.calls[0] as [string, any];
             expect((resource.spec as any).selector).toEqual({ matchLabels: { app: 'cache' } });
@@ -428,6 +461,7 @@ describe('Canvas', () => {
             const { container } = render(<Canvas />);
 
             fireEvent.change(fieldByLabel(container, 'Container Name'), { target: { value: 'api' } });
+            commitInspectorDraft();
 
             const [, resource] = updateNodeResourceFromCanvas.mock.calls[0] as [string, any];
             expect((resource.spec as any).containers[0]).toEqual({
@@ -460,6 +494,7 @@ describe('Canvas', () => {
             const { container } = render(<Canvas />);
 
             fireEvent.change(fieldByLabel(container, 'Target Port'), { target: { value: '9090' } });
+            commitInspectorDraft();
 
             const [, resource] = updateNodeResourceFromCanvas.mock.calls[0] as [string, any];
             expect((resource.spec as any).ports[0].targetPort).toBe(9090);
@@ -472,6 +507,7 @@ describe('Canvas', () => {
             const { container } = render(<Canvas />);
 
             fireEvent.change(fieldByLabel(container, 'Target Port'), { target: { value: 'http' } });
+            commitInspectorDraft();
 
             const [, resource] = updateNodeResourceFromCanvas.mock.calls[0] as [string, any];
             expect((resource.spec as any).ports[0].targetPort).toBe('http');
@@ -484,6 +520,7 @@ describe('Canvas', () => {
             const { container } = render(<Canvas />);
 
             fireEvent.change(fieldByLabel(container, 'Target Port'), { target: { value: '' } });
+            commitInspectorDraft();
 
             const [, resource] = updateNodeResourceFromCanvas.mock.calls[0] as [string, any];
             expect((resource.spec as any).ports[0].targetPort).toBeUndefined();
@@ -496,6 +533,7 @@ describe('Canvas', () => {
             const { container } = render(<Canvas />);
 
             fireEvent.change(fieldByLabel(container, 'Service Type'), { target: { value: 'LoadBalancer' } });
+            commitInspectorDraft();
 
             const [, resource] = updateNodeResourceFromCanvas.mock.calls[0] as [string, any];
             expect((resource.spec as any).type).toBe('LoadBalancer');
@@ -508,6 +546,7 @@ describe('Canvas', () => {
             const { container } = render(<Canvas />);
 
             fireEvent.change(fieldByLabel(container, 'Service Type'), { target: { value: '' } });
+            commitInspectorDraft();
 
             const [, resource] = updateNodeResourceFromCanvas.mock.calls[0] as [string, any];
             expect((resource.spec as any).type).toBeUndefined();
@@ -520,6 +559,7 @@ describe('Canvas', () => {
             const { container } = render(<Canvas />);
 
             fireEvent.change(fieldByLabel(container, 'Port'), { target: { value: '443' } });
+            commitInspectorDraft();
 
             const [, resource] = updateNodeResourceFromCanvas.mock.calls[0] as [string, any];
             expect((resource.spec as any).ports[0].port).toBe(443);
@@ -559,6 +599,7 @@ describe('Canvas', () => {
             const { container } = render(<Canvas />);
 
             fireEvent.change(fieldByLabel(container, 'Backend Service'), { target: { value: 'checkout-svc' } });
+            commitInspectorDraft();
 
             const [, resource] = updateNodeResourceFromCanvas.mock.calls[0] as [string, any];
             const backend = (resource.spec as any).rules[0].http.paths[0].backend;
@@ -586,6 +627,7 @@ describe('Canvas', () => {
             const { container } = render(<Canvas />);
 
             fireEvent.change(fieldByLabel(container, 'Backend Service'), { target: { value: 'checkout-svc' } });
+            commitInspectorDraft();
 
             const [, resource] = updateNodeResourceFromCanvas.mock.calls[0] as [string, any];
             const backend = (resource.spec as any).rules[0].http.paths[0].backend;
@@ -608,6 +650,7 @@ describe('Canvas', () => {
             const { container } = render(<Canvas />);
 
             fireEvent.change(fieldByLabel(container, 'Host'), { target: { value: 'my-app.example.com' } });
+            commitInspectorDraft();
 
             const [, resource] = updateNodeResourceFromCanvas.mock.calls[0] as [string, any];
             const rule = (resource.spec as any).rules[0];
@@ -642,12 +685,40 @@ describe('Canvas', () => {
             const { container } = render(<Canvas />);
 
             fireEvent.change(fieldByLabel(container, 'Path'), { target: { value: '/api' } });
+            commitInspectorDraft();
 
             const [, resource] = updateNodeResourceFromCanvas.mock.calls[0] as [string, any];
             const rule = (resource.spec as any).rules[0];
             expect(rule.host).toBe('my-app.example.com');
             expect(rule.http.paths[0].path).toBe('/api');
             expect(rule.http.paths[0].backend).toEqual({ service: { name: 'checkout-svc', port: { number: 80 } } });
+        });
+    });
+
+    // ── Inspector draft buffer contract ──────────────────────────────────────────
+    describe('inspector: draft buffer (Validate Changes contract)', () => {
+        it('buffers edits in the draft: nothing commits until Validate Changes is pressed', () => {
+            const updateNodeResourceFromCanvas = vi.fn();
+            const node = createMockNode({
+                kind: 'Deployment',
+                name: 'web',
+                resource: { apiVersion: 'apps/v1', kind: 'Deployment', metadata: { name: 'web' }, spec: { replicas: 3 } },
+            });
+            selectNode(node, { updateNodeResourceFromCanvas });
+            const { container } = render(<Canvas />);
+
+            expect(dom.getByText('Validate Changes') as HTMLButtonElement).toBeDisabled();
+
+            fireEvent.change(fieldByLabel(container, 'Replicas'), { target: { value: '7' } });
+
+            expect(updateNodeResourceFromCanvas).not.toHaveBeenCalled();
+            expect(dom.getByText('Validate Changes') as HTMLButtonElement).toBeEnabled();
+
+            commitInspectorDraft();
+
+            expect(updateNodeResourceFromCanvas).toHaveBeenCalledTimes(1);
+            const [, resource] = updateNodeResourceFromCanvas.mock.calls[0] as [string, any];
+            expect((resource.spec as { replicas: number }).replicas).toBe(7);
         });
     });
 

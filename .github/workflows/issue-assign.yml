@@ -26,7 +26,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Only accept an exact command.
           command=$(printf '%s' "$COMMENT_BODY" | xargs)
 
           case "$command" in
@@ -68,6 +67,23 @@ jobs:
             /lgtm|/approved|/ui|/bug|/docs|/needs-triage)
               label="${command#/}"
 
+              # Create the label if it doesn't exist.
+              if ! gh api "repos/$GH_REPO/labels/$label" \
+                >/dev/null 2>&1; then
+                if ! gh api "repos/$GH_REPO/labels" \
+                  -X POST \
+                  -f "name=$label" \
+                  -f "color=ededed" \
+                  -f "description=Added via the issue command bot" \
+                  >/dev/null; then
+                  gh issue comment "$ISSUE_NUMBER" \
+                    --repo "$GH_REPO" \
+                    --body "I couldn't create the \`$label\` label. Please ask a maintainer for help."
+                  exit 1
+                fi
+              fi
+
+              # Apply the label to the issue.
               if gh issue edit "$ISSUE_NUMBER" \
                 --repo "$GH_REPO" \
                 --add-label "$label"; then
@@ -77,12 +93,13 @@ jobs:
               else
                 gh issue comment "$ISSUE_NUMBER" \
                   --repo "$GH_REPO" \
-                  --body "I couldn't add the \`$label\` label. Please check that it exists in the repository."
+                  --body "The \`$label\` label exists, but I couldn't apply it to this issue."
+                exit 1
               fi
               ;;
 
             *)
-              # Ignore comments that aren't recognized commands.
+              # Ignore unrecognized commands.
               exit 0
               ;;
           esac

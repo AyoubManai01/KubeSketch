@@ -23,8 +23,8 @@ silly questions.
 ## Setting up the development environment
 
 ```bash
-git clone https://github.com/AyoubManai01/Veltra.git
-cd Veltra
+git clone https://github.com/AyoubManai01/KubeSketch.git
+cd KubeSketch
 npm install
 ```
 
@@ -133,8 +133,8 @@ Good pull requests:
 Example workflow:
 
 ```bash
-git clone https://github.com/<your-username>/Veltra.git
-cd Veltra
+git clone https://github.com/<your-username>/KubeSketch.git
+cd KubeSketch
 git checkout -b feat/your-change
 # make changes
 git add .

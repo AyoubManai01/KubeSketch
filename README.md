@@ -69,8 +69,8 @@ entirely locally — there is nothing to deploy to your cluster.
 **Run it locally**
 
 ```bash
-git clone https://github.com/AyoubManai01/Veltra.git
-cd Veltra
+git clone https://github.com/AyoubManai01/KubeSketch.git
+cd KubeSketch
 npm install
 npm run dev
 ```
@@ -150,8 +150,8 @@ instructions on setting up your local development environment, running the
 tests, and the pull request expectations.
 
 ```bash
-git clone https://github.com/AyoubManai01/Veltra.git
-cd Veltra
+git clone https://github.com/AyoubManai01/KubeSketch.git
+cd KubeSketch
 npm install
 npm run dev      # Vite dev server at http://localhost:5173
 npm run lint     # ESLint
@@ -199,7 +199,6 @@ inspired by established CNCF and open-source projects. KubeSketch has adopted th
 for its community guidelines. KubeSketch is **not** a CNCF project: it is not
 hosted, sponsored, or endorsed by the CNCF or the Linux Foundation, and no
 such affiliation is claimed.
-
 
 ## License
 

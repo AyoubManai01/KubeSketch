@@ -3,12 +3,12 @@
  * the IDE at `/ide`, opened from the landing CTA in a new tab. No router
  * dependency: App.tsx branches on window.location.pathname.
  */
-export const IDE_PATH = '/ide';
+export const IDE_PATH = "/ide";
 
 /** When the IDE opens with `?sample=1`, it preloads the default manifest. */
-export const IDE_SAMPLE_PARAM = 'sample';
+export const IDE_SAMPLE_PARAM = "sample";
 
-export const GITHUB_URL = 'https://github.com/AyoubManai01/veltra';
+export const GITHUB_URL = "https://github.com/AyoubManai01/KubeSketch";
 
 /**
  * True when a request pathname points at the IDE route. Trailing slashes are
@@ -17,6 +17,6 @@ export const GITHUB_URL = 'https://github.com/AyoubManai01/veltra';
  * match, while `/`, `/index.html`, and `/xide` do not.
  */
 export function isIdePath(pathname: string): boolean {
-    const path = pathname.replace(/\/+$/, '');
-    return path === IDE_PATH || path.endsWith(IDE_PATH);
+  const path = pathname.replace(/\/+$/, "");
+  return path === IDE_PATH || path.endsWith(IDE_PATH);
 }

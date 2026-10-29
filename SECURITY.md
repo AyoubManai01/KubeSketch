@@ -36,7 +36,7 @@ Instead, report it privately:
 
 1. **Preferred:** use GitHub's private vulnerability reporting on the
    repository — open
-   <https://github.com/AyoubManai01/Veltra/security/advisories/new> (or go to
+   <https://github.com/AyoubManai01/KubeSketch/security/advisories/new> (or go to
    the repository's **Security** tab and choose **Report a vulnerability**).
    This keeps the report and the discussion confidential with the maintainers.
 2. **If private vulnerability reporting is not enabled** on the repository,

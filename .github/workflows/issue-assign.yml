@@ -1,0 +1,62 @@
+name: Issue Assignment Bot
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  assign:
+    if: >-
+      github.event.issue.pull_request == null &&
+      github.event.comment.user.type == 'User' &&
+      github.event.comment.body == '/assign-me'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check and assign issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          issue=$(gh issue view "$ISSUE_NUMBER" \
+            --repo "$GH_REPO" \
+            --json state,assignees)
+
+          state=$(jq -r '.state' <<< "$issue")
+          count=$(jq '.assignees | length' <<< "$issue")
+
+          if [[ "$state" != "OPEN" ]]; then
+            gh issue comment "$ISSUE_NUMBER" \
+              --repo "$GH_REPO" \
+              --body "This issue is closed, so it cannot be claimed."
+            exit 0
+          fi
+
+          if [[ "$count" -gt 0 ]]; then
+            gh issue comment "$ISSUE_NUMBER" \
+              --repo "$GH_REPO" \
+              --body "This issue already has an assignee. Please choose another issue."
+            exit 0
+          fi
+
+          if gh api "repos/$GH_REPO/issues/$ISSUE_NUMBER/assignees" \
+            -X POST \
+            -f "assignees[]=$COMMENTER" \
+            >/dev/null 2>&1; then
+
+            gh issue comment "$ISSUE_NUMBER" \
+              --repo "$GH_REPO" \
+              --body "@$COMMENTER has been assigned this issue. Please open a pull request when your work is ready."
+          else
+            gh issue comment "$ISSUE_NUMBER" \
+              --repo "$GH_REPO" \
+              --body "@$COMMENTER, GitHub could not assign you automatically. Please ask a maintainer to assign the issue."
+          fi
